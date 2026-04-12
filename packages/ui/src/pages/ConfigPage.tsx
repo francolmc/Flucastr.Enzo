@@ -1,0 +1,849 @@
+import { useState, useEffect } from 'react';
+import { useEnzoStore } from '../stores/enzoStore';
+import { ModelManagement } from '../components/config/ModelManagement';
+import { FallbackModelSection } from '../components/config/FallbackModelSection';
+import { ProviderApiKeySection } from '../components/config/ProviderApiKeySection';
+import './ConfigPage.css';
+
+const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
+
+function ConfigPage() {
+  const {
+    config,
+    systemConfig,
+    agents,
+    assistantProfile,
+    userProfile,
+    loadConfig,
+    loadAgents,
+    loadProfilesConfig,
+    updateProfilesConfig,
+    createAgent,
+    updateAgent,
+    deleteAgent,
+    loadModelsConfig,
+    loadSystemConfig,
+    updateSystemConfig,
+  } = useEnzoStore();
+  const [profileForm, setProfileForm] = useState({
+    assistantName: '',
+    assistantPersona: '',
+    assistantTone: '',
+    assistantStyleGuidelines: '',
+    userDisplayName: '',
+    userImportantInfo: '',
+    userPreferences: '',
+    userLocale: '',
+    userTimezone: '',
+  });
+  const [showNewAgentForm, setShowNewAgentForm] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    provider: 'ollama',
+    model: '',
+    systemPrompt: '',
+    assistantNameOverride: '',
+    personaOverride: '',
+    toneOverride: '',
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSavingSystem, setIsSavingSystem] = useState(false);
+  const [systemForm, setSystemForm] = useState({
+    ollamaBaseUrl: '',
+    anthropicModel: '',
+    port: '',
+    uiPort: '',
+    dbPath: '',
+    enzoWorkspacePath: '',
+    enzoSkillsPath: '',
+    enzoDebug: false,
+    enzoSkillsFallbackRelevanceThreshold: '0.12',
+    mcpAutoConnect: false,
+    defaultUserLanguage: 'es',
+    tz: 'America/Santiago',
+    telegramAllowedUsers: '',
+    telegramAgentOwnerUserId: '',
+    telegramBotToken: '',
+    tavilyApiKey: '',
+  });
+
+  useEffect(() => {
+    loadConfig();
+    loadAgents();
+    loadProfilesConfig();
+    loadModelsConfig();
+    loadSystemConfig();
+  }, [loadConfig, loadAgents, loadProfilesConfig, loadModelsConfig, loadSystemConfig]);
+
+  useEffect(() => {
+    if (!assistantProfile && !userProfile) {
+      return;
+    }
+
+    setProfileForm({
+      assistantName: assistantProfile?.name || '',
+      assistantPersona: assistantProfile?.persona || '',
+      assistantTone: assistantProfile?.tone || '',
+      assistantStyleGuidelines: assistantProfile?.styleGuidelines || '',
+      userDisplayName: userProfile?.displayName || '',
+      userImportantInfo: userProfile?.importantInfo || '',
+      userPreferences: userProfile?.preferences || '',
+      userLocale: userProfile?.locale || '',
+      userTimezone: userProfile?.timezone || '',
+    });
+  }, [assistantProfile, userProfile]);
+
+  useEffect(() => {
+    if (!systemConfig) {
+      return;
+    }
+    setSystemForm((prev) => ({
+      ...prev,
+      ollamaBaseUrl: systemConfig.ollamaBaseUrl || '',
+      anthropicModel: systemConfig.anthropicModel || '',
+      port: systemConfig.port || '',
+      uiPort: systemConfig.uiPort || '5173',
+      dbPath: systemConfig.dbPath || '',
+      enzoWorkspacePath: systemConfig.enzoWorkspacePath || '',
+      enzoSkillsPath: systemConfig.enzoSkillsPath || '',
+      enzoDebug: !!systemConfig.enzoDebug,
+      enzoSkillsFallbackRelevanceThreshold: String(systemConfig.enzoSkillsFallbackRelevanceThreshold ?? 0.12),
+      mcpAutoConnect: !!systemConfig.mcpAutoConnect,
+      defaultUserLanguage: systemConfig.defaultUserLanguage || 'es',
+      tz: systemConfig.tz || 'America/Santiago',
+      telegramAllowedUsers: systemConfig.telegramAllowedUsers || '',
+      telegramAgentOwnerUserId: systemConfig.telegramAgentOwnerUserId || '',
+      telegramBotToken: '',
+      tavilyApiKey: '',
+    }));
+  }, [systemConfig]);
+
+  const handleSaveProfiles = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profileForm.assistantName.trim()) {
+      alert('El nombre del asistente es obligatorio');
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      await updateProfilesConfig({
+        assistantProfile: {
+          name: profileForm.assistantName,
+          persona: profileForm.assistantPersona,
+          tone: profileForm.assistantTone,
+          styleGuidelines: profileForm.assistantStyleGuidelines,
+        },
+        userProfile: {
+          displayName: profileForm.userDisplayName,
+          importantInfo: profileForm.userImportantInfo,
+          preferences: profileForm.userPreferences,
+          locale: profileForm.userLocale,
+          timezone: profileForm.userTimezone,
+        },
+      });
+      alert('Perfil guardado');
+    } catch (error) {
+      console.error('Error saving profiles config:', error);
+      alert('Error al guardar perfil');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleSubmitAgent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name || !formData.provider || !formData.model) {
+      alert('Por favor completa los campos requeridos');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      if (editingAgentId) {
+        await updateAgent(editingAgentId, {
+          name: formData.name,
+          description: formData.description || undefined,
+          provider: formData.provider,
+          model: formData.model,
+          systemPrompt: formData.systemPrompt || undefined,
+          assistantNameOverride: formData.assistantNameOverride || undefined,
+          personaOverride: formData.personaOverride || undefined,
+          toneOverride: formData.toneOverride || undefined,
+        });
+      } else {
+        await createAgent({
+          name: formData.name,
+          description: formData.description || undefined,
+          provider: formData.provider,
+          model: formData.model,
+          systemPrompt: formData.systemPrompt || undefined,
+          assistantNameOverride: formData.assistantNameOverride || undefined,
+          personaOverride: formData.personaOverride || undefined,
+          toneOverride: formData.toneOverride || undefined,
+        });
+      }
+
+      setFormData({
+        name: '',
+        description: '',
+        provider: 'ollama',
+        model: '',
+        systemPrompt: '',
+        assistantNameOverride: '',
+        personaOverride: '',
+        toneOverride: '',
+      });
+      setShowNewAgentForm(false);
+      setEditingAgentId(null);
+    } catch (error) {
+      console.error('Error saving agent:', error);
+      alert(editingAgentId ? 'Error al actualizar el agente' : 'Error al crear el agente');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditAgent = (agent: typeof agents[number]) => {
+    console.log('[ConfigPage] Editing agent:', agent.id, agent.name);
+    setEditingAgentId(agent.id);
+    setFormData({
+      name: agent.name,
+      description: agent.description || '',
+      provider: agent.provider,
+      model: agent.model,
+      systemPrompt: agent.systemPrompt || '',
+      assistantNameOverride: agent.assistantNameOverride || '',
+      personaOverride: agent.personaOverride || '',
+      toneOverride: agent.toneOverride || '',
+    });
+    setShowNewAgentForm(true);
+    setTimeout(() => {
+      const form = document.getElementById('agent-editor-form');
+      form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
+
+  const handleDeleteAgent = async (id: string) => {
+    if (confirm('¿Estás seguro de que deseas eliminar este agente?')) {
+      try {
+        await deleteAgent(id);
+      } catch (error) {
+        console.error('Error deleting agent:', error);
+        alert('Error al eliminar el agente');
+      }
+    }
+  };
+
+  const handleSaveSystemConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSystem(true);
+    try {
+      await updateSystemConfig({
+        ollamaBaseUrl: systemForm.ollamaBaseUrl,
+        anthropicModel: systemForm.anthropicModel,
+        port: systemForm.port,
+        uiPort: systemForm.uiPort,
+        dbPath: systemForm.dbPath,
+        enzoWorkspacePath: systemForm.enzoWorkspacePath,
+        enzoSkillsPath: systemForm.enzoSkillsPath,
+        enzoDebug: systemForm.enzoDebug,
+        enzoSkillsFallbackRelevanceThreshold: Number(systemForm.enzoSkillsFallbackRelevanceThreshold),
+        mcpAutoConnect: systemForm.mcpAutoConnect,
+        defaultUserLanguage: systemForm.defaultUserLanguage,
+        tz: systemForm.tz,
+        telegramAllowedUsers: systemForm.telegramAllowedUsers,
+        telegramAgentOwnerUserId: systemForm.telegramAgentOwnerUserId,
+        telegramBotToken: systemForm.telegramBotToken || undefined,
+        tavilyApiKey: systemForm.tavilyApiKey || undefined,
+      });
+      alert('Configuración de sistema guardada');
+      setSystemForm((prev) => ({ ...prev, telegramBotToken: '', tavilyApiKey: '' }));
+    } catch (error) {
+      console.error('Error saving system config:', error);
+      alert('Error al guardar configuración de sistema');
+    } finally {
+      setIsSavingSystem(false);
+    }
+  };
+
+  if (!config) {
+    return <div className="config-page">Cargando configuración...</div>;
+  }
+
+  return (
+    <div className="config-page page-shell">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">ControlCenter</h1>
+          <p className="page-subtitle">
+            Configura modelos, providers y agentes con un flujo guiado de conexión, ajuste y validación.
+          </p>
+        </div>
+      </div>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 1 · Conectar</span>
+          <h2>Modelos y providers</h2>
+        </div>
+        <div className="config-grid">
+          <ModelManagement />
+          <FallbackModelSection />
+          <ProviderApiKeySection />
+        </div>
+      </section>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 2 · Personalizar</span>
+          <h2>Identidad del asistente y perfil de usuario</h2>
+        </div>
+
+        <form className="agent-form surface-card" onSubmit={handleSaveProfiles}>
+          <div className="form-group">
+            <label htmlFor="assistantName">Nombre del asistente *</label>
+            <input
+              id="assistantName"
+              type="text"
+              value={profileForm.assistantName}
+              onChange={(e) => setProfileForm({ ...profileForm, assistantName: e.target.value })}
+              placeholder="Ej. Enzo"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="assistantPersona">Personalidad</label>
+            <textarea
+              id="assistantPersona"
+              value={profileForm.assistantPersona}
+              onChange={(e) => setProfileForm({ ...profileForm, assistantPersona: e.target.value })}
+              placeholder="Cómo debe comportarse el asistente"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="assistantTone">Forma de hablar (tono)</label>
+            <input
+              id="assistantTone"
+              type="text"
+              value={profileForm.assistantTone}
+              onChange={(e) => setProfileForm({ ...profileForm, assistantTone: e.target.value })}
+              placeholder="Ej. directo, claro y cercano"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="assistantStyleGuidelines">Guías de estilo</label>
+            <textarea
+              id="assistantStyleGuidelines"
+              value={profileForm.assistantStyleGuidelines}
+              onChange={(e) => setProfileForm({ ...profileForm, assistantStyleGuidelines: e.target.value })}
+              placeholder="Reglas adicionales de redacción o formato"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="userDisplayName">Nombre del usuario</label>
+            <input
+              id="userDisplayName"
+              type="text"
+              value={profileForm.userDisplayName}
+              onChange={(e) => setProfileForm({ ...profileForm, userDisplayName: e.target.value })}
+              placeholder="Cómo debe llamarte el asistente"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="userImportantInfo">Información importante del usuario</label>
+            <textarea
+              id="userImportantInfo"
+              value={profileForm.userImportantInfo}
+              onChange={(e) => setProfileForm({ ...profileForm, userImportantInfo: e.target.value })}
+              placeholder="Contexto útil para personalizar respuestas"
+            />
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="userLocale">Locale</label>
+              <input
+                id="userLocale"
+                type="text"
+                value={profileForm.userLocale}
+                onChange={(e) => setProfileForm({ ...profileForm, userLocale: e.target.value })}
+                placeholder="es-CL"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="userTimezone">Timezone</label>
+              <input
+                id="userTimezone"
+                type="text"
+                value={profileForm.userTimezone}
+                onChange={(e) => setProfileForm({ ...profileForm, userTimezone: e.target.value })}
+                placeholder="America/Santiago"
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="userPreferences">Preferencias del usuario</label>
+            <textarea
+              id="userPreferences"
+              value={profileForm.userPreferences}
+              onChange={(e) => setProfileForm({ ...profileForm, userPreferences: e.target.value })}
+              placeholder="Preferencias de comunicación o trabajo"
+            />
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" disabled={isSavingProfile}>
+              {isSavingProfile ? 'Guardando...' : 'Guardar identidad y perfil'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 3 · Sistema</span>
+          <h2>Parámetros globales de runtime</h2>
+        </div>
+
+        <form className="agent-form surface-card" onSubmit={handleSaveSystemConfig}>
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysOllamaBaseUrl">OLLAMA_BASE_URL</label>
+              <input
+                id="sysOllamaBaseUrl"
+                type="text"
+                value={systemForm.ollamaBaseUrl}
+                onChange={(e) => setSystemForm({ ...systemForm, ollamaBaseUrl: e.target.value })}
+                placeholder="http://localhost:11434"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysAnthropicModel">ANTHROPIC_MODEL</label>
+              <input
+                id="sysAnthropicModel"
+                type="text"
+                value={systemForm.anthropicModel}
+                onChange={(e) => setSystemForm({ ...systemForm, anthropicModel: e.target.value })}
+                placeholder="claude-haiku-4-5"
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysPort">PORT</label>
+              <input
+                id="sysPort"
+                type="text"
+                value={systemForm.port}
+                onChange={(e) => setSystemForm({ ...systemForm, port: e.target.value })}
+                placeholder="3001"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysUiPort">ENZO_UI_PORT</label>
+              <input
+                id="sysUiPort"
+                type="text"
+                value={systemForm.uiPort}
+                onChange={(e) => setSystemForm({ ...systemForm, uiPort: e.target.value })}
+                placeholder="5173"
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysDbPath">DB_PATH</label>
+              <input
+                id="sysDbPath"
+                type="text"
+                value={systemForm.dbPath}
+                onChange={(e) => setSystemForm({ ...systemForm, dbPath: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysSkillsPath">ENZO_SKILLS_PATH</label>
+              <input
+                id="sysSkillsPath"
+                type="text"
+                value={systemForm.enzoSkillsPath}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoSkillsPath: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysWorkspacePath">ENZO_WORKSPACE_PATH</label>
+              <input
+                id="sysWorkspacePath"
+                type="text"
+                value={systemForm.enzoWorkspacePath}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoWorkspacePath: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysDefaultLanguage">DEFAULT_USER_LANGUAGE</label>
+              <select
+                id="sysDefaultLanguage"
+                value={systemForm.defaultUserLanguage}
+                onChange={(e) => setSystemForm({ ...systemForm, defaultUserLanguage: e.target.value })}
+              >
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysTimezone">TZ</label>
+              <input
+                id="sysTimezone"
+                type="text"
+                value={systemForm.tz}
+                onChange={(e) => setSystemForm({ ...systemForm, tz: e.target.value })}
+                placeholder="America/Santiago"
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysSkillsFallbackThreshold">ENZO_SKILLS_FALLBACK_RELEVANCE_THRESHOLD</label>
+              <input
+                id="sysSkillsFallbackThreshold"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={systemForm.enzoSkillsFallbackRelevanceThreshold}
+                onChange={(e) =>
+                  setSystemForm({ ...systemForm, enzoSkillsFallbackRelevanceThreshold: e.target.value })
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>ENZO_SECRET</label>
+              <input
+                type="text"
+                value={systemConfig?.secretStoragePath || '~/.enzo/secret.key'}
+                readOnly
+              />
+              <p className="config-card-description">
+                Gestionado automáticamente. No se muestra ni se edita desde la UI.
+              </p>
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysAllowedUsers">TELEGRAM_ALLOWED_USERS</label>
+              <input
+                id="sysAllowedUsers"
+                type="text"
+                value={systemForm.telegramAllowedUsers}
+                onChange={(e) => setSystemForm({ ...systemForm, telegramAllowedUsers: e.target.value })}
+                placeholder="12345,67890"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysOwnerUserId">TELEGRAM_AGENT_OWNER_USER_ID</label>
+              <input
+                id="sysOwnerUserId"
+                type="text"
+                value={systemForm.telegramAgentOwnerUserId}
+                onChange={(e) => setSystemForm({ ...systemForm, telegramAgentOwnerUserId: e.target.value })}
+                placeholder="Opcional"
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="sysBotToken">
+                TELEGRAM_BOT_TOKEN {systemConfig?.hasTelegramBotToken ? '(actualmente configurado)' : '(sin configurar)'}
+              </label>
+              <input
+                id="sysBotToken"
+                type="password"
+                value={systemForm.telegramBotToken}
+                onChange={(e) => setSystemForm({ ...systemForm, telegramBotToken: e.target.value })}
+                placeholder="Dejar vacío para no cambiar"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sysTavilyKey">
+                TAVILY_API_KEY {systemConfig?.hasTavilyApiKey ? '(actualmente configurada)' : '(sin configurar)'}
+              </label>
+              <input
+                id="sysTavilyKey"
+                type="password"
+                value={systemForm.tavilyApiKey}
+                onChange={(e) => setSystemForm({ ...systemForm, tavilyApiKey: e.target.value })}
+                placeholder="Dejar vacío para no cambiar"
+              />
+            </div>
+          </div>
+
+          <div className="form-group-row">
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.mcpAutoConnect}
+                onChange={(e) => setSystemForm({ ...systemForm, mcpAutoConnect: e.target.checked })}
+              />
+              MCP_AUTO_CONNECT
+            </label>
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.enzoDebug}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoDebug: e.target.checked })}
+              />
+              ENZO_DEBUG
+            </label>
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" disabled={isSavingSystem}>
+              {isSavingSystem ? 'Guardando...' : 'Guardar configuración de sistema'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 4 · Configurar</span>
+          <h2>Agentes personalizados</h2>
+        </div>
+
+        {!showNewAgentForm && (
+          <button
+            className="new-agent-btn"
+            onClick={() => setShowNewAgentForm(true)}
+          >
+            + Nuevo Agente
+          </button>
+        )}
+
+        {showNewAgentForm && (
+          <form id="agent-editor-form" className="agent-form surface-card" onSubmit={handleSubmitAgent}>
+            {editingAgentId && (
+              <p className="config-card-description">
+                Editando agente existente. Los cambios aplican al guardar.
+              </p>
+            )}
+            <div className="form-group">
+              <label htmlFor="name">Nombre *</label>
+              <input
+                id="name"
+                type="text"
+                value={formData.name}
+                onChange={(e) =>
+                  setFormData({ ...formData, name: e.target.value })
+                }
+                placeholder="Nombre del agente"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="description">Descripción</label>
+              <textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData({ ...formData, description: e.target.value })
+                }
+                placeholder="Descripción del agente"
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="provider">Provider *</label>
+              <select
+                id="provider"
+                value={formData.provider}
+                onChange={(e) =>
+                  setFormData({ ...formData, provider: e.target.value })
+                }
+                required
+              >
+                {config.availableProviders.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="model">Modelo *</label>
+              <input
+                id="model"
+                type="text"
+                value={formData.model}
+                onChange={(e) =>
+                  setFormData({ ...formData, model: e.target.value })
+                }
+                placeholder="Nombre del modelo"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="systemPrompt">System Prompt</label>
+              <textarea
+                id="systemPrompt"
+                value={formData.systemPrompt}
+                onChange={(e) =>
+                  setFormData({ ...formData, systemPrompt: e.target.value })
+                }
+                placeholder="Instrucciones del sistema para el agente"
+              />
+            </div>
+
+            <div className="form-group-row">
+              <div className="form-group">
+                <label htmlFor="assistantNameOverride">Nombre del asistente (override)</label>
+                <input
+                  id="assistantNameOverride"
+                  type="text"
+                  value={formData.assistantNameOverride}
+                  onChange={(e) =>
+                    setFormData({ ...formData, assistantNameOverride: e.target.value })
+                  }
+                  placeholder="Opcional: reemplaza el nombre global"
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="toneOverride">Tono (override)</label>
+                <input
+                  id="toneOverride"
+                  type="text"
+                  value={formData.toneOverride}
+                  onChange={(e) =>
+                    setFormData({ ...formData, toneOverride: e.target.value })
+                  }
+                  placeholder="Opcional: reemplaza el tono global"
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="personaOverride">Personalidad (override)</label>
+              <textarea
+                id="personaOverride"
+                value={formData.personaOverride}
+                onChange={(e) =>
+                  setFormData({ ...formData, personaOverride: e.target.value })
+                }
+                placeholder="Opcional: reemplaza la personalidad global"
+              />
+            </div>
+
+            <div className="form-actions">
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Guardando...' : editingAgentId ? 'Guardar cambios' : 'Crear Agente'}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setShowNewAgentForm(false);
+                  setEditingAgentId(null);
+                  setFormData({
+                    name: '',
+                    description: '',
+                    provider: 'ollama',
+                    model: '',
+                    systemPrompt: '',
+                    assistantNameOverride: '',
+                    personaOverride: '',
+                    toneOverride: '',
+                  });
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        )}
+
+        {agents.length === 0 ? (
+          <p className="empty-state">Sin agentes configurados</p>
+        ) : (
+          <div className="agents-list">
+            {agents.map((agent) => (
+              <div key={agent.id} className="agent-card surface-card">
+                <div className="agent-header">
+                  <h3>{agent.name}</h3>
+                  <div className="agent-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => handleEditAgent(agent)}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => handleDeleteAgent(agent.id)}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+                {agent.description && (
+                  <p className="agent-description">{agent.description}</p>
+                )}
+                <div className="agent-details">
+                  <span>
+                    <strong>Provider:</strong> {agent.provider}
+                  </span>
+                  <span>
+                    <strong>Modelo:</strong> {agent.model}
+                  </span>
+                </div>
+                {agent.systemPrompt && (
+                  <div className="agent-prompt">
+                    <strong>System Prompt:</strong>
+                    <p>{agent.systemPrompt}</p>
+                  </div>
+                )}
+                {(agent.assistantNameOverride || agent.toneOverride || agent.personaOverride) && (
+                  <div className="agent-overrides">
+                    <strong>Overrides de identidad:</strong>
+                    {agent.assistantNameOverride && <p>Nombre: {agent.assistantNameOverride}</p>}
+                    {agent.toneOverride && <p>Tono: {agent.toneOverride}</p>}
+                    {agent.personaOverride && <p>Personalidad: {agent.personaOverride}</p>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export default ConfigPage;

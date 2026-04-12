@@ -1,0 +1,396 @@
+.mcp-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+}
+
+.btn-add-server {
+  white-space: nowrap;
+}
+
+.btn-add-server:hover {
+  background-color: var(--accent-hover);
+}
+
+.error-message {
+  padding: 0.9rem 1rem;
+  background-color: rgba(233, 122, 122, 0.1);
+  color: var(--error);
+  border: 1px solid rgba(233, 122, 122, 0.3);
+  border-radius: 10px;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.mcp-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.mcp-kpi-card {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.mcp-kpi-card span {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.mcp-kpi-card strong {
+  font-size: 1.5rem;
+}
+
+/* Add Server Form */
+.add-server-form {
+  padding: 1.3rem;
+}
+
+.add-server-form h3 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+
+.add-server-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.form-group input[type="text"],
+.form-group textarea {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.form-group input[type="text"]:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.radio-group input[type="radio"] {
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+}
+
+.btn-submit {
+  padding: 0.7rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: background-color 0.2s;
+  align-self: flex-start;
+}
+
+.btn-submit:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.btn-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Servers Section */
+.servers-section h3,
+.tools-section h3 {
+  margin: 1.1rem 0 0.8rem 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 2rem;
+  background-color: var(--bg-secondary);
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  color: var(--text-secondary);
+}
+
+.empty-state p {
+  margin: 0.5rem 0;
+}
+
+.empty-state .hint {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.servers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.server-card {
+  padding: 1.1rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.server-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.server-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.server-info {
+  flex: 1;
+}
+
+.server-info h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.server-transport {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.server-description {
+  margin: 0.5rem 0 0 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.server-config {
+  margin: 0.5rem 0 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-family: 'Courier New', monospace;
+  background-color: var(--bg-tertiary);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+.server-error {
+  margin: 0.5rem 0 0 0;
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.server-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tool-count {
+  padding: 0.5rem 1rem;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.server-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-action {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn-reconnect {
+  background-color: rgba(124, 106, 247, 0.25);
+  color: white;
+  border: 1px solid rgba(124, 106, 247, 0.4);
+}
+
+.btn-reconnect:hover {
+  background-color: rgba(124, 106, 247, 0.4);
+}
+
+.btn-enable {
+  background-color: rgba(76, 175, 130, 0.22);
+  color: white;
+  border: 1px solid rgba(76, 175, 130, 0.4);
+}
+
+.btn-enable:hover {
+  background-color: rgba(76, 175, 130, 0.34);
+}
+
+.btn-disable {
+  background-color: rgba(245, 179, 92, 0.16);
+  color: #ffd9a4;
+  border: 1px solid rgba(245, 179, 92, 0.35);
+}
+
+.btn-disable:hover {
+  background-color: rgba(245, 179, 92, 0.3);
+}
+
+.btn-delete {
+  background-color: rgba(233, 122, 122, 0.18);
+  color: white;
+  border: 1px solid rgba(233, 122, 122, 0.35);
+}
+
+.btn-delete:hover {
+  background-color: rgba(233, 122, 122, 0.3);
+}
+
+/* Tools Section */
+.tools-section {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.tools-group {
+  padding: 1rem;
+}
+
+.tools-group h4 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.tools-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.tool-item {
+  padding: 0.85rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.tool-item:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.tool-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.tool-desc {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .mcp-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-page .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .btn-add-server {
+    width: 100%;
+  }
+
+  .server-header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .server-actions {
+    width: 100%;
+  }
+
+  .btn-action {
+    flex: 1;
+    text-align: center;
+  }
+
+  .tools-items {
+    grid-template-columns: 1fr;
+  }
+
+  .add-server-form form {
+    gap: 1rem;
+  }
+}

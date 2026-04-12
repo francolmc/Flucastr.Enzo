@@ -1,0 +1,23 @@
+{
+  "name": "enzo",
+  "version": "0.1.0",
+  "description": "Enzo - Advanced AI Assistant",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"pnpm -F @enzo/api dev\" \"pnpm -F @enzo/ui dev\" \"pnpm -F @enzo/telegram dev\"",
+    "build": "pnpm -F @enzo/core build && pnpm -F @enzo/api build && pnpm -F @enzo/ui build && pnpm -F @enzo/telegram build && pnpm -F @enzo/cli build",
+    "test": "pnpm -F @enzo/core test",
+    "install:all": "pnpm install",
+    "setup": "pnpm -F @enzo/cli build && ./enzo setup",
+    "start": "./enzo start",
+    "status": "./enzo status",
+    "stop": "./enzo stop",
+    "update": "./enzo update"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  }
+}

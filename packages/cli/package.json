@@ -1,0 +1,30 @@
+{
+  "name": "@enzo/cli",
+  "version": "0.1.0",
+  "description": "CLI for Enzo assistant setup and management",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "enzo": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@enzo/core": "workspace:*",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.3.1",
+    "inquirer": "^8.2.5",
+    "node-fetch": "^3.3.2",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.6",
+    "@types/node": "^20.10.6",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "undici": "^6.0.0"
+  }
+}
