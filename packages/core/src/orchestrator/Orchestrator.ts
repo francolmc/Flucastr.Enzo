@@ -64,7 +64,7 @@ export class Orchestrator {
     // Initialize tool registry if not provided
     let toolRegistry = options?.toolRegistry;
     if (!toolRegistry) {
-      toolRegistry = createDefaultToolRegistry(this.memoryService);
+      toolRegistry = createDefaultToolRegistry(this.memoryService, undefined, this.configService);
     }
     this.toolRegistry = toolRegistry;
 

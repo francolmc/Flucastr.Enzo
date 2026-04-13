@@ -11,6 +11,8 @@ export class WebSearchTool implements ExecutableTool {
     required: ['query'],
   };
 
+  constructor(private readonly resolveApiKey?: () => string | null) {}
+
   async execute(input: any): Promise<ToolResult> {
     try {
       const query = typeof input === 'string' ? input : input?.query;
@@ -24,11 +26,11 @@ export class WebSearchTool implements ExecutableTool {
 
       console.log(`[WebSearchTool] Searching for: "${query}"`);
 
-      const apiKey = process.env.TAVILY_API_KEY;
+      const apiKey = (this.resolveApiKey?.() || process.env.TAVILY_API_KEY || '').trim();
       if (!apiKey) {
         return {
           success: false,
-          error: 'TAVILY_API_KEY environment variable is not set',
+          error: 'Tavily API key is not configured. Set it in Enzo config (system.tavilyApiKey) or TAVILY_API_KEY env var.',
         };
       }
 
