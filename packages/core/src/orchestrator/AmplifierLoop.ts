@@ -655,11 +655,12 @@ If responding with plain text (no tool), write in this language.`;
                 );
 
                 let rawToolOutput = '';
+                let setupError: string | undefined;
 
                 if (resolved.kind === 'internal') {
                   const tool = this.executableTools.find((t) => t.name === execName);
                   if (!tool) {
-                    finalContent = `Herramienta interna no encontrada: ${execName}`;
+                    setupError = `Herramienta interna no encontrada: ${execName}`;
                   } else {
                     const result = await tool.execute(toolInput);
                     rawToolOutput = extractToolOutput(result);
@@ -675,11 +676,11 @@ If responding with plain text (no tool), write in this language.`;
                     rawToolOutput = `MCP error: ${mcpErr instanceof Error ? mcpErr.message : String(mcpErr)}`;
                   }
                 } else {
-                  finalContent = 'MCP no está disponible en este entorno.';
+                  setupError = 'MCP no está disponible en este entorno.';
                 }
 
-                if (finalContent) {
-                  // already set (missing tool / MCP)
+                if (setupError) {
+                  finalContent = setupError;
                 } else {
                 const toolOutput = rawToolOutput.length > 3000
                   ? rawToolOutput.substring(0, 3000) + '\n...(output truncated)'
