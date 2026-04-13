@@ -1,4 +1,4 @@
-import { Message, LLMProvider } from '../providers/types.js';
+import { Message, LLMProvider, Tool } from '../providers/types.js';
 import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage } from './types.js';
 import { CapabilityResolver } from './CapabilityResolver.js';
 import { ContextSynthesizer } from './ContextSynthesizer.js';
@@ -279,6 +279,40 @@ export class AmplifierLoop {
     return { toolName, toolInput };
   }
 
+  /** Same merge as think(): orchestrator tools + any MCP tools not already listed. */
+  private mergeAvailableToolDefinitions(input: AmplifierInput): Tool[] {
+    const merged: Tool[] = [...input.availableTools];
+    if (this.mcpRegistry) {
+      for (const mcpTool of this.mcpRegistry.getMCPToolsForOrchestrator()) {
+        if (!merged.some((tool) => tool.name === mcpTool.name)) {
+          merged.push(mcpTool);
+        }
+      }
+    }
+    return merged;
+  }
+
+  private resolveFastPathToolForExecution(
+    toolNameLower: string,
+    mcpToolList: Tool[]
+  ): { kind: 'internal' | 'mcp'; name: string } | null {
+    const internal = this.executableTools.find((t) => t.name.toLowerCase() === toolNameLower);
+    if (internal) return { kind: 'internal', name: internal.name };
+
+    const mcpExact = mcpToolList.find((t) => t.name.toLowerCase() === toolNameLower);
+    if (mcpExact) return { kind: 'mcp', name: mcpExact.name };
+
+    const suffixMatches = mcpToolList.filter(
+      (t) =>
+        t.name.startsWith('mcp_') &&
+        (t.name.toLowerCase().endsWith('_' + toolNameLower) ||
+          t.name.toLowerCase().endsWith(toolNameLower))
+    );
+    if (suffixMatches.length === 1) return { kind: 'mcp', name: suffixMatches[0].name };
+
+    return null;
+  }
+
   private getRequiredInputKeys(toolName: string): string[] {
     const internalTool = this.executableTools.find((tool) => tool.name === toolName);
     if (internalTool) {
@@ -404,9 +438,8 @@ No markdown. No prose.`;
       const isModerate = input.classifiedLevel === ComplexityLevel.MODERATE;
       console.log(`[AmplifierLoop] Fast-path ${isModerate ? 'MODERATE' : 'SIMPLE'}`);
 
-      const toolsList = this.executableTools
-        .map(t => `- ${t.name}: ${t.description}`)
-        .join('\n');
+      const mergedToolDefs = this.mergeAvailableToolDefinitions(input);
+      const toolsList = mergedToolDefs.map((t) => `- ${t.name}: ${t.description}`).join('\n');
 
       // Detect if user is asking about capabilities — inject real skill list to avoid hallucination
       const isCapabilityQuery = /\b(qu[eé] puedes|what can you|capabilities|habilidades|skills|funciones|qu[eé] sabes|what do you|qu[eé] eres capaz|qu[eé] haces|what are you)\b/i.test(input.message);
@@ -440,7 +473,8 @@ To use a tool, respond ONLY with JSON (no extra text, no markdown):
 {"action":"tool","tool":"TOOL_NAME","input":{PARAMS}}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Tool names are also fixed identifiers: execute_command, web_search, read_file, write_file, remember.
+Built-in tool names: execute_command, web_search, read_file, write_file, remember.
+MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
 
@@ -463,6 +497,7 @@ TOOL SELECTION — CRITICAL:
   Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
 - Query current system state (RAM, disk, processes, OS version, CPU) → execute_command
   Useful commands: "vm_stat" (RAM), "df -h" (disk), "sw_vers" (macOS version), "top -l 1 -n 5" (processes)
+- External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
 - Run any other shell command → execute_command
 - NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
 
@@ -573,17 +608,20 @@ If responding with plain text (no tool), write in this language.`;
           const parsed = (parsedResult ?? parseFirstJsonObject<any>(repairJsonString(normalizedContent), { tryRepair: true }))!.value;
           let { toolName, toolInput } = this.normalizeFastPathToolCall(parsed);
 
-          const tool = toolName && toolName !== 'none'
-            ? this.executableTools.find(t => t.name.toLowerCase() === toolName)
-            : undefined;
+          let resolved =
+            toolName && toolName !== 'none'
+              ? this.resolveFastPathToolForExecution(toolName, mergedToolDefs)
+              : null;
 
-          if (tool) {
-              const validationError = this.validateToolInput(toolName, toolInput);
+          if (resolved) {
+              let execName = resolved.name;
+
+              const validationError = this.validateToolInput(execName, toolInput);
               if (validationError) {
                 console.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
                 const correctedCall = await this.requestToolInputCorrection(
                   input.message,
-                  toolName,
+                  execName,
                   toolInput,
                   validationError
                 ).catch((error) => {
@@ -593,48 +631,73 @@ If responding with plain text (no tool), write in this language.`;
                 if (correctedCall) {
                   toolName = correctedCall.toolName;
                   toolInput = correctedCall.toolInput;
-                  console.log(`[AmplifierLoop] SIMPLE path - corrected tool input for "${toolName}"`);
+                  resolved = this.resolveFastPathToolForExecution(toolName, mergedToolDefs);
+                  if (!resolved) {
+                    finalContent = `No se pudo resolver la herramienta tras la corrección: ${toolName}`;
+                    console.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
+                  } else {
+                    execName = resolved.name;
+                    console.log(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
+                  }
                 }
               }
 
-              const validationAfterCorrection = this.validateToolInput(toolName, toolInput);
+              if (resolved) {
+              const validationAfterCorrection = this.validateToolInput(execName, toolInput);
               if (validationAfterCorrection) {
                 finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
                 console.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
               } else {
-                toolsUsed.add(toolName);
-                console.log(`[AmplifierLoop] SIMPLE path - ejecutando "${toolName}":`, toolInput);
+                toolsUsed.add(execName);
+                console.log(
+                  `[AmplifierLoop] SIMPLE path - ejecutando "${execName}" (${resolved.kind}):`,
+                  toolInput
+                );
 
-                const result = await tool.execute(toolInput);
-                let rawToolOutput = extractToolOutput(result);
+                let rawToolOutput = '';
 
-                // Para web_search: formatear como texto legible en vez de JSON crudo
-                if (toolName === 'web_search' && result.success) {
-                  const formatted = formatSearchResults(result.data as any, 'full');
-                  if (formatted) rawToolOutput = formatted;
+                if (resolved.kind === 'internal') {
+                  const tool = this.executableTools.find((t) => t.name === execName);
+                  if (!tool) {
+                    finalContent = `Herramienta interna no encontrada: ${execName}`;
+                  } else {
+                    const result = await tool.execute(toolInput);
+                    rawToolOutput = extractToolOutput(result);
+                    if (execName === 'web_search' && result.success) {
+                      const formatted = formatSearchResults(result.data as any, 'full');
+                      if (formatted) rawToolOutput = formatted;
+                    }
+                  }
+                } else if (this.mcpRegistry) {
+                  try {
+                    rawToolOutput = await this.mcpRegistry.callTool(execName, toolInput);
+                  } catch (mcpErr) {
+                    rawToolOutput = `MCP error: ${mcpErr instanceof Error ? mcpErr.message : String(mcpErr)}`;
+                  }
+                } else {
+                  finalContent = 'MCP no está disponible en este entorno.';
                 }
 
-                // Truncar output largo para no inflar el contexto de síntesis
+                if (finalContent) {
+                  // already set (missing tool / MCP)
+                } else {
                 const toolOutput = rawToolOutput.length > 3000
                   ? rawToolOutput.substring(0, 3000) + '\n...(output truncated)'
                   : rawToolOutput;
 
                 console.log('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
 
-                // Para herramientas que retornan datos crudos (execute_command, read_file),
-                // saltar la síntesis LLM — los modelos pequeños ignoran el output real y alucinan.
                 const skipSynthesisTools = new Set(['execute_command', 'read_file']);
-                if (skipSynthesisTools.has(toolName)) {
+                if (resolved.kind === 'internal' && skipSynthesisTools.has(execName)) {
                   finalContent = toolOutput;
                   console.log('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
                 } else {
-                  // Segunda llamada LLM: sintetizar para herramientas como web_search, remember, etc.
                   const synthesisPrompt = `${this.buildAssistantIdentityPrompt(input)}
 ${relevantSkillsSection}
 ${requiredTemplateSection}
 You executed a tool and got this result:
 
-TOOL: ${toolName}
+TOOL: ${execName}
 RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${toolOutput}
 
@@ -673,6 +736,8 @@ ${input.userLanguage && input.userLanguage !== 'es'
                     ? synthesisResponse.content.trim()
                     : toolOutput;
                 }
+                }
+              }
               }
           } else if (toolName && toolName !== 'none') {
               console.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
