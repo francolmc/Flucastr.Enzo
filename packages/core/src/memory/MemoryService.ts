@@ -107,6 +107,15 @@ export class MemoryService {
     );
   }
 
+  async ensureConversation(conversationId: string, userId: string): Promise<void> {
+    const now = Date.now();
+    await this.runAsync(
+      `INSERT OR IGNORE INTO conversations (id, userId, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?)`,
+      [conversationId, userId, now, now]
+    );
+  }
+
   async clearHistory(conversationId: string): Promise<void> {
     console.log(`[Memory] Clearing history for conversationId: ${conversationId}`);
     await this.runAsync(

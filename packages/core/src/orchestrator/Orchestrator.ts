@@ -236,6 +236,9 @@ export class Orchestrator {
         injectedSkills: amplifierResult.injectedSkills,
       };
 
+      // Ensure the conversation row exists before inserting messages that reference it.
+      await this.memoryService.ensureConversation(input.conversationId, input.userId);
+
       await this.saveToMemory(input.conversationId, {
         role: 'user',
         content: input.message,
