@@ -107,10 +107,11 @@ async function main() {
     const buildSignature = (): string => {
       const token = configService.getSystemSecret('telegramBotTokenEncrypted') || '';
       const cfg = configService.getSystemConfig();
-      return `${token}|${cfg.telegramAllowedUsers || ''}|${cfg.telegramAgentOwnerUserId || ''}`;
+      return `${token}|${cfg.telegramAllowedUsers || ''}|${cfg.telegramAgentOwnerUserId || ''}|${cfg.telegramAgentAutoroute ? '1' : '0'}`;
     };
 
     const applyTelegramEnvFromConfig = (): { token: string; allowedUsers: string; ownerUserId: string } => {
+      configService.applySystemEnvironment();
       const token = configService.getSystemSecret('telegramBotTokenEncrypted') || '';
       const cfg = configService.getSystemConfig();
       const allowedUsersValue = cfg.telegramAllowedUsers || '';

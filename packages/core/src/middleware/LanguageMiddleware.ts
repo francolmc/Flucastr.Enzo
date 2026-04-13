@@ -17,6 +17,11 @@ export class LanguageMiddleware {
   private readonly DEFAULT_LANGUAGE: string;
   private readonly MIN_TEXT_LENGTH = 3;
 
+  /** Telegram bot commands must not be translated (models corrupt `/agent` → `/agents`, etc.). */
+  private static looksLikeTelegramBotCommand(message: string): boolean {
+    return /^\s*\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(message);
+  }
+
   constructor(provider: LLMProvider, defaultLanguage?: string) {
     this.provider = provider;
     this.languageCache = new Map();
@@ -54,6 +59,15 @@ export class LanguageMiddleware {
     const needsTranslation = !this.UNIVERSAL_LANGUAGES.includes(detectedLanguage);
 
     if (!needsTranslation) {
+      return {
+        userLanguage: detectedLanguage,
+        originalInput: message,
+        translatedInput: message,
+        wasTranslated: false,
+      };
+    }
+
+    if (LanguageMiddleware.looksLikeTelegramBotCommand(message)) {
       return {
         userLanguage: detectedLanguage,
         originalInput: message,

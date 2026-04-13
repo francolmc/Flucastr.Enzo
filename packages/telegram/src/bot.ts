@@ -33,6 +33,10 @@ export function createBot(
       const chatId = String((ctx.chat as any)?.id || 'unknown');
       const text = 'text' in (ctx.message || {}) ? (ctx.message as any).text : '';
       console.log(`[Telegram][Debug] update=${ctx.updateType} user=${userId} chat=${chatId} text=${JSON.stringify(text)}`);
+      if (typeof text === 'string' && text.startsWith('/')) {
+        const ent = 'text' in (ctx.message || {}) ? (ctx.message as any).entities : undefined;
+        console.log(`[Telegram][Debug] entities=${JSON.stringify(ent)}`);
+      }
       await next();
     });
   }

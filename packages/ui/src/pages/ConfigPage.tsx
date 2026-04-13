@@ -66,6 +66,7 @@ function ConfigPage() {
     tz: 'America/Santiago',
     telegramAllowedUsers: '',
     telegramAgentOwnerUserId: '',
+    telegramAgentAutoroute: false,
     telegramBotToken: '',
     tavilyApiKey: '',
   });
@@ -116,6 +117,7 @@ function ConfigPage() {
       tz: systemConfig.tz || 'America/Santiago',
       telegramAllowedUsers: systemConfig.telegramAllowedUsers || '',
       telegramAgentOwnerUserId: systemConfig.telegramAgentOwnerUserId || '',
+      telegramAgentAutoroute: !!systemConfig.telegramAgentAutoroute,
       telegramBotToken: '',
       tavilyApiKey: '',
     }));
@@ -257,6 +259,7 @@ function ConfigPage() {
         tz: systemForm.tz,
         telegramAllowedUsers: systemForm.telegramAllowedUsers,
         telegramAgentOwnerUserId: systemForm.telegramAgentOwnerUserId,
+        telegramAgentAutoroute: systemForm.telegramAgentAutoroute,
         telegramBotToken: systemForm.telegramBotToken || undefined,
         tavilyApiKey: systemForm.tavilyApiKey || undefined,
       });
@@ -571,6 +574,17 @@ function ConfigPage() {
                 placeholder="Opcional"
               />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.telegramAgentAutoroute}
+                onChange={(e) => setSystemForm({ ...systemForm, telegramAgentAutoroute: e.target.checked })}
+              />
+              TELEGRAM_AGENT_AUTOROUTE (elegir agente automáticamente según el mensaje; por defecto desactivado)
+            </label>
           </div>
 
           <div className="form-group-row">

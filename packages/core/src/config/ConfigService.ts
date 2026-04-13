@@ -48,6 +48,8 @@ export interface StoredSystemConfig {
   tz: string;
   telegramAllowedUsers: string;
   telegramAgentOwnerUserId: string;
+  /** When true, Telegram may auto-pick an agent from message text. Default off: use `/agent` only. */
+  telegramAgentAutoroute?: boolean;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
 }
@@ -67,6 +69,7 @@ export interface SystemConfigView {
   tz: string;
   telegramAllowedUsers: string;
   telegramAgentOwnerUserId: string;
+  telegramAgentAutoroute: boolean;
   hasTelegramBotToken: boolean;
   hasTavilyApiKey: boolean;
   secretStoragePath: string;
@@ -87,6 +90,7 @@ export interface SystemConfigUpdate {
   tz?: string;
   telegramAllowedUsers?: string;
   telegramAgentOwnerUserId?: string;
+  telegramAgentAutoroute?: boolean;
   telegramBotToken?: string;
   tavilyApiKey?: string;
 }
@@ -135,6 +139,7 @@ function getDefaultConfig(): ModelsConfig {
       tz: process.env.TZ || 'America/Santiago',
       telegramAllowedUsers: process.env.TELEGRAM_ALLOWED_USERS || '',
       telegramAgentOwnerUserId: process.env.TELEGRAM_AGENT_OWNER_USER_ID || '',
+      telegramAgentAutoroute: (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true',
     },
     assistantProfile: {
       name: 'Enzo',
@@ -355,6 +360,7 @@ export class ConfigService {
     process.env.TZ = system.tz;
     process.env.TELEGRAM_ALLOWED_USERS = system.telegramAllowedUsers;
     process.env.TELEGRAM_AGENT_OWNER_USER_ID = system.telegramAgentOwnerUserId;
+    process.env.TELEGRAM_AGENT_AUTOROUTE = system.telegramAgentAutoroute ? 'true' : 'false';
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -526,6 +532,7 @@ export class ConfigService {
       tz: system.tz,
       telegramAllowedUsers: system.telegramAllowedUsers,
       telegramAgentOwnerUserId: system.telegramAgentOwnerUserId,
+      telegramAgentAutoroute: !!system.telegramAgentAutoroute,
       hasTelegramBotToken: !!system.telegramBotTokenEncrypted,
       hasTavilyApiKey: !!system.tavilyApiKeyEncrypted,
       secretStoragePath: `${process.env.HOME || process.env.USERPROFILE || '~'}/.enzo/secret.key`,
@@ -564,6 +571,9 @@ export class ConfigService {
       ...(update.telegramAllowedUsers !== undefined ? { telegramAllowedUsers: update.telegramAllowedUsers } : {}),
       ...(update.telegramAgentOwnerUserId !== undefined
         ? { telegramAgentOwnerUserId: update.telegramAgentOwnerUserId }
+        : {}),
+      ...(update.telegramAgentAutoroute !== undefined
+        ? { telegramAgentAutoroute: update.telegramAgentAutoroute }
         : {}),
     };
 

@@ -50,6 +50,7 @@ export interface SystemConfigView {
   tz: string;
   telegramAllowedUsers: string;
   telegramAgentOwnerUserId: string;
+  telegramAgentAutoroute: boolean;
   hasTelegramBotToken: boolean;
   hasTavilyApiKey: boolean;
   secretStoragePath: string;
@@ -70,6 +71,7 @@ export interface SystemConfigUpdatePayload {
   tz?: string;
   telegramAllowedUsers?: string;
   telegramAgentOwnerUserId?: string;
+  telegramAgentAutoroute?: boolean;
   telegramBotToken?: string;
   tavilyApiKey?: string;
 }

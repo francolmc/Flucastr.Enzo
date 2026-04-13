@@ -9,10 +9,8 @@ function getConversationId(ctx: EnzoContext, userId: string): string {
   return (ctx as any).newConversationId || `telegram_${userId}`;
 }
 
-function parseAgentCommandArgument(rawText: string): string {
-  return rawText
-    .replace(/^\/agent(@\w+)?/i, '')
-    .trim();
+function stripAgentCommandPrefix(rawText: string): string {
+  return rawText.replace(/^\/(agent|agents)(@\w+)?/i, '').trim();
 }
 
 async function getAgentsForTelegramUser(ctx: EnzoContext, userId: string) {
@@ -30,6 +28,76 @@ async function getAgentsForTelegramUser(ctx: EnzoContext, userId: string) {
   }
 
   return ctx.memoryService.getAllAgents();
+}
+
+async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promise<void> {
+  const userId = String(ctx.from?.id || '');
+  const conversationId = getConversationId(ctx, userId);
+  const rawArg = stripAgentCommandPrefix(messageText || '');
+  const typingSession = startTyping(ctx);
+
+  try {
+    const agents = await getAgentsForTelegramUser(ctx, userId);
+    if (agents.length === 0) {
+      await ctx.reply('No hay agentes disponibles. Crea uno en la Web UI primero.');
+      return;
+    }
+
+    if (!rawArg) {
+      const activeAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
+      const activeAgent = activeAgentId
+        ? agents.find((agent) => agent.id === activeAgentId)
+        : undefined;
+      const agentsList = agents.map((agent) => `- ${agent.name} (${agent.provider}/${agent.model})`).join('\n');
+      const activeLine = activeAgent
+        ? `Activo en esta conversación: *${activeAgent.name}*`
+        : 'No hay agente activo en esta conversación.';
+      await ctx.reply(
+        `${activeLine}\n\nAgentes disponibles:\n${agentsList}\n\nUsa \`/agent <name>\` para activar o \`/agent off\` para desactivar.`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const normalizedArg = rawArg.toLowerCase();
+    if (normalizedArg === 'off' || normalizedArg === 'none' || normalizedArg === 'default') {
+      await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
+      await ctx.reply('Modo agente desactivado para esta conversación. Volvemos al modelo principal.');
+      return;
+    }
+
+    const selectedAgent = agents.find((agent) => {
+      const candidateName = agent.name.toLowerCase();
+      return candidateName === normalizedArg || candidateName.includes(normalizedArg);
+    });
+
+    if (!selectedAgent) {
+      await ctx.reply(`No encontré un agente llamado "${rawArg}". Usa \`/agent\` para ver la lista.`);
+      return;
+    }
+
+    await ctx.memoryService.setConversationActiveAgent(conversationId, userId, selectedAgent.id);
+    await ctx.reply(
+      `Agente *${selectedAgent.name}* activado para esta conversación.\nModelo: \`${selectedAgent.provider}/${selectedAgent.model}\``,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    console.error('[Telegram] Error processing /agent command:', error);
+    await ctx.reply('Error al configurar el agente.');
+  } finally {
+    typingSession.stop();
+  }
+}
+
+/**
+ * When Telegraf does not match `/agent` (missing bot_command entity, etc.), handle from the text handler.
+ */
+export async function tryHandleAgentCommandText(ctx: EnzoContext, messageText: string): Promise<boolean> {
+  if (!/^\s*\/(agent|agents)\b/i.test(messageText)) {
+    return false;
+  }
+  await executeAgentCommand(ctx, messageText);
+  return true;
 }
 
 function isOwner(userId: string): boolean {
@@ -93,13 +161,15 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         '- `/new` - iniciar conversación nueva',
         '- `/clear` - limpiar historial de conversación',
         '- `/memory` - ver memorias guardadas',
-        '- `/agent` - listar o configurar agente por conversación',
+        '- `/agent` o `/agents` - listar o configurar agente por conversación',
         '- `/update` - actualizar Enzo (solo admin)',
         '',
         'Ejemplos de agente:',
-        '- `/agent`',
+        '- `/agent` o `/agents`',
         '- `/agent research`',
         '- `/agent off`',
+        '',
+        'Por defecto el modelo especialista solo se usa si lo activas con `/agent nombre`; `/agent off` vuelve al modelo principal.',
       ].join('\n'),
       { parse_mode: 'Markdown' }
     );
@@ -200,63 +270,13 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
   });
 
   bot.command('agent', async (ctx) => {
-    const userId = String(ctx.from?.id || '');
-    const conversationId = getConversationId(ctx, userId);
     const messageText = 'text' in ctx.message ? ctx.message.text : '';
-    const rawArg = parseAgentCommandArgument(messageText || '');
-    const typingSession = startTyping(ctx);
+    await executeAgentCommand(ctx, messageText || '');
+  });
 
-    try {
-      const agents = await getAgentsForTelegramUser(ctx, userId);
-      if (agents.length === 0) {
-        await ctx.reply('No hay agentes disponibles. Crea uno en la Web UI primero.');
-        return;
-      }
-
-      if (!rawArg) {
-        const activeAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
-        const activeAgent = activeAgentId
-          ? agents.find((agent) => agent.id === activeAgentId)
-          : undefined;
-        const agentsList = agents.map((agent) => `- ${agent.name} (${agent.provider}/${agent.model})`).join('\n');
-        const activeLine = activeAgent
-          ? `Activo en esta conversación: *${activeAgent.name}*`
-          : 'No hay agente activo en esta conversación.';
-        await ctx.reply(
-          `${activeLine}\n\nAgentes disponibles:\n${agentsList}\n\nUsa \`/agent <name>\` para activar o \`/agent off\` para desactivar.`,
-          { parse_mode: 'Markdown' }
-        );
-        return;
-      }
-
-      const normalizedArg = rawArg.toLowerCase();
-      if (normalizedArg === 'off' || normalizedArg === 'none' || normalizedArg === 'default') {
-        await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
-        await ctx.reply('Modo agente desactivado para esta conversación. Volvemos al modelo principal.');
-        return;
-      }
-
-      const selectedAgent = agents.find((agent) => {
-        const candidateName = agent.name.toLowerCase();
-        return candidateName === normalizedArg || candidateName.includes(normalizedArg);
-      });
-
-      if (!selectedAgent) {
-        await ctx.reply(`No encontré un agente llamado "${rawArg}". Usa \`/agent\` para ver la lista.`);
-        return;
-      }
-
-      await ctx.memoryService.setConversationActiveAgent(conversationId, userId, selectedAgent.id);
-      await ctx.reply(
-        `Agente *${selectedAgent.name}* activado para esta conversación.\nModelo: \`${selectedAgent.provider}/${selectedAgent.model}\``,
-        { parse_mode: 'Markdown' }
-      );
-    } catch (error) {
-      console.error('[Telegram] Error processing /agent command:', error);
-      await ctx.reply('Error al configurar el agente.');
-    } finally {
-      typingSession.stop();
-    }
+  bot.command('agents', async (ctx) => {
+    const messageText = 'text' in ctx.message ? ctx.message.text : '';
+    await executeAgentCommand(ctx, messageText || '');
   });
 
   bot.command('update', async (ctx) => {

@@ -3,8 +3,13 @@ import type { EnzoContext } from '../bot.js';
 import type { Step } from '@enzo/core';
 import { LanguageMiddleware } from '@enzo/core';
 import { startTyping } from '../typing.js';
+import { tryHandleAgentCommandText } from './commands.js';
 
 const MAX_MESSAGE_LENGTH = 4096;
+
+function isTelegramAgentAutorouteEnabled(): boolean {
+  return (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true';
+}
 
 function getAllowedUsers(): Set<string> {
   return new Set(
@@ -83,7 +88,7 @@ async function processMessageInBackground(
     console.log(`[Telegram] Language: ${langContext.userLanguage}, translated: ${langContext.wasTranslated}`);
 
     let routedAgentId: string | undefined;
-    if (!explicitAgentId) {
+    if (!explicitAgentId && isTelegramAgentAutorouteEnabled()) {
       const routedAgent = await ctx.orchestrator.routeAgentForMessage(workingMessage, userId);
       routedAgentId = routedAgent?.id;
       if (routedAgentId) {
@@ -208,6 +213,17 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
     if (!allowedUsers.has(userId)) {
       console.warn(`[Telegram] Unauthorized access attempt from user ${userId}`);
       await ctx.reply('No tienes acceso a Enzo.');
+      return;
+    }
+
+    if (await tryHandleAgentCommandText(ctx, messageText)) {
+      return;
+    }
+
+    const entities = ctx.message.entities;
+    const firstEntity = entities?.[0];
+    if (firstEntity?.type === 'bot_command' && firstEntity.offset === 0) {
+      await ctx.reply('Comando no reconocido. Usa /help para ver la lista.');
       return;
     }
 
