@@ -125,6 +125,11 @@ export class MemoryService {
     console.log(`[Memory] History cleared for conversationId: ${conversationId}`);
   }
 
+  async resetConversationContext(conversationId: string, userId: string): Promise<void> {
+    await this.clearHistory(conversationId);
+    await this.setConversationActiveAgent(conversationId, userId, undefined);
+  }
+
   async createConversation(userId: string): Promise<string> {
     const id = uuidv4();
     const now = Date.now();

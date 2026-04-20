@@ -2,11 +2,16 @@ import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
 import { startTyping } from '../typing.js';
 import { spawn } from 'child_process';
+import {
+  clearCurrentConversation,
+  getCurrentConversationId,
+  startNewConversation,
+} from './conversationState.js';
 
 let updateInProgress = false;
 
-function getConversationId(ctx: EnzoContext, userId: string): string {
-  return (ctx as any).newConversationId || `telegram_${userId}`;
+function getConversationId(userId: string): string {
+  return getCurrentConversationId(userId);
 }
 
 function stripAgentCommandPrefix(rawText: string): string {
@@ -32,7 +37,7 @@ async function getAgentsForTelegramUser(ctx: EnzoContext, userId: string) {
 
 async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promise<void> {
   const userId = String(ctx.from?.id || '');
-  const conversationId = getConversationId(ctx, userId);
+  const conversationId = getConversationId(userId);
   const rawArg = stripAgentCommandPrefix(messageText || '');
   const typingSession = startTyping(ctx);
 
@@ -185,14 +190,10 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
   });
 
   bot.command('new', async (ctx) => {
-    // Clear conversation context by creating a new conversationId
-    // The next message will start fresh
     const userId = String(ctx.from?.id || '');
-    const currentConversationId = `telegram_${userId}_${Date.now()}`;
-    
-    // Store in context for next use
-    (ctx as any).newConversationId = currentConversationId;
-    
+    const conversationId = startNewConversation(userId);
+    await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
+
     await ctx.reply('Nueva conversación iniciada. ¿En qué te ayudo?', {
       parse_mode: 'Markdown',
     });
@@ -200,16 +201,13 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
 
   bot.command('clear', async (ctx) => {
     const userId = String(ctx.from?.id || '');
-    const conversationId = `telegram_${userId}`;
+    const conversationId = getCurrentConversationId(userId);
     const typingSession = startTyping(ctx);
-    
+
     try {
-      // Clear conversation history from database
-      await (ctx.memoryService as any).clearHistory(conversationId);
-      
-      // Also start a new conversation ID for next message
-      (ctx as any).newConversationId = `telegram_${userId}_${Date.now()}`;
-      
+      await ctx.memoryService.resetConversationContext(conversationId, userId);
+      clearCurrentConversation(userId);
+
       await ctx.reply('✅ Historial de conversación limpiado. Empecemos de nuevo.', {
         parse_mode: 'Markdown',
       });

@@ -4,12 +4,9 @@ import type { Step } from '@enzo/core';
 import { LanguageMiddleware } from '@enzo/core';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';
+import { getCurrentConversationId } from './conversationState.js';
 
 const MAX_MESSAGE_LENGTH = 4096;
-
-function isTelegramAgentAutorouteEnabled(): boolean {
-  return (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true';
-}
 
 function getAllowedUsers(): Set<string> {
   return new Set(
@@ -87,22 +84,7 @@ async function processMessageInBackground(
     const workingMessage = langContext.translatedInput;
     console.log(`[Telegram] Language: ${langContext.userLanguage}, translated: ${langContext.wasTranslated}`);
 
-    let routedAgentId: string | undefined;
-    if (!explicitAgentId && isTelegramAgentAutorouteEnabled()) {
-      const routedAgent = await ctx.orchestrator.routeAgentForMessage(workingMessage, userId);
-      routedAgentId = routedAgent?.id;
-      if (routedAgentId) {
-        console.log(`[Telegram] Auto-routed to agent: ${routedAgentId}`);
-        try {
-          // Sticky auto-routing: keep selected agent for this conversation
-          // so follow-up turns continue with the same specialist unless user disables it.
-          await ctx.memoryService.setConversationActiveAgent(conversationId, userId, routedAgentId);
-        } catch (error) {
-          console.warn('[Telegram] Failed to persist auto-routed agent:', error);
-        }
-      }
-    }
-    const resolvedAgentId = explicitAgentId || routedAgentId;
+    const resolvedAgentId = explicitAgentId;
 
     // Step 2: Classify using the working message (in English)
     const complexityLevel = await ctx.orchestrator.classify(workingMessage, userId);
@@ -227,9 +209,7 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
       return;
     }
 
-    // Generate conversation ID (check if new command was used)
-    const conversationId = (ctx as any).newConversationId || `telegram_${userId}`;
-    (ctx as any).newConversationId = undefined; // Reset for next message
+    const conversationId = getCurrentConversationId(userId);
 
     let explicitAgentId: string | undefined;
     try {
