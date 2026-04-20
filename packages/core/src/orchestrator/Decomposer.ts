@@ -60,6 +60,11 @@ CRITICAL — for execute_command, the "input" field MUST be the exact shell comm
 - Combined: "input": "mkdir -p /dest && mv /src/file1 /src/file2 /dest/"
 NEVER put just a path in "input" — always put the full shell command.
 
+PLACEHOLDER PATHS — ABSOLUTELY FORBIDDEN in execute_command:
+- Never use invented templates: /path/to/..., path/to/, <path>, YOUR_PATH_HERE, example/folder
+- Only use absolute paths that appear VERBATIM in the user's message or in CONVERSATION CONTEXT (e.g. /home/franco/Projects)
+- If the user asks for abstract "task management" or "organize my work/life" without giving real directories to move: return "steps": [] (empty array) — do NOT invent mkdir/mv commands
+
 Respond ONLY with valid JSON, no extra text:
 {
   "steps": [
@@ -82,7 +87,7 @@ Respond ONLY with valid JSON, no extra text:
 
 IMPORTANT: The "dependsOn" field is REQUIRED in every step. First step MUST have "dependsOn": null. Never omit it.
 
-FILE ORGANIZATION TASKS (when the user asks to move, organize, or tidy a folder):
+FILE ORGANIZATION TASKS (only when the user names a REAL absolute folder to tidy, e.g. "organize /Users/me/Downloads"):
 - If the file list is NOT in context: generate 2 steps:
   Step 1: execute_command with "input": "ls /absolute/path/to/folder", "dependsOn": null
   Step 2: execute_command with "input": "organize files using ls output", "dependsOn": 1
@@ -90,6 +95,7 @@ FILE ORGANIZATION TASKS (when the user asks to move, organize, or tidy a folder)
   Step 1: execute_command with the complete mkdir+mv command directly, "dependsOn": null
 - NEVER use relative paths — every path must start with /
 - "input" for execute_command MUST be the actual shell command, never just a folder path
+- If there is no real path in the user message or context: return "steps": [] — do not guess paths
 
 CRITICAL RULES:
 - Use the MINIMUM number of steps — never add intermediate steps that are not necessary
@@ -141,19 +147,24 @@ That is ALL — 2 steps only.`;
 
       const parsed = JSON.parse(jsonMatch);
 
-      if (!parsed.steps || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+      if (!parsed.steps || !Array.isArray(parsed.steps)) {
         console.warn('[Decomposer] Invalid steps array, using single-step fallback');
         return this.singleStepFallback(message);
       }
 
       const normalizedSteps = this.rewritePdfReadStepsToMcp(message, parsed.steps, availableTools);
+      const sanitized = this.stripInvalidExecuteCommandSteps(normalizedSteps);
+      if (sanitized.length === 0) {
+        console.warn('[Decomposer] All steps removed (placeholders or invalid shell) — returning empty plan');
+        return { steps: [], originalMessage: message };
+      }
 
-      console.log(`[Decomposer] Decomposed into ${normalizedSteps.length} step(s):`,
-        normalizedSteps.map((s: Subtask) => `${s.id}. ${s.tool}: ${s.description}`).join(' → ')
+      console.log(`[Decomposer] Decomposed into ${sanitized.length} step(s):`,
+        sanitized.map((s: Subtask) => `${s.id}. ${s.tool}: ${s.description}`).join(' → ')
       );
 
       return {
-        steps: normalizedSteps,
+        steps: sanitized,
         originalMessage: message,
       };
     } catch (error) {
@@ -182,6 +193,33 @@ That is ALL — 2 steps only.`;
       }
     }
     return null;
+  }
+
+  private static commandContainsPlaceholderPath(text: string): boolean {
+    const t = text.toLowerCase();
+    return (
+      /\/path\/to\b/i.test(t) ||
+      /\bpath\/to\//i.test(t) ||
+      /<path/i.test(t) ||
+      /\byour_path_here\b/i.test(t) ||
+      /\bexample\/folder\b/i.test(t)
+    );
+  }
+
+  /**
+   * If any execute_command uses template paths, drop the whole decomposition so AmplifierLoop
+   * can synthesize a safe reply (partial removal would break dependsOn chains).
+   */
+  private stripInvalidExecuteCommandSteps(steps: Subtask[]): Subtask[] {
+    const bad = steps.some(
+      (s) =>
+        s.tool === 'execute_command' && Decomposer.commandContainsPlaceholderPath(String(s.input ?? ''))
+    );
+    if (bad) {
+      console.warn('[Decomposer] Placeholder path in execute_command — clearing all decomposition steps');
+      return [];
+    }
+    return steps;
   }
 
   // Fallback: tratar el mensaje como una sola subtarea sin tool específica

@@ -329,12 +329,43 @@ export class AmplifierLoop {
   private validateToolInput(toolName: string, input: any): string | null {
     const schema = this.getToolSchema(toolName);
     const result = ToolCallValidator.validate(input ?? {}, schema);
-    if (result.valid) return null;
-    const detail = result.issues
-      .slice(0, 3)
-      .map((issue) => `${issue.path} ${issue.message}`)
-      .join('; ');
-    return `invalid input for ${toolName}: ${detail}`;
+    if (!result.valid) {
+      const detail = result.issues
+        .slice(0, 3)
+        .map((issue) => `${issue.path} ${issue.message}`)
+        .join('; ');
+      return `invalid input for ${toolName}: ${detail}`;
+    }
+    if (toolName === 'execute_command') {
+      const cmd =
+        typeof input?.command === 'string' ? input.command : typeof input === 'string' ? input : '';
+      if (cmd && this.textContainsPlaceholderPath(cmd)) {
+        return 'command contains placeholder paths (/path/to/...) — use a real absolute path from the user message';
+      }
+    }
+    return null;
+  }
+
+  private textContainsPlaceholderPath(text: string): boolean {
+    return /\/path\/to\b|\bpath\/to\/|<path|your_path_here|example\/folder/i.test(text || '');
+  }
+
+  private shellOutputIndicatesFailure(output: string): boolean {
+    const lo = (output || '').toLowerCase();
+    return (
+      lo.startsWith('error:') ||
+      lo.includes('no such file') ||
+      lo.includes('command failed') ||
+      lo.includes('comando fall') ||
+      lo.includes('permiso denegado') ||
+      lo.includes('permission denied') ||
+      lo.includes('cannot stat') ||
+      lo.includes('no existe el archivo') ||
+      lo.includes('no se puede') ||
+      lo.includes('denied') ||
+      lo.includes('command not found') ||
+      lo.includes('failed:')
+    );
   }
 
   private shouldReturnRawToolOutput(toolName: string, userMessage: string, toolOutput: string): boolean {
@@ -1296,28 +1327,32 @@ Do NOT search for more information. Use what is provided.`;
         const lastStepOutput = stepLines.length > 0
           ? (stepLines[stepLines.length - 1].replace(/^Step \d+ \(execute_command\): /, '').trim())
           : accumulatedContext.trim();
-        const hasError = lastStepOutput.toLowerCase().startsWith('error:') || lastStepOutput.toLowerCase().includes('no such file');
+        const hasError =
+          this.shellOutputIndicatesFailure(lastStepOutput) || this.shellOutputIndicatesFailure(accumulatedContext);
+        const hasPlaceholder =
+          this.textContainsPlaceholderPath(lastStepOutput) || this.textContainsPlaceholderPath(accumulatedContext);
         const lang = input.userLanguage ?? 'en';
         const shouldReturnRaw = this.shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
-        // Don't include raw command text in success message — LanguageMiddleware would mangle it.
-        // For errors, include the error output so the user knows what failed.
-        const directContent = hasError
-          ? (lang === 'es' ? `Error al ejecutar el comando:\n${lastStepOutput}` : `Command failed:\n${lastStepOutput}`)
-          : shouldReturnRaw
+        if (!hasError && !hasPlaceholder) {
+          const directContent = shouldReturnRaw
             ? lastStepOutput
             : (lang === 'es' ? `Listo, operación completada.` : `Done, operation completed.`);
-        console.log('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
-        return {
-          content: directContent,
-          requestId,
-          stepsUsed: steps,
-          modelsUsed: Array.from(modelsUsed),
-          toolsUsed: Array.from(toolsUsed),
-          injectedSkills: Array.from(injectedSkills.values()),
-          durationMs: Date.now() - startTime,
-          stageMetrics,
-          complexityUsed: ComplexityLevel.COMPLEX,
-        };
+          console.log('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
+          return {
+            content: directContent,
+            requestId,
+            stepsUsed: steps,
+            modelsUsed: Array.from(modelsUsed),
+            toolsUsed: Array.from(toolsUsed),
+            injectedSkills: Array.from(injectedSkills.values()),
+            durationMs: Date.now() - startTime,
+            stageMetrics,
+            complexityUsed: ComplexityLevel.COMPLEX,
+          };
+        }
+        console.log(
+          '[AmplifierLoop] execute_command-only path had failure or placeholder — synthesizing user-facing explanation'
+        );
       }
 
       const complexSynthStart = Date.now();

@@ -107,9 +107,10 @@ export class Orchestrator {
     return this.memoryExtractor;
   }
 
-  async classify(message: string, userId: string): Promise<ComplexityLevel> {
+  async classify(message: string, userId: string, conversationId?: string): Promise<ComplexityLevel> {
     this.syncBaseProviderFromConfig();
-    const history = await this.loadHistory(`telegram_${userId}`);
+    const cid = conversationId ?? `telegram_${userId}`;
+    const history = await this.loadHistory(cid);
     const classification = await this.classifier.classify(message, history);
     console.log(`[Orchestrator] classify() - Message classified as: ${classification.level}`);
     return classification.level;

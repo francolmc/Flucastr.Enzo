@@ -17,6 +17,10 @@ export class Classifier {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
       return { level: ComplexityLevel.SIMPLE, reason: 'trivial message' };
     }
+    if (this.isLikelyAbstractLifePlanningWithoutPaths(normalizedMessage)) {
+      console.log('[Classifier] Fast-path life/task planning (no paths) → SIMPLE');
+      return { level: ComplexityLevel.SIMPLE, reason: 'abstract task or daily planning without concrete file paths' };
+    }
     if (this.isLikelyChainedTask(normalizedMessage)) {
       return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow' };
     }
@@ -38,6 +42,8 @@ SIMPLE — direct conversation, no tools needed:
 - Casual conversation, confirmations, thank you, follow-ups
 - Math: "2+2", "what is 15% of 200"
 - Anything answerable without external data or file access
+- Planning / coaching / lists: "help me manage my day", "daily routine tips", "how should I organize my tasks" when the user did NOT give a concrete absolute folder path to operate on
+- Spanish: "gestión del día a día", "gestionar tareas personales", "necesito organizar mi tiempo" without a path like /home/... or /Users/...
 
 MODERATE — needs exactly ONE tool:
 - Web search: "search for...", "look up...", "what does the web say about...", "busca..."
@@ -55,8 +61,9 @@ COMPLEX — when there are 2 or more chained actions, OR when reorganizing/movin
 - "search X and then create a file with the result"
 - "read file Y and summarize it into a new file Z"
 - "look up X, then save what you find to a file"
-- Moving/organizing multiple files or folders into a new location (requires mkdir + mv)
-- "move those folders to X", "put those files in a new folder", "meter esas carpetas en X", "organiza esas carpetas"
+- Moving/organizing multiple files or folders into a new location (requires mkdir + mv) when the user points to REAL paths or files to move
+- "move those folders to X", "put those files in a new folder", "meter esas carpetas en X", "organiza esas carpetas" (with concrete /path or clearly referenced files)
+- NOT COMPLEX for abstract life/task planning without paths — that is SIMPLE (conversation only)
 - Tasks where you explicitly need to do action A THEN use its output for action B
 - NEVER COMPLEX for simple personal statements, even if they contain "and"
   "I am a developer and I live in X" = MODERATE (two facts to remember, not chained actions)
@@ -85,6 +92,8 @@ Examples:
 "move those folders to IntroProgra" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv multiple items"}
 "meter esas carpetas en una carpeta nueva" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv"}
 "llama a https://api.x.com/data y guárdalo en un archivo" → {"level":"COMPLEX","reason":"chained: curl API call then write file"}
+"necesito gestionar tareas personales y de todos mis trabajos" → {"level":"SIMPLE","reason":"planning conversation, no concrete paths or file ops"}
+"ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
 
 ONLY JSON. NOTHING ELSE.`;
 
@@ -111,6 +120,38 @@ ONLY JSON. NOTHING ELSE.`;
       console.error('Classifier.classify() error:', error);
       return this.fallbackClassification(message, 'Classification failed due to error');
     }
+  }
+
+  /** True if the message likely contains a concrete absolute path the shell should use. */
+  private messageContainsLikelyAbsolutePath(message: string): boolean {
+    if (/(?:^|\s|["'])(\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|usr|root)\b\/[\S]*)/i.test(message)) {
+      return true;
+    }
+    if (/(?:^|\s|["'])([A-Za-z]:\\[^\s]+)/.test(message)) {
+      return true;
+    }
+    if (/(?:^|\s|["'])(\/[\w.-]+(?:\/[\w.-]+)+)(?:\s|$|[,'"`])/m.test(message)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Task/life planning in natural language without a filesystem path — should stay conversational (SIMPLE).
+   */
+  private isLikelyAbstractLifePlanningWithoutPaths(message: string): boolean {
+    if (this.messageContainsLikelyAbsolutePath(message)) {
+      return false;
+    }
+    const n = message.toLowerCase();
+    const planningPhrase =
+      /\b(gesti[oó]n\s+(del\s+)?d[ií]a|gesti[oó]n\s+de\s+(mi|tu|su)\s+d[ií]a|gesti[oó]n\s+.*\bd[ií]a\s+a\s+d[ií]a|d[ií]a\s+a\s+d[ií]a|gestionar\s+(mis\s+)?tareas|rutinas?\s+diarias?|recordatorios|pomodoro|planificaci[oó]n\s+personal|ay[úu]dame\s+a\s+organizar\s+mi\s+d[ií]a|ayuda\s+con\s+(la\s+)?gesti[oó]n|help\s+me\s+(manage|plan)\s+(my\s+)?(tasks|day)|daily\s+planning|task\s+management)\b/i.test(
+        n
+      );
+    const spanishWorkLifeIntent =
+      /\b(tareas?\s+personales|todos?\s+mis\s+trabajos|mis\s+trabajos)\b/i.test(n) &&
+      /\b(gestionar|gesti[oó]n|organizar|necesito|ayuda)\b/i.test(n);
+    return planningPhrase || spanishWorkLifeIntent;
   }
 
   private hasActionVerb(message: string): boolean {

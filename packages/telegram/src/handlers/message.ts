@@ -89,7 +89,7 @@ async function processMessageInBackground(
     const resolvedAgentId = explicitAgentId;
 
     // Step 2: Classify using the working message (in English)
-    const complexityLevel = await ctx.orchestrator.classify(workingMessage, userId);
+    const complexityLevel = await ctx.orchestrator.classify(workingMessage, userId, conversationId);
     console.log(`[Telegram] Classified as: ${complexityLevel}`);
 
     // Step 3: Only show progress message for non-SIMPLE tasks

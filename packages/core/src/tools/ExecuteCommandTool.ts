@@ -45,6 +45,14 @@ export class ExecuteCommandTool implements ExecutableTool {
         };
       }
 
+      if (this.containsPlaceholderPath(command)) {
+        return {
+          success: false,
+          error:
+            'Command refused: it contains template paths like /path/to/... Use a real absolute path from the user.',
+        };
+      }
+
       const { stdout, stderr } = await execAsync(command, {
         timeout: 30000,
         maxBuffer: 10 * 1024 * 1024,
@@ -64,6 +72,17 @@ export class ExecuteCommandTool implements ExecutableTool {
         error: errorMessage,
       };
     }
+  }
+
+  private containsPlaceholderPath(command: string): boolean {
+    const t = command.toLowerCase();
+    return (
+      /\/path\/to\b/.test(t) ||
+      /\bpath\/to\//.test(t) ||
+      /<path/i.test(t) ||
+      /\byour_path_here\b/i.test(t) ||
+      /\bexample\/folder\b/i.test(t)
+    );
   }
 
   private isBlocked(command: string): boolean {
