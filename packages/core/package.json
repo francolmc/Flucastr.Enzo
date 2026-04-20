@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "pnpm run build && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js"
+    "test": "pnpm run build && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js && node dist/orchestrator/__tests__/CoreFlowAudit.test.js && node dist/providers/__tests__/RetryPolicy.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

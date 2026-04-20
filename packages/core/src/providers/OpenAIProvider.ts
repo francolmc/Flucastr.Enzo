@@ -1,4 +1,5 @@
 import { CompletionRequest, CompletionResponse, LLMProvider, ToolCall } from './types.js';
+import { fetchWithRetry } from './retry.js';
 
 export class OpenAIProvider implements LLMProvider {
   name = 'openai';
@@ -34,7 +35,7 @@ export class OpenAIProvider implements LLMProvider {
           : {}),
       };
 
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      const response = await fetchWithRetry(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,

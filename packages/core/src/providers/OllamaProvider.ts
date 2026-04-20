@@ -1,4 +1,5 @@
 import { CompletionRequest, CompletionResponse, LLMProvider, ToolCall } from './types.js';
+import { fetchWithRetry } from './retry.js';
 
 export class OllamaProvider implements LLMProvider {
   name = 'ollama';
@@ -19,7 +20,7 @@ export class OllamaProvider implements LLMProvider {
         ...(request.tools && { tools: request.tools }),
       };
 
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
+      const response = await fetchWithRetry(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

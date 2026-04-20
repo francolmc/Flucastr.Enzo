@@ -34,6 +34,18 @@ async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function extractMemoryInBackground(
+  orchestrator: Orchestrator,
+  userId: string,
+  userMessage: string,
+  assistantResponse: string
+): void {
+  const memoryExtractor = orchestrator.getMemoryExtractor();
+  memoryExtractor.extractAndSave(userId, userMessage, assistantResponse).catch((error) => {
+    console.error('[Chat] Memory extraction error:', error);
+  });
+}
+
 export function createChatRouter(
   orchestrator: Orchestrator,
   memoryService: MemoryService
@@ -59,6 +71,8 @@ export function createChatRouter(
           agentId,
         });
       });
+
+      extractMemoryInBackground(orchestrator, userId, message, response.content);
 
       res.json({
         content: response.content,
@@ -139,6 +153,8 @@ export function createChatRouter(
           },
         });
       });
+
+      extractMemoryInBackground(orchestrator, userId, message, response.content);
 
       contentBuffer = response.content;
 

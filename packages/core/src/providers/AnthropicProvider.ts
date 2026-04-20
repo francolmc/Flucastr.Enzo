@@ -1,4 +1,5 @@
 import { CompletionRequest, CompletionResponse, LLMProvider, ToolCall } from './types.js';
+import { fetchWithRetry } from './retry.js';
 
 export class AnthropicProvider implements LLMProvider {
   name = 'anthropic';
@@ -46,7 +47,7 @@ export class AnthropicProvider implements LLMProvider {
           : {}),
       };
 
-      let response = await fetch('https://api.anthropic.com/v1/messages', {
+      let response = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'x-api-key': this.apiKey,
@@ -77,7 +78,7 @@ export class AnthropicProvider implements LLMProvider {
               ...body,
               model: resolvedModel,
             };
-            response = await fetch('https://api.anthropic.com/v1/messages', {
+            response = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
               method: 'POST',
               headers: {
                 'x-api-key': this.apiKey,
@@ -190,7 +191,7 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/models', {
+      const response = await fetchWithRetry('https://api.anthropic.com/v1/models', {
         headers: {
           'x-api-key': this.apiKey,
           'anthropic-version': '2023-06-01',

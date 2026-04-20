@@ -1,4 +1,5 @@
 import { CompletionRequest, CompletionResponse, LLMProvider, ToolCall } from './types.js';
+import { fetchWithRetry } from './retry.js';
 
 interface GeminiPart {
   text?: string;
@@ -57,7 +58,7 @@ export class GeminiProvider implements LLMProvider {
         },
       };
 
-      const response = await fetch(
+      const response = await fetchWithRetry(
         `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
         {
           method: 'POST',
