@@ -9,6 +9,7 @@ export interface Memory {
 
 export interface UsageStat {
   id: string;
+  requestId?: string;
   conversationId: string;
   userId: string;
   source: 'web' | 'telegram' | 'unknown';
@@ -18,6 +19,12 @@ export interface UsageStat {
   outputTokens: number;
   estimatedCostUsd: number;
   durationMs: number;
+  stageMetrics?: Record<string, {
+    count: number;
+    errorCount: number;
+    totalDurationMs: number;
+    maxDurationMs: number;
+  }>;
   toolsUsed: string[];
   complexityLevel: string;
   createdAt: number;

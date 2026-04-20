@@ -26,6 +26,8 @@ export class OllamaProvider implements LLMProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+      }, {
+        providerName: this.name,
       });
 
       if (!response.ok) {
@@ -62,7 +64,10 @@ export class OllamaProvider implements LLMProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/tags`);
+      const response = await fetchWithRetry(`${this.baseUrl}/api/tags`, {}, {
+        providerName: this.name,
+        maxAttempts: 1,
+      });
       return response.ok;
     } catch (error) {
       console.error(`OllamaProvider.isAvailable() error:`, error);

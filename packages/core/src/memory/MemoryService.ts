@@ -197,12 +197,13 @@ export class MemoryService {
     });
     await this.runAsync(
       `INSERT INTO usage_stats (
-        id, conversationId, userId, source, provider, model, inputTokens, outputTokens,
-        estimatedCostUsd, durationMs, toolsUsed, complexityLevel, createdAt
+        id, requestId, conversationId, userId, source, provider, model, inputTokens, outputTokens,
+        estimatedCostUsd, durationMs, stageMetrics, toolsUsed, complexityLevel, createdAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         stats.id,
+        stats.requestId || null,
         stats.conversationId,
         stats.userId,
         stats.source,
@@ -212,6 +213,7 @@ export class MemoryService {
         stats.outputTokens,
         stats.estimatedCostUsd,
         stats.durationMs,
+        stats.stageMetrics ? JSON.stringify(stats.stageMetrics) : null,
         JSON.stringify(stats.toolsUsed),
         stats.complexityLevel,
         stats.createdAt
@@ -250,6 +252,7 @@ export class MemoryService {
 
     const mapped = rows.map(row => ({
       id: row.id,
+      requestId: row.requestId || undefined,
       conversationId: row.conversationId,
       userId: row.userId,
       source: row.source || 'unknown',
@@ -259,6 +262,7 @@ export class MemoryService {
       outputTokens: row.outputTokens,
       estimatedCostUsd: typeof row.estimatedCostUsd === 'number' ? row.estimatedCostUsd : 0,
       durationMs: row.durationMs,
+      stageMetrics: this.safeParseStageMetrics(row.stageMetrics),
       toolsUsed: this.safeParseToolsUsed(row.toolsUsed),
       complexityLevel: row.complexityLevel,
       createdAt: row.createdAt,
@@ -311,6 +315,23 @@ export class MemoryService {
       };
     } catch {
       return {};
+    }
+  }
+
+  private safeParseStageMetrics(
+    value: unknown
+  ): UsageStat['stageMetrics'] | undefined {
+    if (typeof value !== 'string' || value.length === 0) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== 'object') {
+        return undefined;
+      }
+      return parsed as UsageStat['stageMetrics'];
+    } catch {
+      return undefined;
     }
   }
 

@@ -91,6 +91,7 @@ export class DatabaseManager {
     db.exec(`
       CREATE TABLE IF NOT EXISTS usage_stats (
         id TEXT PRIMARY KEY,
+        requestId TEXT,
         conversationId TEXT NOT NULL,
         userId TEXT NOT NULL,
         source TEXT NOT NULL,
@@ -105,6 +106,8 @@ export class DatabaseManager {
         createdAt INTEGER NOT NULL
       );
     `);
+    this.ensureColumnExists(db, 'usage_stats', 'requestId', 'TEXT');
+    this.ensureColumnExists(db, 'usage_stats', 'stageMetrics', 'TEXT');
     db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
@@ -278,8 +281,8 @@ export class DatabaseManager {
 
       const insertUsage = importDb.prepare(
         `INSERT OR IGNORE INTO usage_stats
-         (id, conversationId, userId, source, provider, model, inputTokens, outputTokens, estimatedCostUsd, durationMs, toolsUsed, complexityLevel, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, requestId, conversationId, userId, source, provider, model, inputTokens, outputTokens, estimatedCostUsd, durationMs, stageMetrics, toolsUsed, complexityLevel, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const row of store.usage_stats) {
         const toolsUsed =
@@ -288,6 +291,7 @@ export class DatabaseManager {
             : JSON.stringify(Array.isArray(row.toolsUsed) ? row.toolsUsed : []);
         insertUsage.run(
           row.id,
+          row.requestId ?? null,
           row.conversationId,
           row.userId,
           row.source ?? 'unknown',
@@ -297,6 +301,7 @@ export class DatabaseManager {
           Number(row.outputTokens ?? 0),
           Number(row.estimatedCostUsd ?? 0),
           Number(row.durationMs ?? 0),
+          row.stageMetrics ? JSON.stringify(row.stageMetrics) : null,
           toolsUsed,
           row.complexityLevel ?? 'UNKNOWN',
           Number(row.createdAt ?? Date.now())

@@ -1,0 +1,22 @@
+[
+  {
+    "message": "hola",
+    "expectedLevel": "SIMPLE"
+  },
+  {
+    "message": "busca noticias de IA",
+    "expectedLevel": "MODERATE"
+  },
+  {
+    "message": "lee /Users/franco/Downloads/notes.md y crea un resumen en /Users/franco/Downloads/resumen.md",
+    "expectedLevel": "COMPLEX"
+  },
+  {
+    "message": "what is the capital of Chile?",
+    "expectedLevel": "SIMPLE"
+  },
+  {
+    "message": "remember that my favorite color is blue",
+    "expectedLevel": "MODERATE"
+  }
+]

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { Orchestrator, Step, MemoryService, ConversationRecord } from '@enzo/core';
 import { validateChatRequest } from '../middleware/validate.js';
+import { randomUUID } from 'crypto';
 
 // Type for SSE stream events
 interface StreamEvent {
@@ -55,6 +56,7 @@ export function createChatRouter(
   router.post('/api/chat', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const requestId = req.header('x-request-id') || randomUUID();
 
       let finalConversationId = conversationId;
       if (!finalConversationId) {
@@ -69,6 +71,7 @@ export function createChatRouter(
           userId,
           source: 'web',
           agentId,
+          requestId,
         });
       });
 
@@ -83,6 +86,7 @@ export function createChatRouter(
         injectedSkills: response.injectedSkills,
         durationMs: response.durationMs,
         estimatedCostUsd: response.usage?.estimatedCostUsd ?? 0,
+        requestId: response.requestId || requestId,
       });
     } catch (error) {
       console.error('[POST /api/chat] error:', error);
@@ -98,6 +102,7 @@ export function createChatRouter(
   router.post('/api/chat/stream', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const requestId = req.header('x-request-id') || randomUUID();
       const startTime = Date.now();
 
       let finalConversationId = conversationId;
@@ -118,6 +123,7 @@ export function createChatRouter(
           type: 'start',
           data: {
             conversationId: finalConversationId,
+            requestId,
             message: 'Processing your message...',
           },
         })
@@ -136,6 +142,7 @@ export function createChatRouter(
           userId,
           source: 'web',
           agentId,
+          requestId,
           onProgress: (step: Step) => {
             progressCount++;
             // Send progress event every step
@@ -146,6 +153,7 @@ export function createChatRouter(
                   step: step.type,
                   substep: step.target || '',
                   progressNumber: progressCount,
+                  requestId: step.requestId || requestId,
                 },
               })
             );
@@ -186,6 +194,7 @@ export function createChatRouter(
             injectedSkills: response.injectedSkills,
             durationMs,
             usage: response.usage,
+            requestId: response.requestId || requestId,
           },
         })
       );

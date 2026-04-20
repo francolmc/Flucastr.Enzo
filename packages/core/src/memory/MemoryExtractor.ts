@@ -5,6 +5,7 @@ import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 export interface ExtractedFact {
   key: string;
   value: string;
+  confidence?: number;
 }
 
 export class MemoryExtractor {
@@ -37,6 +38,11 @@ export class MemoryExtractor {
 
       for (const fact of facts) {
         const normalizedKey = this.normalizeKey(fact.key);
+        const confidence = typeof fact.confidence === 'number' ? fact.confidence : 0.7;
+        if (confidence < this.getConfidenceThreshold()) {
+          console.log(`[MemoryExtractor] Skipping low-confidence fact "${normalizedKey}" (${confidence.toFixed(2)})`);
+          continue;
+        }
         await this.memoryService.remember(userId, normalizedKey, fact.value);
         console.log(
           `[MemoryExtractor] Saved: ${normalizedKey} = ${fact.value}` +
@@ -46,6 +52,12 @@ export class MemoryExtractor {
     } catch (error) {
       console.error('[MemoryExtractor] Error extracting facts:', error);
     }
+  }
+
+  private getConfidenceThreshold(): number {
+    const parsed = Number(process.env.ENZO_MEMORY_CONFIDENCE_THRESHOLD ?? 0.55);
+    if (!Number.isFinite(parsed)) return 0.55;
+    return Math.min(0.95, Math.max(0, parsed));
   }
 
   private normalizeKey(key: string): string {
@@ -128,13 +140,14 @@ Extract ONLY concrete, durable facts:
 - Any recurring personal context
 
 Respond ONLY with JSON:
-{"facts": [{"key": "name", "value": "Franco"}, {"key": "city", "value": "Copiapó"}]}
+{"facts": [{"key": "name", "value": "Franco", "confidence": 0.93}, {"key": "city", "value": "Copiapó", "confidence": 0.88}]}
 
 If nothing worth remembering was mentioned, respond: {"facts": []}
 
 RULES:
 - keys must be short and in English (name, city, profession, pet, project, etc.)
 - values must be concise
+- confidence must be a number between 0 and 1
 - Never extract temporary or task-specific information
 - Never extract file paths or search queries
 - Extract facts ONLY from what the USER said
@@ -176,6 +189,10 @@ RULES:
       .filter((f: any) => {
         const key = String(f.key).toLowerCase().trim();
         const value = String(f.value).trim();
+        const sensitivePattern = /(api[_ -]?key|token|password|secret|system prompt|private key|ssh key|credential)/i;
+        if (sensitivePattern.test(key) || sensitivePattern.test(value)) {
+          return false;
+        }
         // Prevent poisoning user profile with assistant self-identification
         if (key === 'name' && value.length > 0) {
           const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -185,6 +202,11 @@ RULES:
           }
         }
         return true;
-      });
+      })
+      .map((f: any) => ({
+        key: String(f.key).trim(),
+        value: String(f.value).trim(),
+        confidence: typeof f.confidence === 'number' ? f.confidence : 0.7,
+      }));
   }
 }

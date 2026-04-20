@@ -33,16 +33,29 @@ export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none
 export interface Step {
   iteration: number;
   type: 'think' | 'act' | 'observe' | 'synthesize';
+  requestId?: string;
   action?: StepAction;
   target?: string;
   input?: string;
   output?: string;
+  durationMs?: number;
+  status?: 'ok' | 'error';
   modelUsed: string;
 }
+
+export interface StageMetricsSnapshot {
+  count: number;
+  errorCount: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+}
+
+export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize', StageMetricsSnapshot>;
 
 export interface AmplifierInput {
   message: string;
   originalMessage?: string; // Original message before any translation or processing
+  requestId?: string;
   conversationId: string;
   userId: string;
   history: Message[];
@@ -65,11 +78,13 @@ export interface AmplifierInput {
 
 export interface AmplifierResult {
   content: string;
+  requestId?: string;
   stepsUsed: Step[];
   modelsUsed: string[];
   toolsUsed: string[];
   injectedSkills: InjectedSkillUsage[];
   durationMs: number;
+  stageMetrics?: StageMetrics;
   complexityUsed?: string;
 }
 
@@ -114,6 +129,7 @@ export interface DecomposedTask {
 
 export interface OrchestratorResponse {
   content: string;
+  requestId?: string;
   complexityUsed: ComplexityLevel;
   providerUsed: string;
   modelUsed: string;
@@ -135,6 +151,7 @@ export interface ClassificationResult {
 export interface OrchestratorInput {
   message: string;
   originalMessage?: string; // Original message before any transformation
+  requestId?: string;
   conversationId: string;
   userId: string;
   source?: 'web' | 'telegram' | 'unknown';
@@ -198,8 +215,9 @@ export const AVAILABLE_TOOLS = [
       properties: {
         key: { type: 'string', description: 'Memory key (e.g., "nombre", "mascota", "profesion")' },
         value: { type: 'string', description: 'Information to save' },
+        userId: { type: 'string', description: 'User id owner of this memory' },
       },
-      required: ['key', 'value'],
+      required: ['key', 'value', 'userId'],
     },
   },
 ];

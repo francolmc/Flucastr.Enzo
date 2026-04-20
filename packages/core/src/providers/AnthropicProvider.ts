@@ -55,6 +55,8 @@ export class AnthropicProvider implements LLMProvider {
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
+      }, {
+        providerName: this.name,
       });
 
       if (!response.ok) {
@@ -86,6 +88,8 @@ export class AnthropicProvider implements LLMProvider {
                 'content-type': 'application/json',
               },
               body: JSON.stringify(body),
+            }, {
+              providerName: this.name,
             });
           }
         }
@@ -196,6 +200,8 @@ export class AnthropicProvider implements LLMProvider {
           'x-api-key': this.apiKey,
           'anthropic-version': '2023-06-01',
         },
+      }, {
+        providerName: this.name,
       });
       if (!response.ok) {
         return [];

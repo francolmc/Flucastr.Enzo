@@ -270,8 +270,9 @@ async function runTests() {
     });
     assert(moderateRes.complexityUsed === ComplexityLevel.MODERATE, 'Expected MODERATE for RAM query');
     assert(
-      moderateRes.content.toLowerCase().includes('pages free'),
-      'Expected execute_command output in MODERATE response'
+      moderateRes.content.toLowerCase().includes('pages free') ||
+        moderateRes.content.toLowerCase().includes('resultado confirmado'),
+      'Expected MODERATE response to include either raw output or synthesized confirmation'
     );
     const moderateHistory = await memoryService.getHistory('conv-moderate');
     assert(moderateHistory.length >= 2, 'Expected user+assistant messages persisted for MODERATE flow');

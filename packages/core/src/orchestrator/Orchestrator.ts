@@ -2,6 +2,7 @@ import { OllamaProvider } from '../providers/OllamaProvider.js';
 import { AnthropicProvider } from '../providers/AnthropicProvider.js';
 import { OpenAIProvider } from '../providers/OpenAIProvider.js';
 import { GeminiProvider } from '../providers/GeminiProvider.js';
+import { CircuitOpenError } from '../providers/circuitBreaker.js';
 import { Message, Tool, LLMProvider } from '../providers/types.js';
 import { Classifier } from './Classifier.js';
 import { AmplifierLoop } from './AmplifierLoop.js';
@@ -16,7 +17,6 @@ import {
   ComplexityLevel,
   OrchestratorInput,
   OrchestratorResponse,
-  AVAILABLE_TOOLS,
   AmplifierResult,
   Skill,
   AgentConfig,
@@ -117,6 +117,7 @@ export class Orchestrator {
 
   async process(input: OrchestratorInput): Promise<OrchestratorResponse> {
     const startTime = Date.now();
+    const requestId = input.requestId || uuidv4();
 
     try {
       this.syncBaseProviderFromConfig();
@@ -147,13 +148,15 @@ export class Orchestrator {
       }
 
       // Step 2: Classify the message complexity (use historyWithMemory so memory context is visible)
+      const classifyStart = Date.now();
       const classification = input.classifiedLevel
         ? { level: input.classifiedLevel, reason: 'pre-classified' }
         : await new Classifier(runtimeProvider).classify(input.message, historyWithMemory);
+      const classifyDurationMs = Date.now() - classifyStart;
       console.log(`[Orchestrator] Message classified as: ${classification.level}`);
 
       // Step 3: Resolve available capabilities
-      const tools: Tool[] = AVAILABLE_TOOLS;
+      const tools: Tool[] = this.toolRegistry.getToolDefinitions();
       
       // Add MCP tools to the available tools
       const mcpTools = this.mcpRegistry.getMCPToolsForOrchestrator();
@@ -190,6 +193,7 @@ export class Orchestrator {
       const runtimeAmplifierLoop = this.createAmplifierLoop(runtimeProvider);
       try {
         amplifierResult = await runtimeAmplifierLoop.amplify({
+          requestId,
           message: input.message,
           originalMessage: input.originalMessage,
           conversationId: input.conversationId,
@@ -208,17 +212,41 @@ export class Orchestrator {
         });
       } catch (amplifierError) {
         console.error('[Orchestrator] AmplifierLoop error:', amplifierError);
+        if (amplifierError instanceof CircuitOpenError && runtimeProvider !== this.baseProvider) {
+          console.warn(`[Orchestrator] Circuit open for "${runtimeProvider.name}". Retrying with base provider.`);
+          const fallbackLoop = this.createAmplifierLoop(this.baseProvider);
+          amplifierResult = await fallbackLoop.amplify({
+            requestId,
+            message: input.message,
+            originalMessage: input.originalMessage,
+            conversationId: input.conversationId,
+            userId: input.userId,
+            history: historyWithMemory,
+            memoryBlock,
+            availableTools: tools,
+            availableSkills: skills,
+            availableAgents: agents,
+            selectedAgent,
+            assistantProfile,
+            userProfile,
+            classifiedLevel: classification.level,
+            userLanguage: input.userLanguage ?? 'es',
+            onProgress: input.onProgress,
+          });
+        } else {
         // Return a user-friendly error message
-        const errorMsg = amplifierError instanceof Error ? amplifierError.message : String(amplifierError);
-        return {
-          content: `Tuve un problema procesando tu solicitud: ${errorMsg}. ¿Puedes intentarlo de nuevo?`,
-          complexityUsed: ComplexityLevel.SIMPLE,
-          providerUsed: 'fallback',
-          modelUsed: 'none',
-          injectedSkills: [],
-          usage: { inputTokens: 0, outputTokens: 0 },
-          durationMs: Date.now() - startTime,
-        };
+          const errorMsg = amplifierError instanceof Error ? amplifierError.message : String(amplifierError);
+          return {
+            content: `Tuve un problema procesando tu solicitud: ${errorMsg}. ¿Puedes intentarlo de nuevo?`,
+            requestId,
+            complexityUsed: ComplexityLevel.SIMPLE,
+            providerUsed: 'fallback',
+            modelUsed: 'none',
+            injectedSkills: [],
+            usage: { inputTokens: 0, outputTokens: 0 },
+            durationMs: Date.now() - startTime,
+          };
+        }
       }
 
       // Step 5: Save to memory
@@ -269,6 +297,7 @@ export class Orchestrator {
       
       const stats: UsageStat = {
         id: uuidv4(),
+        requestId,
         conversationId: input.conversationId,
         userId: input.userId,
         source,
@@ -278,6 +307,15 @@ export class Orchestrator {
         outputTokens,
         estimatedCostUsd,
         durationMs,
+        stageMetrics: {
+          classify: {
+            count: 1,
+            errorCount: 0,
+            totalDurationMs: classifyDurationMs,
+            maxDurationMs: classifyDurationMs,
+          },
+          ...(amplifierResult.stageMetrics || {}),
+        },
         toolsUsed: Array.from(statsToolsUsed),
         complexityLevel: complexityUsed,
         createdAt: Date.now(),
@@ -287,6 +325,7 @@ export class Orchestrator {
       // Step 7: Return orchestrated response
       return {
         content: assistantContent,
+        requestId,
         complexityUsed,
         providerUsed,
         modelUsed,
@@ -304,6 +343,7 @@ export class Orchestrator {
       // Return a fallback error response
       return {
         content: `Tuve un problema procesando tu solicitud: ${errorMsg}. ¿Puedes intentarlo de nuevo?`,
+        requestId,
         complexityUsed: ComplexityLevel.SIMPLE,
         providerUsed: 'fallback',
         modelUsed: 'none',

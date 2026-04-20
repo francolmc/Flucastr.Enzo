@@ -42,6 +42,8 @@ export class OpenAIProvider implements LLMProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+      }, {
+        providerName: this.name,
       });
 
       if (!response.ok) {

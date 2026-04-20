@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { MemoryService, UsageStat } from '@enzo/core';
+import { MemoryService, UsageStat, getRetryMetrics, getCircuitMetrics } from '@enzo/core';
 
 interface StatsResponse {
   totalMessages: number;
@@ -12,6 +12,8 @@ interface StatsResponse {
   byTool: Array<{ tool: string; count: number }>;
   byDay: Array<{ date: string; count: number; tokens: number; costUsd: number }>;
   averageDurationMs: number;
+  p95DurationMs: number;
+  alerts: Array<{ code: string; message: string; severity: 'warning' | 'critical'; value: number }>;
 }
 
 export function createStatsRouter(memoryService: MemoryService): Router {
@@ -150,6 +152,58 @@ export function createStatsRouter(memoryService: MemoryService): Router {
         .slice(-30);
 
       const averageDurationMs = stats.length > 0 ? Math.round(totalDuration / stats.length) : 0;
+      const sortedDurations = stats.map((item) => item.durationMs).sort((a, b) => a - b);
+      const p95Index = sortedDurations.length === 0 ? 0 : Math.floor(0.95 * (sortedDurations.length - 1));
+      const p95DurationMs = sortedDurations.length === 0 ? 0 : sortedDurations[p95Index];
+      const alerts: StatsResponse['alerts'] = [];
+      if (p95DurationMs > 25_000) {
+        alerts.push({
+          code: 'LATENCY_P95_HIGH',
+          message: 'p95 latency exceeded 25s threshold.',
+          severity: 'critical',
+          value: p95DurationMs,
+        });
+      }
+      const actStageTotals = stats.reduce(
+        (acc, stat) => {
+          const stage = stat.stageMetrics?.act;
+          if (!stage) return acc;
+          acc.count += stage.count || 0;
+          acc.errors += stage.errorCount || 0;
+          return acc;
+        },
+        { count: 0, errors: 0 }
+      );
+      const toolFailureRate = actStageTotals.count > 0 ? actStageTotals.errors / actStageTotals.count : 0;
+      if (toolFailureRate > 0.1) {
+        alerts.push({
+          code: 'TOOL_FAILURE_RATE_HIGH',
+          message: 'Tool action failure rate exceeded 10%.',
+          severity: 'warning',
+          value: Number((toolFailureRate * 100).toFixed(2)),
+        });
+      }
+      const retryMetrics = getRetryMetrics();
+      const retryRecoveryRate = retryMetrics.attemptsTotal > 0
+        ? retryMetrics.recoveredTotal / retryMetrics.attemptsTotal
+        : 1;
+      if (retryRecoveryRate < 0.7) {
+        alerts.push({
+          code: 'RETRY_RECOVERY_LOW',
+          message: 'Retry recovery ratio dropped below 70%.',
+          severity: 'warning',
+          value: Number((retryRecoveryRate * 100).toFixed(2)),
+        });
+      }
+      const circuitMetrics = getCircuitMetrics();
+      if (circuitMetrics.shortCircuitTotal > 0) {
+        alerts.push({
+          code: 'CIRCUIT_SHORT_CIRCUIT_ACTIVE',
+          message: 'Some requests are being short-circuited by provider circuit breaker.',
+          severity: 'warning',
+          value: circuitMetrics.shortCircuitTotal,
+        });
+      }
 
       const response: StatsResponse = {
         totalMessages,
@@ -162,6 +216,8 @@ export function createStatsRouter(memoryService: MemoryService): Router {
         byTool,
         byDay,
         averageDurationMs,
+        p95DurationMs,
+        alerts,
       };
 
       res.json(response);

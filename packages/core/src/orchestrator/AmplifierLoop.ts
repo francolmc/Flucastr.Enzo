@@ -1,5 +1,5 @@
 import { Message, LLMProvider, Tool } from '../providers/types.js';
-import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage } from './types.js';
+import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage, StageMetrics } from './types.js';
 import { CapabilityResolver } from './CapabilityResolver.js';
 import { ContextSynthesizer } from './ContextSynthesizer.js';
 import { EscalationManager } from './EscalationManager.js';
@@ -15,6 +15,8 @@ import { extractToolOutput } from '../utils/ToolOutputExtractor.js';
 import { FileOrganizationService } from '../services/FileOrganizationService.js';
 import path from 'path';
 import { parseFirstJsonObject, repairJsonString } from '../utils/StructuredJson.js';
+import { ToolCallValidator } from './ToolCallValidator.js';
+import { normalizeError } from './NormalizedError.js';
 
 export class AmplifierLoop {
   private baseProvider: LLMProvider;
@@ -313,36 +315,63 @@ export class AmplifierLoop {
     return null;
   }
 
-  private getRequiredInputKeys(toolName: string): string[] {
+  private getToolSchema(toolName: string): Record<string, any> | undefined {
     const internalTool = this.executableTools.find((tool) => tool.name === toolName);
-    if (internalTool) {
-      const required = internalTool.parameters?.required;
-      return Array.isArray(required) ? required.filter((item) => typeof item === 'string') : [];
-    }
+    if (internalTool) return internalTool.parameters;
 
     if (toolName.startsWith('mcp_') && this.mcpRegistry) {
-      const mcpTool = this.mcpRegistry
-        .getMCPToolsForOrchestrator()
-        .find((tool) => tool.name === toolName);
-      const required = mcpTool?.parameters?.required;
-      return Array.isArray(required) ? required.filter((item: any) => typeof item === 'string') : [];
+      const mcpTool = this.mcpRegistry.getMCPToolsForOrchestrator().find((tool) => tool.name === toolName);
+      return mcpTool?.parameters;
     }
-
-    return [];
+    return undefined;
   }
 
   private validateToolInput(toolName: string, input: any): string | null {
-    const required = this.getRequiredInputKeys(toolName);
-    if (required.length === 0) return null;
+    const schema = this.getToolSchema(toolName);
+    const result = ToolCallValidator.validate(input ?? {}, schema);
+    if (result.valid) return null;
+    const detail = result.issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path} ${issue.message}`)
+      .join('; ');
+    return `invalid input for ${toolName}: ${detail}`;
+  }
 
-    const inputObj = input && typeof input === 'object' ? input : {};
-    const missing = required.filter((key) => {
-      const value = inputObj[key];
-      return value === undefined || value === null || (typeof value === 'string' && value.trim().length === 0);
-    });
+  private shouldReturnRawToolOutput(toolName: string, userMessage: string, toolOutput: string): boolean {
+    const lowerMessage = (userMessage || '').toLowerCase();
+    const lowerOutput = (toolOutput || '').toLowerCase();
+    const rawRequested = /\b(raw|tal cual|sin resumir|exacto|stdout|output completo|ver salida)\b/i.test(lowerMessage);
+    if (rawRequested) return true;
+    if (!toolOutput) return false;
+    if (lowerOutput.startsWith('error:') || lowerOutput.includes('no such file') || lowerOutput.includes('command not found')) {
+      return true;
+    }
+    if (toolName === 'read_file' && toolOutput.length < 300) {
+      return true;
+    }
+    return false;
+  }
 
-    if (missing.length === 0) return null;
-    return `missing required input keys for ${toolName}: ${missing.join(', ')}`;
+  private initStageMetrics(): StageMetrics {
+    return {
+      think: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
+      act: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
+      observe: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
+      synthesize: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
+    };
+  }
+
+  private recordStageMetric(
+    stageMetrics: StageMetrics,
+    stage: keyof StageMetrics,
+    durationMs: number,
+    ok: boolean
+  ): void {
+    const snapshot = stageMetrics[stage];
+    snapshot.count += 1;
+    snapshot.totalDurationMs += durationMs;
+    snapshot.maxDurationMs = Math.max(snapshot.maxDurationMs, durationMs);
+    if (!ok) snapshot.errorCount += 1;
   }
 
   private async requestToolInputCorrection(
@@ -382,6 +411,8 @@ No markdown. No prose.`;
   async amplify(input: AmplifierInput): Promise<AmplifierResult> {
     const startTime = Date.now();
     const steps: Step[] = [];
+    const requestId = input.requestId;
+    const stageMetrics = this.initStageMetrics();
     const modelsUsed = new Set<string>();
     const toolsUsed = new Set<string>();
 
@@ -521,6 +552,7 @@ If responding with plain text (no tool), write in this language.`;
 
       // Primera llamada: el modelo decide y genera el input de tool en un solo paso
       let firstResponse;
+      const fastThinkStart = Date.now();
       try {
         firstResponse = await this.withTimeout(
           this.baseProvider.complete({
@@ -533,8 +565,10 @@ If responding with plain text (no tool), write in this language.`;
         );
       } catch (err) {
         console.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
+        this.recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
         throw err;
       }
+      this.recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
 
       const rawContent = (firstResponse.content ?? '').trim();
       console.log('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
@@ -657,13 +691,14 @@ If responding with plain text (no tool), write in this language.`;
                 let rawToolOutput = '';
                 let setupError: string | undefined;
 
+                const actStart = Date.now();
                 if (resolved.kind === 'internal') {
                   const tool = this.executableTools.find((t) => t.name === execName);
                   if (!tool) {
                     setupError = `Herramienta interna no encontrada: ${execName}`;
                   } else {
                     const result = await tool.execute(toolInput);
-                    rawToolOutput = extractToolOutput(result);
+                    rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
                     if (execName === 'web_search' && result.success) {
                       const formatted = formatSearchResults(result.data as any, 'full');
                       if (formatted) rawToolOutput = formatted;
@@ -673,23 +708,22 @@ If responding with plain text (no tool), write in this language.`;
                   try {
                     rawToolOutput = await this.mcpRegistry.callTool(execName, toolInput);
                   } catch (mcpErr) {
-                    rawToolOutput = `MCP error: ${mcpErr instanceof Error ? mcpErr.message : String(mcpErr)}`;
+                    const normalizedMcpError = normalizeError(mcpErr, 'mcp');
+                    rawToolOutput = `Error [${normalizedMcpError.code}]: ${normalizedMcpError.technicalMessage}`;
                   }
                 } else {
                   setupError = 'MCP no está disponible en este entorno.';
                 }
+                this.recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !setupError && !rawToolOutput.toLowerCase().startsWith('error'));
 
                 if (setupError) {
                   finalContent = setupError;
                 } else {
-                const toolOutput = rawToolOutput.length > 3000
-                  ? rawToolOutput.substring(0, 3000) + '\n...(output truncated)'
-                  : rawToolOutput;
+                const toolOutput = rawToolOutput;
 
                 console.log('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
 
-                const skipSynthesisTools = new Set(['execute_command', 'read_file']);
-                if (resolved.kind === 'internal' && skipSynthesisTools.has(execName)) {
+                if (resolved.kind === 'internal' && this.shouldReturnRawToolOutput(execName, input.message, toolOutput)) {
                   finalContent = toolOutput;
                   console.log('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
                 } else {
@@ -715,6 +749,7 @@ ${input.userLanguage && input.userLanguage !== 'es'
   : 'Write your response in Spanish (es).'}`;
 
                   let synthesisResponse;
+                  const synthStart = Date.now();
                   try {
                     synthesisResponse = await this.withTimeout(
                       this.baseProvider.complete({
@@ -731,6 +766,10 @@ ${input.userLanguage && input.userLanguage !== 'es'
                   } catch (synthErr) {
                     console.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
                     synthesisResponse = null;
+                    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, false);
+                  }
+                  if (synthesisResponse) {
+                    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, true);
                   }
 
                   finalContent = synthesisResponse?.content?.trim()
@@ -758,11 +797,13 @@ ${input.userLanguage && input.userLanguage !== 'es'
 
       return {
         content: finalContent,
+        requestId,
         stepsUsed: steps,
         modelsUsed: Array.from(modelsUsed),
         toolsUsed: Array.from(toolsUsed),
         injectedSkills: Array.from(injectedSkills.values()),
         durationMs: Date.now() - startTime,
+        stageMetrics,
         complexityUsed: input.classifiedLevel,
       };
     }
@@ -843,7 +884,12 @@ ${accumulatedContext}`;
 
               // Ejecutar write_file directamente
               try {
-                const result = await tool.execute({ path: filePath, content: fileContent });
+                const directInput = { path: filePath, content: fileContent };
+                const validationError = this.validateToolInput('write_file', directInput);
+                if (validationError) {
+                  throw new Error(validationError);
+                }
+                const result = await tool.execute(directInput);
                 const output = result.success
                   ? `File created successfully at ${filePath}`
                   : `Error: ${result.error}`;
@@ -855,10 +901,12 @@ ${accumulatedContext}`;
                 steps.push({
                   iteration,
                   type: 'act',
+                  requestId,
                   action: 'tool',
                   target: 'write_file',
                   input: JSON.stringify({ path: filePath }),
                   output,
+                  status: output.toLowerCase().includes('error') ? 'error' : 'ok',
                   modelUsed: this.baseProvider.model,
                 });
               } catch (err) {
@@ -879,7 +927,12 @@ ${accumulatedContext}`;
                 console.log(`[AmplifierLoop] Subtask ${subtask.id} - Concrete shell command, running directly`);
                 let output = '';
                 try {
-                  const result = await tool.execute({ command: subtask.input.trim() });
+                  const directInput = { command: subtask.input.trim() };
+                  const validationError = this.validateToolInput('execute_command', directInput);
+                  if (validationError) {
+                    throw new Error(validationError);
+                  }
+                  const result = await tool.execute(directInput);
                   const stdout = (result.data as any)?.stdout ?? '';
                   // For mv/mkdir commands stdout is empty on success — build a meaningful message
                   if (result.success) {
@@ -896,10 +949,12 @@ ${accumulatedContext}`;
                 steps.push({
                   iteration,
                   type: 'act',
+                  requestId,
                   action: 'tool',
                   target: 'execute_command',
                   input: JSON.stringify({ command: subtask.input.trim() }),
                   output,
+                  status: output.toLowerCase().includes('error') ? 'error' : 'ok',
                   modelUsed: this.baseProvider.model,
                 });
                 continue;
@@ -955,6 +1010,10 @@ ${accumulatedContext}`;
                 shellCommand = this.fileOrgService.buildNamedFolderCommand(files, sourceDir, namedFolder);
                 console.log(`[AmplifierLoop] Subtask ${subtask.id} - Move-to-named-folder: ${files.length} items → "${destFolder}"`);
                 try {
+                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  if (validationError) {
+                    throw new Error(validationError);
+                  }
                   const result = await tool.execute({ command: shellCommand });
                   output = result.success
                     ? `Moved ${files.filter(f => f !== namedFolder).length} item(s) to ${destFolder}`
@@ -975,6 +1034,10 @@ ${accumulatedContext}`;
                   : `mkdir -p "${destPath}"`;
                 console.log(`[AmplifierLoop] Subtask ${subtask.id} - Targeted move: ${files.length} items → "${destPath}"`);
                 try {
+                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  if (validationError) {
+                    throw new Error(validationError);
+                  }
                   const result = await tool.execute({ command: shellCommand });
                   output = result.success
                     ? `Moved ${files.filter(f => f !== destBasename).length} item(s) to ${destPath}`
@@ -990,6 +1053,10 @@ ${accumulatedContext}`;
                 groups = built.groups;
                 console.log(`[AmplifierLoop] Subtask ${subtask.id} - Organize (${files.length} files → ${Object.keys(groups).length} folders):`, shellCommand.substring(0, 400));
                 try {
+                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  if (validationError) {
+                    throw new Error(validationError);
+                  }
                   const result = await tool.execute({ command: shellCommand });
                   const folderList = Object.keys(groups).join(', ');
                   output = result.success
@@ -1006,10 +1073,12 @@ ${accumulatedContext}`;
               steps.push({
                 iteration,
                 type: 'act',
+                requestId,
                 action: 'tool',
                 target: 'execute_command',
                 input: JSON.stringify({ command: shellCommand }),
                 output,
+                status: output.toLowerCase().includes('error') ? 'error' : 'ok',
                 modelUsed: this.baseProvider.model,
               });
 
@@ -1033,7 +1102,12 @@ ${accumulatedContext}`;
             }
             console.log(`[AmplifierLoop] Subtask ${subtask.id} - Direct execute_command: ${command}`);
             try {
-              const result = await ecTool.execute({ command });
+              const directInput = { command };
+              const validationError = this.validateToolInput('execute_command', directInput);
+              if (validationError) {
+                throw new Error(validationError);
+              }
+              const result = await ecTool.execute(directInput);
               const output = result.success
                 ? ((result.data as any)?.stdout ?? JSON.stringify(result.data))
                 : `Error: ${result.error}`;
@@ -1044,10 +1118,12 @@ ${accumulatedContext}`;
               steps.push({
                 iteration,
                 type: 'act',
+                requestId,
                 action: 'tool',
                 target: 'execute_command',
                 input: JSON.stringify({ command: subtask.input }),
                 output,
+                status: output.toLowerCase().includes('error') ? 'error' : 'ok',
                 modelUsed: this.baseProvider.model,
               });
               console.log(`[AmplifierLoop] Subtask ${subtask.id} completed (direct). ls output: ${output.substring(0, 200)}`);
@@ -1064,7 +1140,12 @@ ${accumulatedContext}`;
           if (wsTool && subtask.input) {
             console.log(`[AmplifierLoop] Subtask ${subtask.id} - Direct web_search: "${subtask.input}"`);
             try {
-              const result = await wsTool.execute({ query: subtask.input });
+              const directInput = { query: subtask.input };
+              const validationError = this.validateToolInput('web_search', directInput);
+              if (validationError) {
+                throw new Error(validationError);
+              }
+              const result = await wsTool.execute(directInput);
               if (result.success) {
                 const wsOutput = formatSearchResults(result.data as any, 'compact') || JSON.stringify(result.data);
                 toolsUsed.add('web_search');
@@ -1072,10 +1153,12 @@ ${accumulatedContext}`;
                 steps.push({
                   iteration,
                   type: 'act',
+                  requestId,
                   action: 'tool',
                   target: 'web_search',
                   input: JSON.stringify({ query: subtask.input }),
                   output: wsOutput,
+                  status: 'ok',
                   modelUsed: this.baseProvider.model,
                 });
                 console.log(`[AmplifierLoop] Subtask ${subtask.id} completed (direct web_search)`);
@@ -1138,6 +1221,7 @@ Do NOT search for more information. Use what is provided.`;
             : preResolvedSkills;
           rememberInjectedSkills(subtaskResolvedSkills);
 
+          const subThinkStart = Date.now();
           const thinkStep = await this.think(
             subtaskInput,
             accumulatedContext,
@@ -1147,6 +1231,7 @@ Do NOT search for more information. Use what is provided.`;
             undefined,
             subtaskResolvedSkills
           );
+          this.recordStageMetric(stageMetrics, 'think', Date.now() - subThinkStart, true);
           steps.push(thinkStep);
           input.onProgress?.(thinkStep);
 
@@ -1171,11 +1256,15 @@ Do NOT search for more information. Use what is provided.`;
             break;
           }
 
-          const actStep = await this.act(resolvedAction, subtaskIteration, modelsUsed, toolsUsed, input.userId);
+          const subActStart = Date.now();
+          const actStep = await this.act(resolvedAction, subtaskIteration, modelsUsed, toolsUsed, input.userId, requestId);
+          this.recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
           steps.push(actStep);
           input.onProgress?.(actStep);
 
-          const observeStep = this.observe(actStep, subtaskIteration);
+          const subObserveStart = Date.now();
+          const observeStep = this.observe(actStep, subtaskIteration, requestId);
+          this.recordStageMetric(stageMetrics, 'observe', Date.now() - subObserveStart, true);
           steps.push(observeStep);
           input.onProgress?.(observeStep);
 
@@ -1209,23 +1298,29 @@ Do NOT search for more information. Use what is provided.`;
           : accumulatedContext.trim();
         const hasError = lastStepOutput.toLowerCase().startsWith('error:') || lastStepOutput.toLowerCase().includes('no such file');
         const lang = input.userLanguage ?? 'en';
+        const shouldReturnRaw = this.shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
         // Don't include raw command text in success message — LanguageMiddleware would mangle it.
         // For errors, include the error output so the user knows what failed.
         const directContent = hasError
           ? (lang === 'es' ? `Error al ejecutar el comando:\n${lastStepOutput}` : `Command failed:\n${lastStepOutput}`)
-          : (lang === 'es' ? `Listo, operación completada.` : `Done, operation completed.`);
+          : shouldReturnRaw
+            ? lastStepOutput
+            : (lang === 'es' ? `Listo, operación completada.` : `Done, operation completed.`);
         console.log('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
         return {
           content: directContent,
+          requestId,
           stepsUsed: steps,
           modelsUsed: Array.from(modelsUsed),
           toolsUsed: Array.from(toolsUsed),
           injectedSkills: Array.from(injectedSkills.values()),
           durationMs: Date.now() - startTime,
+          stageMetrics,
           complexityUsed: ComplexityLevel.COMPLEX,
         };
       }
 
+      const complexSynthStart = Date.now();
       const synthesizeStep = await this.synthesize(
         input,
         accumulatedContext,
@@ -1233,15 +1328,18 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         preResolvedSkills
       );
+      this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - complexSynthStart, true);
       steps.push(synthesizeStep);
 
       return {
         content: synthesizeStep.output ?? accumulatedContext,
+        requestId,
         stepsUsed: steps,
         modelsUsed: Array.from(modelsUsed),
         toolsUsed: Array.from(toolsUsed),
         injectedSkills: Array.from(injectedSkills.values()),
         durationMs: Date.now() - startTime,
+        stageMetrics,
         complexityUsed: ComplexityLevel.COMPLEX,
       };
     }
@@ -1252,6 +1350,7 @@ Do NOT search for more information. Use what is provided.`;
       iteration++;
 
       // THINK: modelo base analiza qué necesita
+      const thinkStart = Date.now();
       const thinkStep = await this.think(
         input,
         currentContext,
@@ -1261,6 +1360,7 @@ Do NOT search for more information. Use what is provided.`;
         undefined,
         preResolvedSkills
       );
+      this.recordStageMetric(stageMetrics, 'think', Date.now() - thinkStart, true);
       steps.push(thinkStep);
       input.onProgress?.(thinkStep);
 
@@ -1377,18 +1477,23 @@ Do NOT search for more information. Use what is provided.`;
         break;
       }
 
+      const actStart = Date.now();
       const actStep = await this.act(
         resolvedAction,
         iteration,
         modelsUsed,
         toolsUsed,
-        input.userId
+        input.userId,
+        requestId
       );
+      this.recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !(actStep.output || '').toLowerCase().includes('error'));
       steps.push(actStep);
       input.onProgress?.(actStep);
 
       // OBSERVE: integra el resultado al contexto
-      const observeStep = this.observe(actStep, iteration);
+      const observeStart = Date.now();
+      const observeStep = this.observe(actStep, iteration, requestId);
+      this.recordStageMetric(stageMetrics, 'observe', Date.now() - observeStart, true);
       steps.push(observeStep);
       console.log(`[AmplifierLoop] Iteration ${iteration} - Observe output:`, observeStep.output?.substring(0, 200));
 
@@ -1448,6 +1553,7 @@ Do NOT search for more information. Use what is provided.`;
     }
 
     // SYNTHESIZE: modelo base narra la respuesta final
+    const finalSynthStart = Date.now();
     const synthesizeStep = await this.synthesize(
       input,
       currentContext,
@@ -1455,16 +1561,19 @@ Do NOT search for more information. Use what is provided.`;
       modelsUsed,
       preResolvedSkills
     );
+    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - finalSynthStart, true);
     steps.push(synthesizeStep);
     input.onProgress?.(synthesizeStep);
 
     return {
       content: synthesizeStep.output || '',
+      requestId,
       stepsUsed: steps,
       modelsUsed: Array.from(modelsUsed),
       toolsUsed: Array.from(toolsUsed),
       injectedSkills: Array.from(injectedSkills.values()),
       durationMs: Date.now() - startTime,
+      stageMetrics,
       complexityUsed: input.classifiedLevel,
     };
   }
@@ -1478,6 +1587,7 @@ Do NOT search for more information. Use what is provided.`;
     skipSkills?: boolean,
     resolvedSkills?: RelevantSkill[]
   ): Promise<Step> {
+    const startTime = Date.now();
     // Build a deduplicated tool list. Orchestrator already merges MCP tools into input.availableTools.
     const mergedTools = [...input.availableTools];
     if (this.mcpRegistry) {
@@ -1662,7 +1772,10 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     return {
       iteration,
       type: 'think',
+      requestId: input.requestId,
       output: response.content,
+      durationMs: Date.now() - startTime,
+      status: 'ok',
       modelUsed: this.baseProvider.model,
     };
   }
@@ -1672,8 +1785,10 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     iteration: number,
     modelsUsed: Set<string>,
     toolsUsed: Set<string>,
-    userId?: string
+    userId?: string,
+    requestId?: string
   ): Promise<Step> {
+    const startTime = Date.now();
     let output = '';
 
     try {
@@ -1681,14 +1796,17 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
         toolsUsed.add(resolvedAction.target);
         const validationError = this.validateToolInput(resolvedAction.target, resolvedAction.input);
         if (validationError) {
-          output = `Tool input validation failed: ${validationError}`;
+          output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
           return {
             iteration,
             type: 'act',
+            requestId,
             action: resolvedAction.type,
             target: resolvedAction.target,
             input: JSON.stringify(resolvedAction.input),
             output,
+            durationMs: Date.now() - startTime,
+            status: 'error',
             modelUsed: this.baseProvider.model,
           };
         }
@@ -1699,8 +1817,8 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
             const result = await this.mcpRegistry.callTool(resolvedAction.target, resolvedAction.input);
             output = `MCP Tool execution successful: ${result}`;
           } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            output = `MCP Tool execution failed: ${errorMsg}`;
+            const normalized = normalizeError(err, 'mcp');
+            output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
           }
         } else {
           // Execute internal tool
@@ -1713,7 +1831,7 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
             }
             const result = await tool.execute(toolInput);
             if (!result.success) {
-              output = `Tool execution failed: ${result.error}`;
+              output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
             } else if (resolvedAction.target === 'web_search') {
               output = formatSearchResults(result.data as any, 'compact') || `Tool execution successful: ${JSON.stringify(result.data)}`;
             } else {
@@ -1751,27 +1869,32 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
         output = `[MCP manejado como tool, este caso es inesperado]`;
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      output = `Error during action: ${errorMsg}`;
-      console.error(`[AmplifierLoop] Action failed at iteration ${iteration}:`, errorMsg);
+      const normalized = normalizeError(error, 'orchestrator');
+      output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
+      console.error(`[AmplifierLoop] Action failed at iteration ${iteration}:`, normalized.technicalMessage);
     }
 
     return {
       iteration,
       type: 'act',
+      requestId,
       action: resolvedAction.type,
       target: resolvedAction.target,
       input: JSON.stringify(resolvedAction.input),
       output,
+      durationMs: Date.now() - startTime,
+      status: output.toLowerCase().includes('error') ? 'error' : 'ok',
       modelUsed: this.baseProvider.model,
     };
   }
 
-  private observe(actStep: Step, iteration: number): Step {
+  private observe(actStep: Step, iteration: number, requestId?: string): Step {
     return {
       iteration,
       type: 'observe',
+      requestId,
       output: actStep.output,
+      status: actStep.status ?? 'ok',
       modelUsed: this.baseProvider.model,
     };
   }
@@ -1784,6 +1907,7 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     modelsUsed: Set<string>,
     resolvedSkills: RelevantSkill[] = []
   ): Promise<Step> {
+    const startTime = Date.now();
     const userLanguage = input.userLanguage || 'en';
     const relevantSkillsSection = this.buildRelevantSkillsSection(resolvedSkills);
     const requiredTemplateSection = this.extractOutputTemplates(resolvedSkills);
@@ -1826,7 +1950,10 @@ The language of the context does NOT affect the language of your response.`;
     return {
       iteration,
       type: 'synthesize',
+      requestId: input.requestId,
       output: response.content,
+      durationMs: Date.now() - startTime,
+      status: 'ok',
       modelUsed: this.baseProvider.model,
     };
   }

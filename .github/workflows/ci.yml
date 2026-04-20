@@ -32,3 +32,6 @@ jobs:
 
       - name: Run core tests
         run: pnpm test
+
+      - name: Verify regression dataset gate
+        run: pnpm --filter @enzo/core test

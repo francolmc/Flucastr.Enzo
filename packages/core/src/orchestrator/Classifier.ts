@@ -10,11 +10,18 @@ export class Classifier {
   }
 
   async classify(message: string, history: Message[]): Promise<ClassificationResult> {
+    const normalizedMessage = message.trim();
     // Fast-path: mensajes triviales no necesitan llamada al LLM
     const trivialPattern = /^(hola|hello|hi|hey|buenos días|buenas|good morning|gracias|thanks|ok|sí|no|chao|bye|adiós)[.!?]?$/i;
-    if (trivialPattern.test(message.trim())) {
+    if (trivialPattern.test(normalizedMessage)) {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
       return { level: ComplexityLevel.SIMPLE, reason: 'trivial message' };
+    }
+    if (this.isLikelyChainedTask(normalizedMessage)) {
+      return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow' };
+    }
+    if (this.isLikelySingleToolTask(normalizedMessage)) {
+      return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent' };
     }
 
     const systemPrompt = `You are a task complexity classifier. Respond ONLY with JSON, no extra text.
@@ -110,6 +117,18 @@ ONLY JSON. NOTHING ELSE.`;
     return /\b(search|look up|read|write|create|save|list|execute|run|call|fetch|remember|summary?|summari(?:ze|s(?:e|ing)?)?|analy(?:ze|sis|zing)?|busca(?:r)?|lee(?:r)?|leer|escrib(?:e|ir)|crear|guardar|listar|ejecutar|llamar|consultar|resum(?:e|en|ir|elo|ela|elos|elas)?|analiz(?:ar|a|o)|extra(?:er|e|igo)?)\b/i.test(
       message
     );
+  }
+
+  private isLikelySingleToolTask(message: string): boolean {
+    const normalized = message.toLowerCase();
+    const hasChainWords = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
+    if (hasChainWords) return false;
+    return /\b(read|lee|list|ls|search|busca|remember|recuerda|curl|consulta|version|ram|disk|disco)\b/i.test(normalized);
+  }
+
+  private isLikelyChainedTask(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return /\b(and then|luego|despu[eé]s|con el resultado|y luego|y guarda|y crea|y escribe|y resume)\b/i.test(normalized);
   }
 
   private fallbackClassification(message: string, reason: string): ClassificationResult {

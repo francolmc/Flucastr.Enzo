@@ -5,6 +5,7 @@ import { LanguageMiddleware } from '@enzo/core';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';
 import { getCurrentConversationId } from './conversationState.js';
+import { randomUUID } from 'crypto';
 
 const MAX_MESSAGE_LENGTH = 4096;
 
@@ -73,6 +74,7 @@ async function processMessageInBackground(
   explicitAgentId?: string
 ): Promise<void> {
   const typingSession = startTyping(ctx);
+  const requestId = randomUUID();
   let progressMessageId: number | null = null;
 
   try {
@@ -104,6 +106,7 @@ async function processMessageInBackground(
       conversationId,
       userId,
       source: 'telegram',
+      requestId,
       userLanguage: langContext.userLanguage,
       agentId: resolvedAgentId,
       classifiedLevel: complexityLevel as any,

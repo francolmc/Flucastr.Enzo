@@ -66,6 +66,9 @@ export class GeminiProvider implements LLMProvider {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
+        },
+        {
+          providerName: this.name,
         }
       );
 

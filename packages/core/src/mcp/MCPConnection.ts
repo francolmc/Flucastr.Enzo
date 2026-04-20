@@ -9,6 +9,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { z } from 'zod';
 import { MCPServerConfig, MCPTool, MCPConnectionStatus } from './types.js';
+import { ToolCallValidator } from '../orchestrator/ToolCallValidator.js';
 
 export class MCPConnection {
   private config: MCPServerConfig;
@@ -156,6 +157,17 @@ export class MCPConnection {
 
     try {
       console.log(`[MCPConnection] Calling tool "${toolName}" on "${this.config.name}"`);
+      const toolDefinition = this.tools.find((tool) => tool.name === toolName);
+      if (toolDefinition?.inputSchema) {
+        const validation = ToolCallValidator.validate(input ?? {}, toolDefinition.inputSchema as Record<string, any>);
+        if (!validation.valid) {
+          const detail = validation.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path} ${issue.message}`)
+            .join('; ');
+          throw new Error(`MCP input validation failed for "${toolName}": ${detail}`);
+        }
+      }
 
       const response = await (this.client.request as any)(
         {
