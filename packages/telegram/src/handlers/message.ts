@@ -9,6 +9,15 @@ import { randomUUID } from 'crypto';
 
 const MAX_MESSAGE_LENGTH = 4096;
 
+/** Best-effort user-visible error; logs if Telegram rejects the send (e.g. rate limit). */
+async function safeReply(ctx: EnzoContext, text: string): Promise<void> {
+  try {
+    await ctx.reply(text);
+  } catch (err) {
+    console.error('[Telegram] safeReply failed:', err);
+  }
+}
+
 function getAllowedUsers(): Set<string> {
   return new Set(
     (process.env.TELEGRAM_ALLOWED_USERS || '')
@@ -71,10 +80,10 @@ async function processMessageInBackground(
   userId: string,
   messageText: string,
   conversationId: string,
-  explicitAgentId?: string
+  explicitAgentId: string | undefined,
+  requestId: string
 ): Promise<void> {
   const typingSession = startTyping(ctx);
-  const requestId = randomUUID();
   let progressMessageId: number | null = null;
 
   try {
@@ -178,9 +187,9 @@ async function processMessageInBackground(
       console.error('[Telegram] Memory extraction error:', err);
     });
   } catch (error) {
-    console.error('[Telegram] Error processing message:', error);
+    console.error('[Telegram] Error processing message:', error, { requestId, userId, conversationId });
     const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-    await ctx.reply(`❌ Error: ${errorMsg}`);
+    await safeReply(ctx, `❌ Error: ${errorMsg}\n\n_id: ${requestId}_`);
   } finally {
     typingSession.stop();
   }
@@ -213,6 +222,7 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
     }
 
     const conversationId = getCurrentConversationId(userId);
+    const requestId = randomUUID();
 
     let explicitAgentId: string | undefined;
     try {
@@ -222,9 +232,19 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
     }
 
     // Fire and forget - process in background to avoid Telegraf timeout
-    processMessageInBackground(ctx, userId, messageText, conversationId, explicitAgentId).catch((err) => {
-      console.error('[Telegram] Fatal error in background processing:', err);
-    });
+    processMessageInBackground(ctx, userId, messageText, conversationId, explicitAgentId, requestId).catch(
+      (err) => {
+        console.error('[Telegram] Fatal error in background processing:', err, {
+          requestId,
+          userId,
+          conversationId,
+        });
+        void safeReply(
+          ctx,
+          `❌ Error interno al procesar el mensaje.\n\n_id: ${requestId}_\nSi persiste, revisa los logs del servidor.`
+        );
+      }
+    );
 
     // Handler returns immediately - Telegraf doesn't timeout
   });

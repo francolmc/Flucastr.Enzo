@@ -90,15 +90,69 @@ export class LanguageMiddleware {
   /**
    * Traduce la respuesta final al idioma del usuario.
    * Si el idioma es inglés, retorna la respuesta sin cambios.
+   * Si la salida del modelo ya parece estar en el idioma objetivo (p. ej. síntesis en español),
+   * evita una llamada LLM redundante.
    */
   async processOutput(response: string, targetLanguage: string): Promise<string> {
     if (this.UNIVERSAL_LANGUAGES.includes(targetLanguage)) {
       return response;
     }
 
+    if (this.responseLikelyMatchesLanguage(response, targetLanguage)) {
+      console.log(`[LanguageMiddleware] Skipping output translation (already matches ${targetLanguage})`);
+      return response;
+    }
+
     const translated = await this.translateToLanguage(response, targetLanguage);
     console.log(`[LanguageMiddleware] Response translated to: ${targetLanguage}`);
     return translated;
+  }
+
+  /**
+   * Heurística conservadora: evitar traducir español→español cuando Amplifier ya respondió en español.
+   */
+  private responseLikelyMatchesLanguage(text: string, code: string): boolean {
+    const trimmed = text.trim();
+    if (trimmed.length < 12) {
+      return false;
+    }
+    const lower = trimmed.toLowerCase();
+
+    if (code === 'es') {
+      if (/[¿¡ñáéíóúü]/i.test(trimmed)) {
+        return true;
+      }
+      const esHits = (
+        lower.match(
+          /\b(el|la|de|que|y|a|en|un|una|por|para|con|no|es|son|está|están|como|más|pero|sí|este|esta|los|las|del|al|también|había|fue|será|puede|tienes|tengo|hola|gracias)\b/g
+        ) ?? []
+      ).length;
+      const enHits = (
+        lower.match(
+          /\b(the|and|is|are|was|were|to|of|in|for|on|with|as|at|by|this|that|from|or|not|you|it|we|they|hello|thanks)\b/g
+        ) ?? []
+      ).length;
+      return esHits >= 3 && esHits >= enHits + 2;
+    }
+
+    if (code === 'pt') {
+      if (/[ãõçáéíóúâêô]/i.test(trimmed)) {
+        return true;
+      }
+      const ptHits = (
+        lower.match(
+          /\b(o|a|os|as|de|que|e|em|um|uma|por|para|com|não|é|são|como|mais|mas|você|obrigado|obrigada|também)\b/g
+        ) ?? []
+      ).length;
+      const enHits = (
+        lower.match(
+          /\b(the|and|is|are|was|were|to|of|in|for|on|with|as|at|by|this|that|from|or|not|you|it|we|they)\b/g
+        ) ?? []
+      ).length;
+      return ptHits >= 3 && ptHits >= enHits + 2;
+    }
+
+    return false;
   }
 
   /**
