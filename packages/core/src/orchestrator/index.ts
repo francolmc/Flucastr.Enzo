@@ -3,7 +3,7 @@ export { Classifier } from './Classifier.js';
 export { ModelSelector } from './ModelSelector.js';
 export { Decomposer } from './Decomposer.js';
 export type { Subtask, DecompositionResult } from './Decomposer.js';
-export { AmplifierLoop } from './AmplifierLoop.js';
+export { AmplifierLoop, type AmplifierLoopOptions } from './AmplifierLoop.js';
 export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';

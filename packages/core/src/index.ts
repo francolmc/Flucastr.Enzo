@@ -19,4 +19,3 @@ export * from './mcp/index.js';
 export * from './config/ConfigService.js';
 export * from './security/EncryptionService.js';
 export * from './security/SecretFile.js';
-export * from './middleware/index.js';

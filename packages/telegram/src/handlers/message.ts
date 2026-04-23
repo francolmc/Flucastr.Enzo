@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
 import type { Step } from '@enzo/core';
-import { LanguageMiddleware } from '@enzo/core';
+import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';
 import { getCurrentConversationId } from './conversationState.js';

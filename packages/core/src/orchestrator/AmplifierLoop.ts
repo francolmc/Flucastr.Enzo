@@ -1,5 +1,5 @@
-import { Message, LLMProvider, Tool } from '../providers/types.js';
-import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage, StageMetrics } from './types.js';
+import { Message, LLMProvider } from '../providers/types.js';
+import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage } from './types.js';
 import { CapabilityResolver } from './CapabilityResolver.js';
 import { ContextSynthesizer } from './ContextSynthesizer.js';
 import { EscalationManager } from './EscalationManager.js';
@@ -15,10 +15,41 @@ import { extractToolOutput } from '../utils/ToolOutputExtractor.js';
 import { FileOrganizationService } from '../services/FileOrganizationService.js';
 import path from 'path';
 import { parseFirstJsonObject, repairJsonString } from '../utils/StructuredJson.js';
-import { ToolCallValidator } from './ToolCallValidator.js';
 import { normalizeError } from './NormalizedError.js';
+import type { AmplifierLoopLog } from './amplifier/AmplifierLoopLog.js';
+import { createDefaultAmplifierLoopLog } from './amplifier/AmplifierLoopLog.js';
+import { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
+import {
+  buildAssistantIdentityPrompt,
+  buildRelevantSkillsSection,
+  extractOutputTemplates,
+  extractWeatherLocation,
+  buildWeatherGeocodingCommand,
+  extractWeatherCoordsFromSteps,
+  buildWeatherForecastCommand,
+} from './amplifier/AmplifierLoopPromptHelpers.js';
+import {
+  extractFirstJsonObject,
+  mergeAvailableToolDefinitions,
+  normalizeFastPathToolCall,
+  resolveFastPathToolForExecution,
+  shouldReturnRawToolOutput,
+  shellOutputIndicatesFailure,
+  textContainsPlaceholderPath,
+  validateToolInput,
+} from './amplifier/AmplifierLoopFastPathTools.js';
+
+export type AmplifierLoopOptions = {
+  maxIterations?: number;
+  skillRegistry?: SkillRegistry;
+  mcpRegistry?: MCPRegistry;
+  log?: AmplifierLoopLog;
+  /** false disables file-organization subtask path */
+  fileOrganization?: boolean;
+};
 
 export class AmplifierLoop {
+  private log: AmplifierLoopLog;
   private baseProvider: LLMProvider;
   private capabilityResolver: CapabilityResolver;
   private contextSynthesizer: ContextSynthesizer;
@@ -26,7 +57,7 @@ export class AmplifierLoop {
   private intentAnalyzer: IntentAnalyzer;
   private skillResolver: SkillResolver;
   private decomposer: Decomposer;
-  private fileOrgService: FileOrganizationService;
+  private fileOrgService: FileOrganizationService | null;
   private maxIterations: number;
   private executableTools: ExecutableTool[];
   private skillRegistry?: SkillRegistry;
@@ -35,8 +66,9 @@ export class AmplifierLoop {
   constructor(
     baseProvider: LLMProvider,
     executableTools: ExecutableTool[] = [],
-    options?: { maxIterations?: number; skillRegistry?: SkillRegistry; mcpRegistry?: MCPRegistry }
+    options?: AmplifierLoopOptions
   ) {
+    this.log = options?.log ?? createDefaultAmplifierLoopLog();
     this.baseProvider = baseProvider;
     this.executableTools = executableTools;
     this.maxIterations = options?.maxIterations ?? 8;
@@ -49,7 +81,10 @@ export class AmplifierLoop {
     this.escalationManager = new EscalationManager();
     this.skillResolver = new SkillResolver();
     this.decomposer = new Decomposer(baseProvider);
-    this.fileOrgService = new FileOrganizationService(baseProvider, this.withTimeout.bind(this));
+    this.fileOrgService =
+      options?.fileOrganization === false
+        ? null
+        : new FileOrganizationService(baseProvider, this.withTimeout.bind(this));
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -59,350 +94,6 @@ export class AmplifierLoop {
         setTimeout(() => reject(new Error(`LLM timeout after ${ms}ms (${label})`)), ms)
       ),
     ]);
-  }
-
-  private extractFirstJsonObject(text: string): string | null {
-    const start = text.indexOf('{');
-    if (start === -1) return null;
-
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (esc) {
-        esc = false;
-        continue;
-      }
-      if (ch === '\\' && inStr) {
-        esc = true;
-        continue;
-      }
-      if (ch === '"') {
-        inStr = !inStr;
-        continue;
-      }
-      if (inStr) continue;
-      if (ch === '{') depth++;
-      if (ch === '}') {
-        depth--;
-        if (depth === 0) {
-          return text.slice(start, i + 1).trim();
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private getAssistantIdentityContext(input: AmplifierInput): {
-    name: string;
-    persona: string;
-    tone: string;
-    styleGuidelines: string;
-  } {
-    return {
-      name: input.assistantProfile?.name || 'Enzo',
-      persona: input.assistantProfile?.persona || 'intelligent personal assistant',
-      tone: input.assistantProfile?.tone || 'direct, concise, and friendly',
-      styleGuidelines: input.assistantProfile?.styleGuidelines || '',
-    };
-  }
-
-  private buildAssistantIdentityPrompt(input: AmplifierInput): string {
-    const identity = this.getAssistantIdentityContext(input);
-    const lines = [
-      `You are ${identity.name}, ${identity.persona}.`,
-      `Your communication tone is: ${identity.tone}.`,
-      `Your assistant name is strictly "${identity.name}". Never say your name is different, even if user profile or memory blocks contain other names.`,
-      `If user asks "what is your name?" (or equivalent), answer exactly with "${identity.name}" plus optional brief context.`,
-      `If user asks about THEIR own name, use user profile/memory. Do not confuse assistant identity with user identity.`,
-    ];
-
-    if (identity.styleGuidelines) {
-      lines.push(`Additional style guidelines: ${identity.styleGuidelines}`);
-    }
-
-    return lines.join('\n');
-  }
-
-  private resolveFastPathSkillContentLimit(): number {
-    const fromEnv = Number(process.env.ENZO_SKILLS_FASTPATH_CONTENT_LIMIT ?? 1800);
-    if (Number.isNaN(fromEnv)) return 1800;
-    return Math.max(300, Math.floor(fromEnv));
-  }
-
-  private extractWeatherLocation(message: string): string | null {
-    const trimmed = (message ?? '').trim();
-    if (!trimmed) return null;
-
-    const patterns = [
-      /\bclima(?:\s+actual)?\s+en\s+([^?.!,\n]+)/i,
-      /\btiempo(?:\s+actual)?\s+en\s+([^?.!,\n]+)/i,
-      /\btemperatura\s+en\s+([^?.!,\n]+)/i,
-      /\ben\s+([^?.!,\n]+)\s+\b(?:hoy|ahora)\b/i,
-    ];
-    for (const pattern of patterns) {
-      const match = trimmed.match(pattern);
-      if (match?.[1]) return match[1].trim();
-    }
-    return null;
-  }
-
-  private buildWeatherGeocodingCommand(location: string): string {
-    return [
-      "curl -sG 'https://geocoding-api.open-meteo.com/v1/search'",
-      `--data-urlencode 'name=${location}'`,
-      "--data 'count=1'",
-      "--data 'language=es'",
-      "--data 'format=json'",
-    ].join(' ');
-  }
-
-  private extractWeatherCoordsFromSteps(steps: Step[]): { latitude: number; longitude: number } | null {
-    for (let i = steps.length - 1; i >= 0; i--) {
-      const step = steps[i];
-      if (step.type !== 'observe' || !step.output) continue;
-      const text = step.output;
-      const latMatch = text.match(/"latitude":\s*(-?\d+(?:\.\d+)?)/);
-      const lonMatch = text.match(/"longitude":\s*(-?\d+(?:\.\d+)?)/);
-      if (!latMatch || !lonMatch) continue;
-      const latitude = Number(latMatch[1]);
-      const longitude = Number(lonMatch[1]);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
-      return { latitude, longitude };
-    }
-    return null;
-  }
-
-  private buildWeatherForecastCommand(latitude: number, longitude: number): string {
-    return [
-      "curl -sG 'https://api.open-meteo.com/v1/forecast'",
-      `--data 'latitude=${latitude}'`,
-      `--data 'longitude=${longitude}'`,
-      "--data 'current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code'",
-      "--data 'timezone=auto'",
-    ].join(' ');
-  }
-
-  private buildRelevantSkillsSection(skills: RelevantSkill[]): string {
-    if (skills.length === 0) return '';
-    const maxChars = this.resolveFastPathSkillContentLimit();
-    const blocks = skills.map((skill) => {
-      const content =
-        skill.content.length > maxChars
-          ? `${skill.content.slice(0, maxChars)}\n...(skill truncated)`
-          : skill.content;
-      return [
-        `- Skill: ${skill.name} (relevance: ${(skill.relevanceScore * 100).toFixed(0)}%)`,
-        `  Description: ${skill.description}`,
-        '  Instructions:',
-        '  """',
-        content,
-        '  """',
-      ].join('\n');
-    });
-    return `\nRELEVANT SKILLS FOR THIS REQUEST (follow these instructions):\n${blocks.join('\n\n')}\n`;
-  }
-
-  private extractOutputTemplates(skills: RelevantSkill[]): string {
-    const templates: string[] = [];
-    for (const skill of skills) {
-      const content = skill.content;
-      const sectionRegex = /(##\s*(?:Como\s+Presentar\s+el\s+Resultado|Cómo\s+Presentar\s+el\s+Resultado|Output\s+Format|Response\s+Format)[\s\S]*?)(?=\n##\s+|$)/i;
-      const sectionMatch = content.match(sectionRegex);
-      const searchText = sectionMatch ? sectionMatch[1] : content;
-      const codeBlockMatch = searchText.match(/```[\w-]*\n([\s\S]*?)```/);
-      if (!codeBlockMatch) continue;
-      const templateBody = codeBlockMatch[1].trim();
-      if (!templateBody) continue;
-      templates.push(
-        [
-          `Template from skill "${skill.name}" (MUST follow exact structure):`,
-          '"""',
-          templateBody,
-          '"""',
-        ].join('\n')
-      );
-    }
-
-    if (templates.length === 0) return '';
-    return `\nREQUIRED OUTPUT TEMPLATES:\n${templates.join('\n\n')}\n`;
-  }
-
-  private normalizeFastPathToolCall(parsed: any): { toolName: string; toolInput: any } {
-    const normalized = { ...(parsed || {}) };
-
-    const esFields: Record<string, string> = {
-      herramienta: 'tool',
-      entrada: 'input',
-      accion: 'action',
-    };
-    for (const [es, en] of Object.entries(esFields)) {
-      if (normalized[es] !== undefined && normalized[en] === undefined) {
-        normalized[en] = normalized[es];
-      }
-    }
-
-    const esActionToTool: Record<string, string> = {
-      ejecutar_comando: 'execute_command',
-      ejecutar: 'execute_command',
-      buscar_web: 'web_search',
-      buscar: 'web_search',
-      buscar_en_internet: 'web_search',
-      leer_archivo: 'read_file',
-      leer: 'read_file',
-      escribir_archivo: 'write_file',
-      crear_archivo: 'write_file',
-      recordar: 'remember',
-      guardar_memoria: 'remember',
-    };
-    const actionVal = String(normalized.action ?? '').toLowerCase();
-    if (actionVal in esActionToTool) {
-      if (!normalized.tool) {
-        normalized.tool = esActionToTool[actionVal];
-      }
-      normalized.action = 'tool';
-    }
-
-    let toolName = String(normalized.tool ?? normalized.action ?? '').toLowerCase();
-    let toolInput = normalized.input ?? {};
-
-    const knownToolNames = new Set(this.executableTools.map((tool) => tool.name.toLowerCase()));
-    if (!knownToolNames.has(toolName) && toolName !== 'none' && toolName !== '') {
-      const originalAction = String(normalized.action ?? actionVal).toLowerCase();
-      if (originalAction === 'execute_command' || originalAction === 'ejecutar_comando' || originalAction === 'ejecutar') {
-        toolInput = { command: toolName };
-        toolName = 'execute_command';
-      }
-    }
-
-    return { toolName, toolInput };
-  }
-
-  /** Same merge as think(): orchestrator tools + any MCP tools not already listed. */
-  private mergeAvailableToolDefinitions(input: AmplifierInput): Tool[] {
-    const merged: Tool[] = [...input.availableTools];
-    if (this.mcpRegistry) {
-      for (const mcpTool of this.mcpRegistry.getMCPToolsForOrchestrator()) {
-        if (!merged.some((tool) => tool.name === mcpTool.name)) {
-          merged.push(mcpTool);
-        }
-      }
-    }
-    return merged;
-  }
-
-  private resolveFastPathToolForExecution(
-    toolNameLower: string,
-    mcpToolList: Tool[]
-  ): { kind: 'internal' | 'mcp'; name: string } | null {
-    const internal = this.executableTools.find((t) => t.name.toLowerCase() === toolNameLower);
-    if (internal) return { kind: 'internal', name: internal.name };
-
-    const mcpExact = mcpToolList.find((t) => t.name.toLowerCase() === toolNameLower);
-    if (mcpExact) return { kind: 'mcp', name: mcpExact.name };
-
-    const suffixMatches = mcpToolList.filter(
-      (t) =>
-        t.name.startsWith('mcp_') &&
-        (t.name.toLowerCase().endsWith('_' + toolNameLower) ||
-          t.name.toLowerCase().endsWith(toolNameLower))
-    );
-    if (suffixMatches.length === 1) return { kind: 'mcp', name: suffixMatches[0].name };
-
-    return null;
-  }
-
-  private getToolSchema(toolName: string): Record<string, any> | undefined {
-    const internalTool = this.executableTools.find((tool) => tool.name === toolName);
-    if (internalTool) return internalTool.parameters;
-
-    if (toolName.startsWith('mcp_') && this.mcpRegistry) {
-      const mcpTool = this.mcpRegistry.getMCPToolsForOrchestrator().find((tool) => tool.name === toolName);
-      return mcpTool?.parameters;
-    }
-    return undefined;
-  }
-
-  private validateToolInput(toolName: string, input: any): string | null {
-    const schema = this.getToolSchema(toolName);
-    const result = ToolCallValidator.validate(input ?? {}, schema);
-    if (!result.valid) {
-      const detail = result.issues
-        .slice(0, 3)
-        .map((issue) => `${issue.path} ${issue.message}`)
-        .join('; ');
-      return `invalid input for ${toolName}: ${detail}`;
-    }
-    if (toolName === 'execute_command') {
-      const cmd =
-        typeof input?.command === 'string' ? input.command : typeof input === 'string' ? input : '';
-      if (cmd && this.textContainsPlaceholderPath(cmd)) {
-        return 'command contains placeholder paths (/path/to/...) — use a real absolute path from the user message';
-      }
-    }
-    return null;
-  }
-
-  private textContainsPlaceholderPath(text: string): boolean {
-    return /\/path\/to\b|\bpath\/to\/|<path|your_path_here|example\/folder/i.test(text || '');
-  }
-
-  private shellOutputIndicatesFailure(output: string): boolean {
-    const lo = (output || '').toLowerCase();
-    return (
-      lo.startsWith('error:') ||
-      lo.includes('no such file') ||
-      lo.includes('command failed') ||
-      lo.includes('comando fall') ||
-      lo.includes('permiso denegado') ||
-      lo.includes('permission denied') ||
-      lo.includes('cannot stat') ||
-      lo.includes('no existe el archivo') ||
-      lo.includes('no se puede') ||
-      lo.includes('denied') ||
-      lo.includes('command not found') ||
-      lo.includes('failed:')
-    );
-  }
-
-  private shouldReturnRawToolOutput(toolName: string, userMessage: string, toolOutput: string): boolean {
-    const lowerMessage = (userMessage || '').toLowerCase();
-    const lowerOutput = (toolOutput || '').toLowerCase();
-    const rawRequested = /\b(raw|tal cual|sin resumir|exacto|stdout|output completo|ver salida)\b/i.test(lowerMessage);
-    if (rawRequested) return true;
-    if (!toolOutput) return false;
-    if (lowerOutput.startsWith('error:') || lowerOutput.includes('no such file') || lowerOutput.includes('command not found')) {
-      return true;
-    }
-    if (toolName === 'read_file' && toolOutput.length < 300) {
-      return true;
-    }
-    return false;
-  }
-
-  private initStageMetrics(): StageMetrics {
-    return {
-      think: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
-      act: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
-      observe: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
-      synthesize: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
-    };
-  }
-
-  private recordStageMetric(
-    stageMetrics: StageMetrics,
-    stage: keyof StageMetrics,
-    durationMs: number,
-    ok: boolean
-  ): void {
-    const snapshot = stageMetrics[stage];
-    snapshot.count += 1;
-    snapshot.totalDurationMs += durationMs;
-    snapshot.maxDurationMs = Math.max(snapshot.maxDurationMs, durationMs);
-    if (!ok) snapshot.errorCount += 1;
   }
 
   private async requestToolInputCorrection(
@@ -436,14 +127,14 @@ No markdown. No prose.`;
 
     const parsed = parseFirstJsonObject<any>(response.content ?? '', { tryRepair: true });
     if (!parsed) return null;
-    return this.normalizeFastPathToolCall(parsed.value);
+    return normalizeFastPathToolCall(parsed.value, this.executableTools);
   }
 
   async amplify(input: AmplifierInput): Promise<AmplifierResult> {
     const startTime = Date.now();
     const steps: Step[] = [];
     const requestId = input.requestId;
-    const stageMetrics = this.initStageMetrics();
+    const stageMetrics = initStageMetrics();
     const modelsUsed = new Set<string>();
     const toolsUsed = new Set<string>();
 
@@ -456,7 +147,7 @@ No markdown. No prose.`;
       ? await this.skillResolver.resolveRelevantSkills(input.message, this.skillRegistry)
       : [];
     if (preResolvedSkills.length > 0) {
-      console.log(
+      this.log.info(
         `[AmplifierLoop] Relevant skills pre-resolved: ${preResolvedSkills
           .map((skill) => `${skill.name}(${Math.round(skill.relevanceScore * 100)}%)`)
           .join(', ')}`
@@ -491,16 +182,16 @@ No markdown. No prose.`;
 
     const hasMultiStepSkillRequirement = minRequiredSteps >= 2;
     if (hasMultiStepSkillRequirement) {
-      console.log(`[AmplifierLoop] Multi-step skill detected: minRequiredSteps=${minRequiredSteps}`);
+      this.log.info(`[AmplifierLoop] Multi-step skill detected: minRequiredSteps=${minRequiredSteps}`);
     }
 
     // FAST-PATH: SIMPLE y MODERATE usan el mismo path directo (un solo tool call + síntesis)
     // MODERATE = exactamente una herramienta requerida, igual que SIMPLE pero con tool obligatoria
     if ((input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) && !hasMultiStepSkillRequirement) {
       const isModerate = input.classifiedLevel === ComplexityLevel.MODERATE;
-      console.log(`[AmplifierLoop] Fast-path ${isModerate ? 'MODERATE' : 'SIMPLE'}`);
+      this.log.info(`[AmplifierLoop] Fast-path ${isModerate ? 'MODERATE' : 'SIMPLE'}`);
 
-      const mergedToolDefs = this.mergeAvailableToolDefinitions(input);
+      const mergedToolDefs = mergeAvailableToolDefinitions(input, this.mcpRegistry);
       const toolsList = mergedToolDefs.map((t) => `- ${t.name}: ${t.description}`).join('\n');
 
       // Detect if user is asking about capabilities — inject real skill list to avoid hallucination
@@ -515,15 +206,15 @@ No markdown. No prose.`;
           skillListSection = `\nAVAILABLE SKILLS (list these when asked about capabilities):\n${skillLines}\n`;
         }
       }
-      const relevantSkillsSection = this.buildRelevantSkillsSection(preResolvedSkills);
-      const requiredTemplateSection = this.extractOutputTemplates(preResolvedSkills);
+      const relevantSkillsSection = buildRelevantSkillsSection(preResolvedSkills);
+      const requiredTemplateSection = extractOutputTemplates(preResolvedSkills);
 
       const toolUsageRule = isModerate
         ? `You MUST use one of the tools above to answer this request. Do NOT answer from memory.`
         : `If you can answer directly without tools, respond with plain text.`;
 
       const homeDir = process.env.HOME ?? '/Users/franco';
-      const systemPrompt = `${this.buildAssistantIdentityPrompt(input)}
+      const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 Date: ${new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' })}.
 OS: macOS. Home directory: ${homeDir}. ALWAYS use absolute macOS paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
@@ -595,14 +286,14 @@ If responding with plain text (no tool), write in this language.`;
           'SIMPLE first call'
         );
       } catch (err) {
-        console.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
-        this.recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
+        this.log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
+        recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
         throw err;
       }
-      this.recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+      recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
 
       const rawContent = (firstResponse.content ?? '').trim();
-      console.log('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
+      this.log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
 
       let finalContent = rawContent;
 
@@ -630,16 +321,16 @@ If responding with plain text (no tool), write in this language.`;
           if (end !== -1) {
             const argsJson = jsonPart.slice(0, end + 1);
             normalizedContent = `{"action":"tool","tool":"${possibleTool}","input":${argsJson}}`;
-            console.log(`[AmplifierLoop] SIMPLE path - formato normalizado: ${normalizedContent.substring(0, 100)}`);
+            this.log.info(`[AmplifierLoop] SIMPLE path - formato normalizado: ${normalizedContent.substring(0, 100)}`);
           }
         }
 
         // Si el modelo mezcló texto + JSON, extraer el primer JSON embebido para ejecutarlo.
         if (!normalizedContent.startsWith('{')) {
-          const embeddedJson = this.extractFirstJsonObject(rawContent);
+          const embeddedJson = extractFirstJsonObject(rawContent);
           if (embeddedJson) {
             normalizedContent = embeddedJson;
-            console.log('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
+            this.log.info('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
           }
         }
 
@@ -653,7 +344,7 @@ If responding with plain text (no tool), write in this language.`;
               tool: 'execute_command',
               input: { command: rawContent.trim() },
             });
-            console.log('[AmplifierLoop] SIMPLE path - comando shell detectado, auto-wrapped como execute_command');
+            this.log.info('[AmplifierLoop] SIMPLE path - comando shell detectado, auto-wrapped como execute_command');
           }
         }
       }
@@ -668,53 +359,53 @@ If responding with plain text (no tool), write in this language.`;
             if (!repairedResult) {
               throw new Error('JSON inválido incluso después de reparación');
             }
-            console.log('[AmplifierLoop] SIMPLE path - JSON reparado exitosamente');
+            this.log.info('[AmplifierLoop] SIMPLE path - JSON reparado exitosamente');
           }
           const parsed = (parsedResult ?? parseFirstJsonObject<any>(repairJsonString(normalizedContent), { tryRepair: true }))!.value;
-          let { toolName, toolInput } = this.normalizeFastPathToolCall(parsed);
+          let { toolName, toolInput } = normalizeFastPathToolCall(parsed, this.executableTools);
 
           let resolved =
             toolName && toolName !== 'none'
-              ? this.resolveFastPathToolForExecution(toolName, mergedToolDefs)
+              ? resolveFastPathToolForExecution(toolName, mergedToolDefs, this.executableTools)
               : null;
 
           if (resolved) {
               let execName = resolved.name;
 
-              const validationError = this.validateToolInput(execName, toolInput);
+              const validationError = validateToolInput(execName, toolInput, this.executableTools, this.mcpRegistry);
               if (validationError) {
-                console.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
+                this.log.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
                 const correctedCall = await this.requestToolInputCorrection(
                   input.message,
                   execName,
                   toolInput,
                   validationError
                 ).catch((error) => {
-                  console.warn('[AmplifierLoop] SIMPLE path - tool correction failed:', error);
+                  this.log.warn('[AmplifierLoop] SIMPLE path - tool correction failed:', error);
                   return null;
                 });
                 if (correctedCall) {
                   toolName = correctedCall.toolName;
                   toolInput = correctedCall.toolInput;
-                  resolved = this.resolveFastPathToolForExecution(toolName, mergedToolDefs);
+                  resolved = resolveFastPathToolForExecution(toolName, mergedToolDefs, this.executableTools);
                   if (!resolved) {
                     finalContent = `No se pudo resolver la herramienta tras la corrección: ${toolName}`;
-                    console.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
+                    this.log.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
                   } else {
                     execName = resolved.name;
-                    console.log(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
+                    this.log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
                   }
                 }
               }
 
               if (resolved) {
-              const validationAfterCorrection = this.validateToolInput(execName, toolInput);
+              const validationAfterCorrection = validateToolInput(execName, toolInput, this.executableTools, this.mcpRegistry);
               if (validationAfterCorrection) {
                 finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
-                console.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
+                this.log.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
               } else {
                 toolsUsed.add(execName);
-                console.log(
+                this.log.info(
                   `[AmplifierLoop] SIMPLE path - ejecutando "${execName}" (${resolved.kind}):`,
                   toolInput
                 );
@@ -745,20 +436,20 @@ If responding with plain text (no tool), write in this language.`;
                 } else {
                   setupError = 'MCP no está disponible en este entorno.';
                 }
-                this.recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !setupError && !rawToolOutput.toLowerCase().startsWith('error'));
+                recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !setupError && !rawToolOutput.toLowerCase().startsWith('error'));
 
                 if (setupError) {
                   finalContent = setupError;
                 } else {
                 const toolOutput = rawToolOutput;
 
-                console.log('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
+                this.log.info('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
 
-                if (resolved.kind === 'internal' && this.shouldReturnRawToolOutput(execName, input.message, toolOutput)) {
+                if (resolved.kind === 'internal' && shouldReturnRawToolOutput(execName, input.message, toolOutput)) {
                   finalContent = toolOutput;
-                  console.log('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
+                  this.log.info('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
                 } else {
-                  const synthesisPrompt = `${this.buildAssistantIdentityPrompt(input)}
+                  const synthesisPrompt = `${buildAssistantIdentityPrompt(input)}
 ${relevantSkillsSection}
 ${requiredTemplateSection}
 You executed a tool and got this result:
@@ -795,12 +486,12 @@ ${input.userLanguage && input.userLanguage !== 'es'
                       'SIMPLE synthesis'
                     );
                   } catch (synthErr) {
-                    console.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
+                    this.log.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
                     synthesisResponse = null;
-                    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, false);
+                    recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, false);
                   }
                   if (synthesisResponse) {
-                    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, true);
+                    recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, true);
                   }
 
                   finalContent = synthesisResponse?.content?.trim()
@@ -811,20 +502,20 @@ ${input.userLanguage && input.userLanguage !== 'es'
               }
               }
           } else if (toolName && toolName !== 'none') {
-              console.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
+              this.log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
           }
         } catch {
           // No era JSON válido — usar la respuesta directa como texto
-          console.log('[AmplifierLoop] SIMPLE path - respuesta directa (no JSON)');
+          this.log.info('[AmplifierLoop] SIMPLE path - respuesta directa (no JSON)');
         }
       }
 
       if (!finalContent) {
-        console.warn('[AmplifierLoop] SIMPLE path - contenido vacío, usando fallback');
+        this.log.warn('[AmplifierLoop] SIMPLE path - contenido vacío, usando fallback');
         finalContent = 'No pude procesar tu solicitud. ¿Puedes intentarlo de nuevo?';
       }
 
-      console.log('[AmplifierLoop] SIMPLE path - respuesta final:', finalContent.substring(0, 100));
+      this.log.info('[AmplifierLoop] SIMPLE path - respuesta final:', finalContent.substring(0, 100));
 
       return {
         content: finalContent,
@@ -840,7 +531,7 @@ ${input.userLanguage && input.userLanguage !== 'es'
     }
 
     if (hasMultiStepSkillRequirement && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
-      console.log('[AmplifierLoop] Fast-path disabled due to multi-step skill requirement');
+      this.log.info('[AmplifierLoop] Fast-path disabled due to multi-step skill requirement');
     }
 
     // DECOMPOSE: Si la tarea es COMPLEX, dividir en subtareas antes del loop
@@ -848,18 +539,18 @@ ${input.userLanguage && input.userLanguage !== 'es'
     let accumulatedContext = '';
 
     if (input.classifiedLevel === ComplexityLevel.COMPLEX) {
-      console.log('[AmplifierLoop] COMPLEX task — decomposing into subtasks');
+      this.log.info('[AmplifierLoop] COMPLEX task — decomposing into subtasks');
       
       // Include all available capabilities (including MCP-prefixed tools) in decomposition.
       const toolNames = input.availableTools.map((tool) => tool.name);
       const decomposition = await this.decomposer.decompose(input.message, toolNames, input.history);
       subtasks = decomposition.steps;
 
-      console.log(`[AmplifierLoop] Executing ${subtasks.length} subtask(s) sequentially`);
+      this.log.info(`[AmplifierLoop] Executing ${subtasks.length} subtask(s) sequentially`);
 
       // Ejecutar cada subtarea secuencialmente
       for (const subtask of subtasks) {
-        console.log(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
+        this.log.info(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
 
         // DIRECT EXECUTION: Si la subtarea tiene dependencia Y una tool definida por el Decomposer,
         // ejecutar directamente sin loop ReAct — el modelo solo genera el contenido
@@ -867,7 +558,7 @@ ${input.userLanguage && input.userLanguage !== 'es'
           const tool = this.executableTools.find(t => t.name === subtask.tool);
 
           if (tool) {
-            console.log(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution of "${subtask.tool}"`);
+            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution of "${subtask.tool}"`);
 
             // Para write_file: el modelo genera el contenido, nosotros ejecutamos la tool
             if (subtask.tool === 'write_file') {
@@ -878,12 +569,12 @@ ${input.userLanguage && input.userLanguage !== 'es'
               if (ext && !textLikeExtensions.has(ext)) {
                 const parsed = path.parse(filePath);
                 filePath = path.join(parsed.dir || '.', `${parsed.name}_summary.md`);
-                console.warn(
+                this.log.warn(
                   `[AmplifierLoop] write_file target "${parsed.base}" is not text-friendly. Redirecting summary output to "${filePath}"`
                 );
               }
 
-              console.log(`[AmplifierLoop] Target file path: ${filePath}`);
+              this.log.info(`[AmplifierLoop] Target file path: ${filePath}`);
 
               // Pedir al modelo que genere SOLO el contenido del archivo
               const contentPrompt = `Based on the following information, write a concise markdown summary.
@@ -909,14 +600,14 @@ ${accumulatedContext}`;
                 );
                 fileContent = contentResponse.content?.trim() ?? '';
               } catch (err) {
-                console.error('[AmplifierLoop] Failed to generate file content:', err);
+                this.log.error('[AmplifierLoop] Failed to generate file content:', err);
                 fileContent = accumulatedContext; // Fallback: usar contexto crudo
               }
 
               // Ejecutar write_file directamente
               try {
                 const directInput = { path: filePath, content: fileContent };
-                const validationError = this.validateToolInput('write_file', directInput);
+                const validationError = validateToolInput('write_file', directInput, this.executableTools, this.mcpRegistry);
                 if (validationError) {
                   throw new Error(validationError);
                 }
@@ -925,7 +616,7 @@ ${accumulatedContext}`;
                   ? `File created successfully at ${filePath}`
                   : `Error: ${result.error}`;
 
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - write_file result:`, output);
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - write_file result:`, output);
                 toolsUsed.add('write_file');
                 accumulatedContext += `\n\nStep ${subtask.id} (write_file): ${output}\nFile path: ${filePath}`;
 
@@ -941,7 +632,7 @@ ${accumulatedContext}`;
                   modelUsed: this.baseProvider.model,
                 });
               } catch (err) {
-                console.error('[AmplifierLoop] write_file execution failed:', err);
+                this.log.error('[AmplifierLoop] write_file execution failed:', err);
               }
 
               continue; // Siguiente subtarea
@@ -955,11 +646,11 @@ ${accumulatedContext}`;
               // simplemente ejecutarlo — no pasar por FileOrganizationService
               const concreteShellPattern = /^(mv|mkdir|cp|rsync|ln|rm)\s/i;
               if (concreteShellPattern.test(subtask.input.trim())) {
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - Concrete shell command, running directly`);
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Concrete shell command, running directly`);
                 let output = '';
                 try {
                   const directInput = { command: subtask.input.trim() };
-                  const validationError = this.validateToolInput('execute_command', directInput);
+                  const validationError = validateToolInput('execute_command', directInput, this.executableTools, this.mcpRegistry);
                   if (validationError) {
                     throw new Error(validationError);
                   }
@@ -974,7 +665,7 @@ ${accumulatedContext}`;
                 } catch (err) {
                   output = `Error: ${err}`;
                 }
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output.substring(0, 200));
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output.substring(0, 200));
                 toolsUsed.add('execute_command');
                 accumulatedContext += `\n\nStep ${subtask.id} (execute_command): ${output}`;
                 steps.push({
@@ -998,7 +689,14 @@ ${accumulatedContext}`;
                 !accumulatedContext.toLowerCase().startsWith('error:');
 
               if (!lsOutputLooksValid) {
-                console.warn(`[AmplifierLoop] Subtask ${subtask.id} - Skipping: step 1 produced no valid ls output`);
+                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - Skipping: step 1 produced no valid ls output`);
+                continue;
+              }
+
+              if (!this.fileOrgService) {
+                this.log.warn(
+                  `[AmplifierLoop] Subtask ${subtask.id} - Skipping organize path (file organization disabled)`
+                );
                 continue;
               }
 
@@ -1009,14 +707,14 @@ ${accumulatedContext}`;
               const sourceDir = lsMatch?.[1] ?? extractTargetDir(originalMsg, input.history);
 
               if (!sourceDir) {
-                console.warn(`[AmplifierLoop] Subtask ${subtask.id} - Could not extract source directory`);
+                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - Could not extract source directory`);
                 continue;
               }
 
               const files = this.fileOrgService.extractFilenames(accumulatedContext);
 
               if (files.length === 0) {
-                console.warn(`[AmplifierLoop] Subtask ${subtask.id} - No files to organize`);
+                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - No files to organize`);
                 continue;
               }
 
@@ -1039,9 +737,9 @@ ${accumulatedContext}`;
                 // MODE 1: move everything into a single named folder within sourceDir
                 const destFolder = `${sourceDir}/${namedFolder}`;
                 shellCommand = this.fileOrgService.buildNamedFolderCommand(files, sourceDir, namedFolder);
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - Move-to-named-folder: ${files.length} items → "${destFolder}"`);
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Move-to-named-folder: ${files.length} items → "${destFolder}"`);
                 try {
-                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
                   if (validationError) {
                     throw new Error(validationError);
                   }
@@ -1063,9 +761,9 @@ ${accumulatedContext}`;
                 shellCommand = filesToMove.length > 0
                   ? `mkdir -p "${destPath}" && mv ${filesToMove} "${destPath}/"`
                   : `mkdir -p "${destPath}"`;
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - Targeted move: ${files.length} items → "${destPath}"`);
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Targeted move: ${files.length} items → "${destPath}"`);
                 try {
-                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
                   if (validationError) {
                     throw new Error(validationError);
                   }
@@ -1082,9 +780,9 @@ ${accumulatedContext}`;
                 const built = this.fileOrgService.buildSemanticOrganizeCommand(mapping, sourceDir);
                 shellCommand = built.command;
                 groups = built.groups;
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} - Organize (${files.length} files → ${Object.keys(groups).length} folders):`, shellCommand.substring(0, 400));
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Organize (${files.length} files → ${Object.keys(groups).length} folders):`, shellCommand.substring(0, 400));
                 try {
-                  const validationError = this.validateToolInput('execute_command', { command: shellCommand });
+                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
                   if (validationError) {
                     throw new Error(validationError);
                   }
@@ -1098,7 +796,7 @@ ${accumulatedContext}`;
                 }
               }
 
-              console.log(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output);
+              this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output);
               toolsUsed.add('execute_command');
               accumulatedContext += `\n\nStep ${subtask.id} (execute_command): ${output}`;
               steps.push({
@@ -1128,13 +826,13 @@ ${accumulatedContext}`;
             // convertirlo automáticamente a "ls /ruta"
             let command = subtask.input.trim();
             if (command.startsWith('/') && !command.includes(' ')) {
-              console.warn(`[AmplifierLoop] Subtask ${subtask.id} - input looks like a path, converting to "ls ${command}"`);
+              this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - input looks like a path, converting to "ls ${command}"`);
               command = `ls "${command}"`;
             }
-            console.log(`[AmplifierLoop] Subtask ${subtask.id} - Direct execute_command: ${command}`);
+            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execute_command: ${command}`);
             try {
               const directInput = { command };
-              const validationError = this.validateToolInput('execute_command', directInput);
+              const validationError = validateToolInput('execute_command', directInput, this.executableTools, this.mcpRegistry);
               if (validationError) {
                 throw new Error(validationError);
               }
@@ -1157,9 +855,9 @@ ${accumulatedContext}`;
                 status: output.toLowerCase().includes('error') ? 'error' : 'ok',
                 modelUsed: this.baseProvider.model,
               });
-              console.log(`[AmplifierLoop] Subtask ${subtask.id} completed (direct). ls output: ${output.substring(0, 200)}`);
+              this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed (direct). ls output: ${output.substring(0, 200)}`);
             } catch (err) {
-              console.error('[AmplifierLoop] Direct execute_command failed:', err);
+              this.log.error('[AmplifierLoop] Direct execute_command failed:', err);
             }
             continue; // Skip ReAct loop
           }
@@ -1169,10 +867,10 @@ ${accumulatedContext}`;
         if (subtask.dependsOn == null && subtask.tool === 'web_search') {
           const wsTool = this.executableTools.find(t => t.name === 'web_search');
           if (wsTool && subtask.input) {
-            console.log(`[AmplifierLoop] Subtask ${subtask.id} - Direct web_search: "${subtask.input}"`);
+            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct web_search: "${subtask.input}"`);
             try {
               const directInput = { query: subtask.input };
-              const validationError = this.validateToolInput('web_search', directInput);
+              const validationError = validateToolInput('web_search', directInput, this.executableTools, this.mcpRegistry);
               if (validationError) {
                 throw new Error(validationError);
               }
@@ -1192,12 +890,12 @@ ${accumulatedContext}`;
                   status: 'ok',
                   modelUsed: this.baseProvider.model,
                 });
-                console.log(`[AmplifierLoop] Subtask ${subtask.id} completed (direct web_search)`);
+                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed (direct web_search)`);
               } else {
-                console.error('[AmplifierLoop] Direct web_search failed:', result.error);
+                this.log.error('[AmplifierLoop] Direct web_search failed:', result.error);
               }
             } catch (err) {
-              console.error('[AmplifierLoop] Direct web_search threw:', err);
+              this.log.error('[AmplifierLoop] Direct web_search threw:', err);
             }
             continue; // Skip ReAct loop
           }
@@ -1262,11 +960,11 @@ Do NOT search for more information. Use what is provided.`;
             undefined,
             subtaskResolvedSkills
           );
-          this.recordStageMetric(stageMetrics, 'think', Date.now() - subThinkStart, true);
+          recordStageMetric(stageMetrics, 'think', Date.now() - subThinkStart, true);
           steps.push(thinkStep);
           input.onProgress?.(thinkStep);
 
-          console.log(`[AmplifierLoop] Subtask ${subtask.id} - Think:`, thinkStep.output?.substring(0, 150));
+          this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Think:`, thinkStep.output?.substring(0, 150));
 
           const capabilities: AvailableCapabilities = {
             tools: subtaskInput.availableTools,
@@ -1279,7 +977,7 @@ Do NOT search for more information. Use what is provided.`;
             capabilities
           );
 
-          console.log(`[AmplifierLoop] Subtask ${subtask.id} - Action:`, resolvedAction.type, resolvedAction.target);
+          this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Action:`, resolvedAction.type, resolvedAction.target);
 
           if (resolvedAction.type === 'none') {
             subtaskDone = true;
@@ -1289,13 +987,13 @@ Do NOT search for more information. Use what is provided.`;
 
           const subActStart = Date.now();
           const actStep = await this.act(resolvedAction, subtaskIteration, modelsUsed, toolsUsed, input.userId, requestId);
-          this.recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
+          recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
           steps.push(actStep);
           input.onProgress?.(actStep);
 
           const subObserveStart = Date.now();
           const observeStep = this.observe(actStep, subtaskIteration, requestId);
-          this.recordStageMetric(stageMetrics, 'observe', Date.now() - subObserveStart, true);
+          recordStageMetric(stageMetrics, 'observe', Date.now() - subObserveStart, true);
           steps.push(observeStep);
           input.onProgress?.(observeStep);
 
@@ -1310,12 +1008,12 @@ Do NOT search for more information. Use what is provided.`;
         // Acumular resultado de esta subtarea para la siguiente
         if (subtaskResult) {
           accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${subtaskResult}`;
-          console.log(`[AmplifierLoop] Subtask ${subtask.id} completed. Context size: ${accumulatedContext.length} chars`);
+          this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed. Context size: ${accumulatedContext.length} chars`);
         }
       }
 
       // Sintetizar todos los resultados acumulados
-      console.log('[AmplifierLoop] All subtasks completed — synthesizing final response');
+      this.log.info('[AmplifierLoop] All subtasks completed — synthesizing final response');
 
       // Skip LLM synthesis when only execute_command was used:
       // small models hallucinate "I can't manipulate files" even when commands succeeded.
@@ -1328,16 +1026,16 @@ Do NOT search for more information. Use what is provided.`;
           ? (stepLines[stepLines.length - 1].replace(/^Step \d+ \(execute_command\): /, '').trim())
           : accumulatedContext.trim();
         const hasError =
-          this.shellOutputIndicatesFailure(lastStepOutput) || this.shellOutputIndicatesFailure(accumulatedContext);
+          shellOutputIndicatesFailure(lastStepOutput) || shellOutputIndicatesFailure(accumulatedContext);
         const hasPlaceholder =
-          this.textContainsPlaceholderPath(lastStepOutput) || this.textContainsPlaceholderPath(accumulatedContext);
+          textContainsPlaceholderPath(lastStepOutput) || textContainsPlaceholderPath(accumulatedContext);
         const lang = input.userLanguage ?? 'en';
-        const shouldReturnRaw = this.shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
+        const shouldReturnRaw = shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
         if (!hasError && !hasPlaceholder) {
           const directContent = shouldReturnRaw
             ? lastStepOutput
             : (lang === 'es' ? `Listo, operación completada.` : `Done, operation completed.`);
-          console.log('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
+          this.log.info('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
           return {
             content: directContent,
             requestId,
@@ -1350,7 +1048,7 @@ Do NOT search for more information. Use what is provided.`;
             complexityUsed: ComplexityLevel.COMPLEX,
           };
         }
-        console.log(
+        this.log.info(
           '[AmplifierLoop] execute_command-only path had failure or placeholder — synthesizing user-facing explanation'
         );
       }
@@ -1363,7 +1061,7 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         preResolvedSkills
       );
-      this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - complexSynthStart, true);
+      recordStageMetric(stageMetrics, 'synthesize', Date.now() - complexSynthStart, true);
       steps.push(synthesizeStep);
 
       return {
@@ -1395,11 +1093,11 @@ Do NOT search for more information. Use what is provided.`;
         undefined,
         preResolvedSkills
       );
-      this.recordStageMetric(stageMetrics, 'think', Date.now() - thinkStart, true);
+      recordStageMetric(stageMetrics, 'think', Date.now() - thinkStart, true);
       steps.push(thinkStep);
       input.onProgress?.(thinkStep);
 
-      console.log(`[AmplifierLoop] Iteration ${iteration} - Think output:`, thinkStep.output?.substring(0, 200));
+      this.log.info(`[AmplifierLoop] Iteration ${iteration} - Think output:`, thinkStep.output?.substring(0, 200));
 
       // ACT: ejecuta lo que necesita
       const capabilities: AvailableCapabilities = {
@@ -1413,7 +1111,7 @@ Do NOT search for more information. Use what is provided.`;
         capabilities
       );
 
-      console.log(`[AmplifierLoop] Iteration ${iteration} - Resolved action:`, {
+      this.log.info(`[AmplifierLoop] Iteration ${iteration} - Resolved action:`, {
         type: resolvedAction.type,
         target: resolvedAction.target,
         reason: resolvedAction.reason
@@ -1431,31 +1129,31 @@ Do NOT search for more information. Use what is provided.`;
       // This avoids malformed curl generations (wrong query param, missing URL, placeholders).
       if (weatherSkillActive && resolvedAction.type === 'tool' && resolvedAction.target === 'execute_command') {
         if (stepsExecutedCount === 0) {
-          const location = this.extractWeatherLocation(input.message);
+          const location = extractWeatherLocation(input.message);
           if (location) {
             resolvedAction = {
               ...resolvedAction,
-              input: { command: this.buildWeatherGeocodingCommand(location) },
+              input: { command: buildWeatherGeocodingCommand(location) },
               reason: `${resolvedAction.reason} (normalized weather step 1 command)`,
             };
-            console.log(`[AmplifierLoop] Iteration ${iteration} - normalized weather step 1 command for "${location}"`);
+            this.log.info(`[AmplifierLoop] Iteration ${iteration} - normalized weather step 1 command for "${location}"`);
           }
         } else if (stepsExecutedCount === 1) {
-          const coords = this.extractWeatherCoordsFromSteps(steps);
+          const coords = extractWeatherCoordsFromSteps(steps);
           if (coords) {
             resolvedAction = {
               ...resolvedAction,
-              input: { command: this.buildWeatherForecastCommand(coords.latitude, coords.longitude) },
+              input: { command: buildWeatherForecastCommand(coords.latitude, coords.longitude) },
               reason: `${resolvedAction.reason} (normalized weather step 2 command)`,
             };
-            console.log(
+            this.log.info(
               `[AmplifierLoop] Iteration ${iteration} - normalized weather step 2 command (${coords.latitude}, ${coords.longitude})`
             );
           }
         }
       }
       if (resolvedAction.type === 'none' && mustUseToolNow) {
-        console.warn(
+        this.log.warn(
           `[AmplifierLoop] Iteration ${iteration} - resolvedAction=none but only ${stepsExecutedCount}/${minRequiredSteps} steps done; retrying THINK`
         );
 
@@ -1464,7 +1162,7 @@ Do NOT search for more information. Use what is provided.`;
           && capabilities.tools.some((tool) => tool.name === fallbackAction.target);
         if (isKnownTool) {
           resolvedAction = fallbackAction;
-          console.log(`[AmplifierLoop] Iteration ${iteration} - fallback action selected:`, {
+          this.log.info(`[AmplifierLoop] Iteration ${iteration} - fallback action selected:`, {
             type: resolvedAction.type,
             target: resolvedAction.target,
             reason: resolvedAction.reason,
@@ -1481,10 +1179,10 @@ Do NOT search for more information. Use what is provided.`;
           ]
             .filter(Boolean)
             .join('\n');
-          console.warn('[AmplifierLoop] Forcing one additional THINK retry with stricter context');
+          this.log.warn('[AmplifierLoop] Forcing one additional THINK retry with stricter context');
           continue;
         } else {
-          console.warn('[AmplifierLoop] Unable to force valid tool call after retries; ending loop to avoid timeout');
+          this.log.warn('[AmplifierLoop] Unable to force valid tool call after retries; ending loop to avoid timeout');
         }
       }
 
@@ -1499,10 +1197,10 @@ Do NOT search for more information. Use what is provided.`;
           ]
             .filter(Boolean)
             .join('\n');
-          console.warn(`[AmplifierLoop] Iteration ${iteration} - non-tool action during multi-step; retrying THINK`);
+          this.log.warn(`[AmplifierLoop] Iteration ${iteration} - non-tool action during multi-step; retrying THINK`);
           continue;
         }
-        console.warn('[AmplifierLoop] Repeated non-tool actions during multi-step; ending loop to avoid timeout');
+        this.log.warn('[AmplifierLoop] Repeated non-tool actions during multi-step; ending loop to avoid timeout');
         hasEnoughInfo = true;
         break;
       }
@@ -1521,16 +1219,16 @@ Do NOT search for more information. Use what is provided.`;
         input.userId,
         requestId
       );
-      this.recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !(actStep.output || '').toLowerCase().includes('error'));
+      recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !(actStep.output || '').toLowerCase().includes('error'));
       steps.push(actStep);
       input.onProgress?.(actStep);
 
       // OBSERVE: integra el resultado al contexto
       const observeStart = Date.now();
       const observeStep = this.observe(actStep, iteration, requestId);
-      this.recordStageMetric(stageMetrics, 'observe', Date.now() - observeStart, true);
+      recordStageMetric(stageMetrics, 'observe', Date.now() - observeStart, true);
       steps.push(observeStep);
-      console.log(`[AmplifierLoop] Iteration ${iteration} - Observe output:`, observeStep.output?.substring(0, 200));
+      this.log.info(`[AmplifierLoop] Iteration ${iteration} - Observe output:`, observeStep.output?.substring(0, 200));
 
       if (hasMultiStepSkillRequirement && actStep.action === 'tool') {
         const observeText = (observeStep.output ?? '').toLowerCase();
@@ -1549,7 +1247,7 @@ Do NOT search for more information. Use what is provided.`;
 
         if (hasToolFailure || hasUnresolvedPlaceholder) {
           consecutiveAlgorithmToolErrors++;
-          console.warn(
+          this.log.warn(
             `[AmplifierLoop] Algorithm tool error ${consecutiveAlgorithmToolErrors}/2 at iteration ${iteration}`
           );
           if (consecutiveAlgorithmToolErrors >= 2) {
@@ -1571,7 +1269,7 @@ Do NOT search for more information. Use what is provided.`;
       if (hasMultiStepSkillRequirement) {
         const executedToolSteps = steps.filter((s) => s.type === 'act' && s.action === 'tool').length;
         if (executedToolSteps >= minRequiredSteps && consecutiveAlgorithmToolErrors === 0) {
-          console.log(
+          this.log.info(
             `[AmplifierLoop] Multi-step execution complete (${executedToolSteps}/${minRequiredSteps}). Finalizing without extra THINK iteration`
           );
           hasEnoughInfo = true;
@@ -1580,7 +1278,7 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       if (iteration >= this.maxIterations) {
-        console.warn(
+        this.log.warn(
           `[AmplifierLoop] Reached max iterations (${this.maxIterations}), forcing synthesis`
         );
         hasEnoughInfo = true;
@@ -1596,7 +1294,7 @@ Do NOT search for more information. Use what is provided.`;
       modelsUsed,
       preResolvedSkills
     );
-    this.recordStageMetric(stageMetrics, 'synthesize', Date.now() - finalSynthStart, true);
+    recordStageMetric(stageMetrics, 'synthesize', Date.now() - finalSynthStart, true);
     steps.push(synthesizeStep);
     input.onProgress?.(synthesizeStep);
 
@@ -1696,7 +1394,7 @@ Do NOT return conversational text. Do NOT return {"action":"skill"}.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
     }
 
-    const systemPrompt = `${this.buildAssistantIdentityPrompt(input)}
+    const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
 
 AVAILABLE TOOLS:
@@ -1744,19 +1442,19 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
 
     // Inject skills into THINK context
     const DEBUG = process.env.ENZO_DEBUG === 'true';
-    if (DEBUG) console.log(`[AmplifierLoop] SkillRegistry available:`, !!this.skillRegistry);
+    if (DEBUG) this.log.info(`[AmplifierLoop] SkillRegistry available:`, !!this.skillRegistry);
     if (this.skillRegistry) {
       const enabledSkills = this.skillRegistry.getEnabled();
-      if (DEBUG) console.log(`[AmplifierLoop] Enabled skills count:`, enabledSkills.length);
+      if (DEBUG) this.log.info(`[AmplifierLoop] Enabled skills count:`, enabledSkills.length);
       enabledSkills.forEach(s => {
-        if (DEBUG) console.log(`[AmplifierLoop] Skill available: ${s.metadata.name}`);
+        if (DEBUG) this.log.info(`[AmplifierLoop] Skill available: ${s.metadata.name}`);
       });
     }
 
     if (!skipSkills && skillsToInjectForThink.length > 0) {
-      if (DEBUG) console.log(`[AmplifierLoop] Relevant skills found:`, skillsToInjectForThink.length);
+      if (DEBUG) this.log.info(`[AmplifierLoop] Relevant skills found:`, skillsToInjectForThink.length);
       skillsToInjectForThink.forEach(s => {
-        if (DEBUG) console.log(`[AmplifierLoop] Relevant skill: ${s.name} (score: ${(s.relevanceScore * 100).toFixed(0)}%)`);
+        if (DEBUG) this.log.info(`[AmplifierLoop] Relevant skill: ${s.name} (score: ${(s.relevanceScore * 100).toFixed(0)}%)`);
       });
 
       for (const skill of skillsToInjectForThink) {
@@ -1766,7 +1464,7 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
           : `Skill "${skill.name}" disponible para esta consulta (relevancia: ${(skill.relevanceScore * 100).toFixed(0)}%):\n\n${skill.content}`;
 
         messages.push({ role: 'system', content });
-        if (DEBUG) console.log(
+        if (DEBUG) this.log.info(
           `[AmplifierLoop] Injected skill "${skill.name}" (relevance: ${(skill.relevanceScore * 100).toFixed(0)}%)${isAlgorithmMode ? ' [algorithm mode]' : ''} into THINK context`
         );
       }
@@ -1781,15 +1479,15 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
         }));
 
       if (previousResults.length > 0) {
-        console.log(`[AmplifierLoop] Adding ${previousResults.length} previous results to context`);
-        console.log(`[AmplifierLoop] First result preview:`, previousResults[0].content.substring(0, 150));
+        this.log.info(`[AmplifierLoop] Adding ${previousResults.length} previous results to context`);
+        this.log.info(`[AmplifierLoop] First result preview:`, previousResults[0].content.substring(0, 150));
       }
 
       messages.push(...previousResults);
     }
 
     if (isAlgorithmMode) {
-      console.log(`[AmplifierLoop] Algorithm mode: step ${previousActSteps.length + 1}/${multiStepSkills[0].steps?.length ?? '?'} of skill "${multiStepSkills[0].name}"`);
+      this.log.info(`[AmplifierLoop] Algorithm mode: step ${previousActSteps.length + 1}/${multiStepSkills[0].steps?.length ?? '?'} of skill "${multiStepSkills[0].name}"`);
     }
 
     const response = await this.withTimeout(
@@ -1829,7 +1527,7 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     try {
       if (resolvedAction.type === 'tool') {
         toolsUsed.add(resolvedAction.target);
-        const validationError = this.validateToolInput(resolvedAction.target, resolvedAction.input);
+        const validationError = validateToolInput(resolvedAction.target, resolvedAction.input, this.executableTools, this.mcpRegistry);
         if (validationError) {
           output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
           return {
@@ -1906,7 +1604,7 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     } catch (error) {
       const normalized = normalizeError(error, 'orchestrator');
       output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
-      console.error(`[AmplifierLoop] Action failed at iteration ${iteration}:`, normalized.technicalMessage);
+      this.log.error(`[AmplifierLoop] Action failed at iteration ${iteration}:`, normalized.technicalMessage);
     }
 
     return {
@@ -1944,10 +1642,10 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
   ): Promise<Step> {
     const startTime = Date.now();
     const userLanguage = input.userLanguage || 'en';
-    const relevantSkillsSection = this.buildRelevantSkillsSection(resolvedSkills);
-    const requiredTemplateSection = this.extractOutputTemplates(resolvedSkills);
+    const relevantSkillsSection = buildRelevantSkillsSection(resolvedSkills);
+    const requiredTemplateSection = extractOutputTemplates(resolvedSkills);
     
-    const systemPrompt = `${this.buildAssistantIdentityPrompt(input)}
+    const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 ${relevantSkillsSection}
 ${requiredTemplateSection}
 

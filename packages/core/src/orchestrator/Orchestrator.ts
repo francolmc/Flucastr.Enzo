@@ -24,6 +24,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 
 export class Orchestrator {
   private classifier: Classifier;
@@ -158,8 +159,6 @@ export class Orchestrator {
 
       // Step 3: Resolve available capabilities
       const tools: Tool[] = this.toolRegistry.getToolDefinitions();
-      
-      // Add MCP tools to the available tools
       const mcpTools = this.mcpRegistry.getMCPToolsForOrchestrator();
       if (mcpTools.length > 0) {
         console.log(
@@ -167,26 +166,10 @@ export class Orchestrator {
             .map((tool) => tool.name)
             .join(', ')}`
         );
-        tools.push(...mcpTools);
       }
-      
-      // Prefer enabled skills from SkillRegistry so all channels use the same source of truth.
-      const allowAllSkillsFallback = (process.env.ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED ?? 'true').toLowerCase() !== 'false';
-      const registrySkillsRaw = this.skillRegistry
-        ? this.skillRegistry.getEnabled()
-        : [];
-      const skillsSource = this.skillRegistry
-        ? (registrySkillsRaw.length > 0
-            ? registrySkillsRaw
-            : (allowAllSkillsFallback ? this.skillRegistry.getAll() : []))
-        : [];
-      const registrySkills: Skill[] = skillsSource
-        .map((skill) => ({
-            id: skill.id,
-            name: skill.metadata.name,
-            description: skill.metadata.description,
-          }));
-      const skills = registrySkills.length > 0 ? registrySkills : this.availableSkills;
+      appendMcpToolsToToolList(tools, mcpTools);
+
+      const skills = resolveSkillsForOrchestrator(this.skillRegistry, this.availableSkills);
       const agents = this.availableAgents;
 
       // Step 4: Run AmplifierLoop with all capabilities and classified level
