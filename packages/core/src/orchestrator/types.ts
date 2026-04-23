@@ -70,6 +70,13 @@ export interface AmplifierInput {
   userProfile?: UserProfile;
   memoryBlock?: string;
   onProgress?: (step: Step) => void;
+  /** Optional OS/paths for prompts (fast path). Defaults preserve prior macOS-oriented behavior. */
+  runtimeHints?: {
+    homeDir?: string;
+    osLabel?: string;
+    timeLocale?: string;
+    timeZone?: string;
+  };
   decomposition?: {
     steps: Subtask[];
     originalMessage: string;
@@ -159,6 +166,8 @@ export interface OrchestratorInput {
   userLanguage?: string;
   agentId?: string;
   onProgress?: (step: Step) => void;
+  /** Passed through to AmplifierInput when present; else process() supplies env defaults. */
+  runtimeHints?: AmplifierInput['runtimeHints'];
 }
 
 export const AVAILABLE_TOOLS = [

@@ -97,6 +97,13 @@ async function processMessageInBackground(
 
     const resolvedAgentId = explicitAgentId;
 
+    const profile = ctx.configService?.getUserProfile();
+    const systemTz = ctx.configService?.getSystemConfig()?.tz?.trim();
+    const timeLocale =
+      profile?.locale?.trim() ||
+      (langContext.userLanguage.toLowerCase().startsWith('en') ? 'en-US' : 'es-CL');
+    const timeZone = profile?.timezone?.trim() || systemTz;
+
     // Step 2: Classify using the working message (in English)
     const complexityLevel = await ctx.orchestrator.classify(workingMessage, userId, conversationId);
     console.log(`[Telegram] Classified as: ${complexityLevel}`);
@@ -119,6 +126,12 @@ async function processMessageInBackground(
       userLanguage: langContext.userLanguage,
       agentId: resolvedAgentId,
       classifiedLevel: complexityLevel as any,
+      runtimeHints: {
+        homeDir: process.env.HOME,
+        osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,
+        timeLocale,
+        ...(timeZone ? { timeZone } : {}),
+      },
       onProgress: isSimple ? undefined : async (step) => {
         if (progressMessageId && ctx.chat) {
           const emoji = getProgressEmoji(step);

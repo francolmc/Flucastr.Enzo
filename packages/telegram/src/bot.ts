@@ -1,15 +1,17 @@
 import { Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
-import type { Orchestrator, MemoryService } from '@enzo/core';
+import type { Orchestrator, MemoryService, ConfigService } from '@enzo/core';
 
 export interface EnzoContext extends Context {
   orchestrator: Orchestrator;
   memoryService: MemoryService;
+  configService?: ConfigService;
 }
 
 export function createBot(
   orchestrator: Orchestrator,
-  memoryService: MemoryService
+  memoryService: MemoryService,
+  options?: { configService?: ConfigService }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
 
@@ -45,6 +47,7 @@ export function createBot(
   bot.use((ctx, next) => {
     ctx.orchestrator = orchestrator;
     ctx.memoryService = memoryService;
+    ctx.configService = options?.configService;
     return next();
   });
 

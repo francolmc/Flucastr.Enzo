@@ -31,6 +31,7 @@ import {
   EncryptionService,
   ensureLocalSecret
 } from '@enzo/core';
+import { createDefaultToolRegistry } from './createDefaultToolRegistry.js';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
@@ -91,11 +92,12 @@ async function main() {
     }
 
     // 3. Initialize Orchestrator
+    const toolRegistry = createDefaultToolRegistry(memoryService, undefined, configService);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
       memoryService,
-      { skillRegistry, configService }
+      { skillRegistry, configService, toolRegistry }
     );
     console.log('[Telegram] Orchestrator initialized');
 
@@ -140,7 +142,7 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService);
+      const nextBot = createBot(orchestrator, memoryService, { configService });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
       await nextBot.launch();

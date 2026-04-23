@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { Orchestrator, Step, MemoryService, ConversationRecord } from '@enzo/core';
+import { Orchestrator, Step, MemoryService, ConversationRecord, type ConfigService } from '@enzo/core';
 import { validateChatRequest } from '../middleware/validate.js';
 import { randomUUID } from 'crypto';
 
@@ -35,6 +35,32 @@ async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function buildRuntimeHintsFromConfig(configService?: ConfigService) {
+  const profile = configService?.getUserProfile();
+  const systemTz = configService?.getSystemConfig()?.tz?.trim();
+  const lang = process.env.LANG || '';
+  const timeLocale =
+    profile?.locale?.trim() ||
+    (lang.toLowerCase().includes('en_us') || lang.toLowerCase().startsWith('en')
+      ? 'en-US'
+      : 'es-CL');
+  const hints: {
+    homeDir?: string;
+    osLabel?: string;
+    timeLocale?: string;
+    timeZone?: string;
+  } = {
+    homeDir: process.env.HOME,
+    osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,
+    timeLocale,
+  };
+  const tz = profile?.timezone?.trim() || systemTz;
+  if (tz) {
+    hints.timeZone = tz;
+  }
+  return hints;
+}
+
 function extractMemoryInBackground(
   orchestrator: Orchestrator,
   userId: string,
@@ -49,7 +75,8 @@ function extractMemoryInBackground(
 
 export function createChatRouter(
   orchestrator: Orchestrator,
-  memoryService: MemoryService
+  memoryService: MemoryService,
+  configService?: ConfigService
 ): Router {
   const router = Router();
 
@@ -72,6 +99,7 @@ export function createChatRouter(
           source: 'web',
           agentId,
           requestId,
+          runtimeHints: buildRuntimeHintsFromConfig(configService),
         });
       });
 
@@ -143,6 +171,7 @@ export function createChatRouter(
           source: 'web',
           agentId,
           requestId,
+          runtimeHints: buildRuntimeHintsFromConfig(configService),
           onProgress: (step: Step) => {
             progressCount++;
             // Send progress event every step

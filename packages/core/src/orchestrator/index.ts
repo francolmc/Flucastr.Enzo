@@ -8,4 +8,11 @@ export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';
 export { EscalationManager } from './EscalationManager.js';
+export { SkillResolver, type RelevantSkill } from './SkillResolver.js';
+export {
+  executeOrchestratorProcess,
+  type OrchestratorProcessBindings,
+} from './OrchestratorProcess.js';
+export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
+export { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
 export * from './types.js';

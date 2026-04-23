@@ -29,15 +29,17 @@ import {
   buildWeatherForecastCommand,
 } from './amplifier/AmplifierLoopPromptHelpers.js';
 import {
-  extractFirstJsonObject,
-  mergeAvailableToolDefinitions,
   normalizeFastPathToolCall,
-  resolveFastPathToolForExecution,
   shouldReturnRawToolOutput,
   shellOutputIndicatesFailure,
   textContainsPlaceholderPath,
   validateToolInput,
 } from './amplifier/AmplifierLoopFastPathTools.js';
+import { runSimpleModerateFastPath } from './amplifier/AmplifierSimplePath.js';
+import { runThinkPhase } from './amplifier/AmplifierThinkPhase.js';
+import { runActPhase, type AmplifierLoopPhaseDeps } from './amplifier/AmplifierActPhase.js';
+import { runObservePhase } from './amplifier/AmplifierObservePhase.js';
+import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 
 export type AmplifierLoopOptions = {
   maxIterations?: number;
@@ -185,349 +187,26 @@ No markdown. No prose.`;
       this.log.info(`[AmplifierLoop] Multi-step skill detected: minRequiredSteps=${minRequiredSteps}`);
     }
 
-    // FAST-PATH: SIMPLE y MODERATE usan el mismo path directo (un solo tool call + síntesis)
-    // MODERATE = exactamente una herramienta requerida, igual que SIMPLE pero con tool obligatoria
     if ((input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) && !hasMultiStepSkillRequirement) {
-      const isModerate = input.classifiedLevel === ComplexityLevel.MODERATE;
-      this.log.info(`[AmplifierLoop] Fast-path ${isModerate ? 'MODERATE' : 'SIMPLE'}`);
-
-      const mergedToolDefs = mergeAvailableToolDefinitions(input, this.mcpRegistry);
-      const toolsList = mergedToolDefs.map((t) => `- ${t.name}: ${t.description}`).join('\n');
-
-      // Detect if user is asking about capabilities — inject real skill list to avoid hallucination
-      const isCapabilityQuery = /\b(qu[eé] puedes|what can you|capabilities|habilidades|skills|funciones|qu[eé] sabes|what do you|qu[eé] eres capaz|qu[eé] haces|what are you)\b/i.test(input.message);
-      let skillListSection = '';
-      if (isCapabilityQuery && this.skillRegistry) {
-        const enabledSkills = this.skillRegistry.getEnabled();
-        if (enabledSkills.length > 0) {
-          const skillLines = enabledSkills
-            .map(s => `- ${s.metadata.name}: ${s.metadata.description}`)
-            .join('\n');
-          skillListSection = `\nAVAILABLE SKILLS (list these when asked about capabilities):\n${skillLines}\n`;
-        }
-      }
-      const relevantSkillsSection = buildRelevantSkillsSection(preResolvedSkills);
-      const requiredTemplateSection = extractOutputTemplates(preResolvedSkills);
-
-      const toolUsageRule = isModerate
-        ? `You MUST use one of the tools above to answer this request. Do NOT answer from memory.`
-        : `If you can answer directly without tools, respond with plain text.`;
-
-      const homeDir = process.env.HOME ?? '/Users/franco';
-      const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-Date: ${new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' })}.
-OS: macOS. Home directory: ${homeDir}. ALWAYS use absolute macOS paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
-
-AVAILABLE TOOLS:
-${toolsList}
-${skillListSection}
-${relevantSkillsSection}
-To use a tool, respond ONLY with JSON (no extra text, no markdown):
-{"action":"tool","tool":"TOOL_NAME","input":{PARAMS}}
-
-CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Built-in tool names: execute_command, web_search, read_file, write_file, remember.
-MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
-WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
-
-Valid examples:
-{"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
-{"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
-{"action":"tool","tool":"execute_command","input":{"command":"df -h"}}
-{"action":"tool","tool":"execute_command","input":{"command":"sw_vers"}}
-{"action":"tool","tool":"web_search","input":{"query":"search terms"}}
-{"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
-{"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
-
-${toolUsageRule}
-
-TOOL SELECTION — CRITICAL:
-- List / show folder contents → execute_command with "ls /the/folder/path"
-- Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
-- Search the internet for information → web_search
-- Call an HTTP/API endpoint when user provides a URL → execute_command with curl
-  Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
-- Query current system state (RAM, disk, processes, OS version, CPU) → execute_command
-  Useful commands: "vm_stat" (RAM), "df -h" (disk), "sw_vers" (macOS version), "top -l 1 -n 5" (processes)
-- External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
-- Run any other shell command → execute_command
-- NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
-
-RULES:
-- NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
-- Never invent file contents — use read_file
-- Never invent search results — use web_search
-- Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
-- One tool call per response, no extra fields in the JSON input
-- web_search input must be ONLY: {"query": "search terms"} — nothing else
-
-${input.userLanguage && input.userLanguage !== 'es'
-  ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. NOT in Spanish. NOT in any other language.`
-  : 'Respond in Spanish (es).'}
-If responding with plain text (no tool), write in this language.`;
-
-      const messages: Message[] = [
-        ...input.history,
-        { role: 'user', content: input.message },
-      ];
-
-      // Primera llamada: el modelo decide y genera el input de tool en un solo paso
-      let firstResponse;
-      const fastThinkStart = Date.now();
-      try {
-        firstResponse = await this.withTimeout(
-          this.baseProvider.complete({
-            messages: [{ role: 'system', content: systemPrompt }, ...messages],
-            temperature: 0.3,
-            maxTokens: 384,
-          }),
-          180_000,
-          'SIMPLE first call'
-        );
-      } catch (err) {
-        this.log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
-        recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
-        throw err;
-      }
-      recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
-
-      const rawContent = (firstResponse.content ?? '').trim();
-      this.log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
-
-      let finalContent = rawContent;
-
-      // Normalizar el formato de respuesta antes de parsear.
-      // Algunos modelos pequeños emiten "toolname{...}" en vez de {"action":"tool","tool":"toolname","input":{...}}
-      // También puede haber múltiples tool calls concatenados — tomar solo el primero.
-      let normalizedContent = rawContent;
-      if (!rawContent.startsWith('{')) {
-        // Intentar detectar formato "toolname{json}" → {"action":"tool","tool":"toolname","input":{json}}
-        const toolnamePattern = rawContent.match(/^(\w+)\s*(\{[\s\S]+)/);
-        if (toolnamePattern) {
-          const possibleTool = toolnamePattern[1].toLowerCase();
-          const jsonPart = toolnamePattern[2];
-          // Extraer solo el primer objeto JSON balanceado
-          let depth = 0, end = -1, inStr = false, esc = false;
-          for (let i = 0; i < jsonPart.length; i++) {
-            const ch = jsonPart[i];
-            if (esc) { esc = false; continue; }
-            if (ch === '\\' && inStr) { esc = true; continue; }
-            if (ch === '"') { inStr = !inStr; continue; }
-            if (inStr) continue;
-            if (ch === '{') depth++;
-            else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
-          }
-          if (end !== -1) {
-            const argsJson = jsonPart.slice(0, end + 1);
-            normalizedContent = `{"action":"tool","tool":"${possibleTool}","input":${argsJson}}`;
-            this.log.info(`[AmplifierLoop] SIMPLE path - formato normalizado: ${normalizedContent.substring(0, 100)}`);
-          }
-        }
-
-        // Si el modelo mezcló texto + JSON, extraer el primer JSON embebido para ejecutarlo.
-        if (!normalizedContent.startsWith('{')) {
-          const embeddedJson = extractFirstJsonObject(rawContent);
-          if (embeddedJson) {
-            normalizedContent = embeddedJson;
-            this.log.info('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
-          }
-        }
-
-        // Fallback: si el modelo devolvió un comando de shell como texto plano (sin JSON),
-        // auto-envolverlo como execute_command
-        if (!normalizedContent.startsWith('{')) {
-          const shellCmdPattern = /^(ls|df|du|ps|top|sw_vers|vm_stat|uname|which|find|cat|mkdir|mv|cp|curl|wget|git|npm|pip|brew|open|echo|pwd|env|printenv)\s/i;
-          if (shellCmdPattern.test(rawContent.trim())) {
-            normalizedContent = JSON.stringify({
-              action: 'tool',
-              tool: 'execute_command',
-              input: { command: rawContent.trim() },
-            });
-            this.log.info('[AmplifierLoop] SIMPLE path - comando shell detectado, auto-wrapped como execute_command');
-          }
-        }
-      }
-
-      // Si el modelo respondió con JSON de herramienta, ejecutarla
-      if (normalizedContent.startsWith('{')) {
-        try {
-          const parsedResult = parseFirstJsonObject<any>(normalizedContent, { tryRepair: true });
-          if (!parsedResult) {
-            const repairedCandidate = repairJsonString(normalizedContent);
-            const repairedResult = parseFirstJsonObject<any>(repairedCandidate, { tryRepair: true });
-            if (!repairedResult) {
-              throw new Error('JSON inválido incluso después de reparación');
-            }
-            this.log.info('[AmplifierLoop] SIMPLE path - JSON reparado exitosamente');
-          }
-          const parsed = (parsedResult ?? parseFirstJsonObject<any>(repairJsonString(normalizedContent), { tryRepair: true }))!.value;
-          let { toolName, toolInput } = normalizeFastPathToolCall(parsed, this.executableTools);
-
-          let resolved =
-            toolName && toolName !== 'none'
-              ? resolveFastPathToolForExecution(toolName, mergedToolDefs, this.executableTools)
-              : null;
-
-          if (resolved) {
-              let execName = resolved.name;
-
-              const validationError = validateToolInput(execName, toolInput, this.executableTools, this.mcpRegistry);
-              if (validationError) {
-                this.log.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
-                const correctedCall = await this.requestToolInputCorrection(
-                  input.message,
-                  execName,
-                  toolInput,
-                  validationError
-                ).catch((error) => {
-                  this.log.warn('[AmplifierLoop] SIMPLE path - tool correction failed:', error);
-                  return null;
-                });
-                if (correctedCall) {
-                  toolName = correctedCall.toolName;
-                  toolInput = correctedCall.toolInput;
-                  resolved = resolveFastPathToolForExecution(toolName, mergedToolDefs, this.executableTools);
-                  if (!resolved) {
-                    finalContent = `No se pudo resolver la herramienta tras la corrección: ${toolName}`;
-                    this.log.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
-                  } else {
-                    execName = resolved.name;
-                    this.log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
-                  }
-                }
-              }
-
-              if (resolved) {
-              const validationAfterCorrection = validateToolInput(execName, toolInput, this.executableTools, this.mcpRegistry);
-              if (validationAfterCorrection) {
-                finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
-                this.log.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
-              } else {
-                toolsUsed.add(execName);
-                this.log.info(
-                  `[AmplifierLoop] SIMPLE path - ejecutando "${execName}" (${resolved.kind}):`,
-                  toolInput
-                );
-
-                let rawToolOutput = '';
-                let setupError: string | undefined;
-
-                const actStart = Date.now();
-                if (resolved.kind === 'internal') {
-                  const tool = this.executableTools.find((t) => t.name === execName);
-                  if (!tool) {
-                    setupError = `Herramienta interna no encontrada: ${execName}`;
-                  } else {
-                    const result = await tool.execute(toolInput);
-                    rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
-                    if (execName === 'web_search' && result.success) {
-                      const formatted = formatSearchResults(result.data as any, 'full');
-                      if (formatted) rawToolOutput = formatted;
-                    }
-                  }
-                } else if (this.mcpRegistry) {
-                  try {
-                    rawToolOutput = await this.mcpRegistry.callTool(execName, toolInput);
-                  } catch (mcpErr) {
-                    const normalizedMcpError = normalizeError(mcpErr, 'mcp');
-                    rawToolOutput = `Error [${normalizedMcpError.code}]: ${normalizedMcpError.technicalMessage}`;
-                  }
-                } else {
-                  setupError = 'MCP no está disponible en este entorno.';
-                }
-                recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !setupError && !rawToolOutput.toLowerCase().startsWith('error'));
-
-                if (setupError) {
-                  finalContent = setupError;
-                } else {
-                const toolOutput = rawToolOutput;
-
-                this.log.info('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
-
-                if (resolved.kind === 'internal' && shouldReturnRawToolOutput(execName, input.message, toolOutput)) {
-                  finalContent = toolOutput;
-                  this.log.info('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
-                } else {
-                  const synthesisPrompt = `${buildAssistantIdentityPrompt(input)}
-${relevantSkillsSection}
-${requiredTemplateSection}
-You executed a tool and got this result:
-
-TOOL: ${execName}
-RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
-${toolOutput}
-
-Write a response to the user based on this real result.
-Do NOT invent or add information not present in the result.
-Do NOT explain the internal process or mention tools.
-If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
-Template rules have higher priority than "natural phrasing".
-Do not change labels/order/emoji/sections from the chosen template.
-When a required field is missing in the tool result, keep the format and use "N/D" for that field.
-
-${input.userLanguage && input.userLanguage !== 'es'
-  ? `CRITICAL: Write your response in ${input.userLanguage.toUpperCase()}. NOT in Spanish.`
-  : 'Write your response in Spanish (es).'}`;
-
-                  let synthesisResponse;
-                  const synthStart = Date.now();
-                  try {
-                    synthesisResponse = await this.withTimeout(
-                      this.baseProvider.complete({
-                        messages: [
-                          { role: 'system', content: synthesisPrompt },
-                          { role: 'user', content: input.message },
-                        ],
-                        temperature: 0.7,
-                        maxTokens: 512,
-                      }),
-                      180_000,
-                      'SIMPLE synthesis'
-                    );
-                  } catch (synthErr) {
-                    this.log.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
-                    synthesisResponse = null;
-                    recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, false);
-                  }
-                  if (synthesisResponse) {
-                    recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, true);
-                  }
-
-                  finalContent = synthesisResponse?.content?.trim()
-                    ? synthesisResponse.content.trim()
-                    : toolOutput;
-                }
-                }
-              }
-              }
-          } else if (toolName && toolName !== 'none') {
-              this.log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
-          }
-        } catch {
-          // No era JSON válido — usar la respuesta directa como texto
-          this.log.info('[AmplifierLoop] SIMPLE path - respuesta directa (no JSON)');
-        }
-      }
-
-      if (!finalContent) {
-        this.log.warn('[AmplifierLoop] SIMPLE path - contenido vacío, usando fallback');
-        finalContent = 'No pude procesar tu solicitud. ¿Puedes intentarlo de nuevo?';
-      }
-
-      this.log.info('[AmplifierLoop] SIMPLE path - respuesta final:', finalContent.substring(0, 100));
-
-      return {
-        content: finalContent,
-        requestId,
-        stepsUsed: steps,
-        modelsUsed: Array.from(modelsUsed),
-        toolsUsed: Array.from(toolsUsed),
-        injectedSkills: Array.from(injectedSkills.values()),
-        durationMs: Date.now() - startTime,
+      return runSimpleModerateFastPath({
+        input,
+        classifiedLevel: input.classifiedLevel,
         stageMetrics,
-        complexityUsed: input.classifiedLevel,
-      };
+        modelsUsed,
+        toolsUsed,
+        injectedSkills,
+        preResolvedSkills,
+        startTime,
+        requestId,
+        steps,
+        baseProvider: this.baseProvider,
+        withTimeout: this.withTimeout.bind(this),
+        executableTools: this.executableTools,
+        mcpRegistry: this.mcpRegistry,
+        skillRegistry: this.skillRegistry,
+        log: this.log,
+        requestToolInputCorrection: this.requestToolInputCorrection.bind(this),
+      });
     }
 
     if (hasMultiStepSkillRequirement && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
@@ -951,15 +630,14 @@ Do NOT search for more information. Use what is provided.`;
           rememberInjectedSkills(subtaskResolvedSkills);
 
           const subThinkStart = Date.now();
-          const thinkStep = await this.think(
-            subtaskInput,
-            accumulatedContext,
-            subtaskIteration,
+          const thinkStep = await runThinkPhase(this.phaseDeps(), {
+            input: subtaskInput,
+            context: accumulatedContext,
+            iteration: subtaskIteration,
             modelsUsed,
-            steps,
-            undefined,
-            subtaskResolvedSkills
-          );
+            previousSteps: steps,
+            resolvedSkills: subtaskResolvedSkills,
+          });
           recordStageMetric(stageMetrics, 'think', Date.now() - subThinkStart, true);
           steps.push(thinkStep);
           input.onProgress?.(thinkStep);
@@ -986,13 +664,21 @@ Do NOT search for more information. Use what is provided.`;
           }
 
           const subActStart = Date.now();
-          const actStep = await this.act(resolvedAction, subtaskIteration, modelsUsed, toolsUsed, input.userId, requestId);
+          const actStep = await runActPhase(
+            this.phaseDeps(),
+            resolvedAction,
+            subtaskIteration,
+            modelsUsed,
+            toolsUsed,
+            input.userId,
+            requestId
+          );
           recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
           steps.push(actStep);
           input.onProgress?.(actStep);
 
           const subObserveStart = Date.now();
-          const observeStep = this.observe(actStep, subtaskIteration, requestId);
+          const observeStep = runObservePhase(actStep, subtaskIteration, requestId, this.baseProvider.model);
           recordStageMetric(stageMetrics, 'observe', Date.now() - subObserveStart, true);
           steps.push(observeStep);
           input.onProgress?.(observeStep);
@@ -1054,7 +740,8 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       const complexSynthStart = Date.now();
-      const synthesizeStep = await this.synthesize(
+      const synthesizeStep = await runSynthesizePhase(
+        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
         input,
         accumulatedContext,
         iteration,
@@ -1084,15 +771,14 @@ Do NOT search for more information. Use what is provided.`;
 
       // THINK: modelo base analiza qué necesita
       const thinkStart = Date.now();
-      const thinkStep = await this.think(
+      const thinkStep = await runThinkPhase(this.phaseDeps(), {
         input,
-        currentContext,
+        context: currentContext,
         iteration,
         modelsUsed,
-        steps,
-        undefined,
-        preResolvedSkills
-      );
+        previousSteps: steps,
+        resolvedSkills: preResolvedSkills,
+      });
       recordStageMetric(stageMetrics, 'think', Date.now() - thinkStart, true);
       steps.push(thinkStep);
       input.onProgress?.(thinkStep);
@@ -1211,7 +897,8 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       const actStart = Date.now();
-      const actStep = await this.act(
+      const actStep = await runActPhase(
+        this.phaseDeps(),
         resolvedAction,
         iteration,
         modelsUsed,
@@ -1225,7 +912,7 @@ Do NOT search for more information. Use what is provided.`;
 
       // OBSERVE: integra el resultado al contexto
       const observeStart = Date.now();
-      const observeStep = this.observe(actStep, iteration, requestId);
+      const observeStep = runObservePhase(actStep, iteration, requestId, this.baseProvider.model);
       recordStageMetric(stageMetrics, 'observe', Date.now() - observeStart, true);
       steps.push(observeStep);
       this.log.info(`[AmplifierLoop] Iteration ${iteration} - Observe output:`, observeStep.output?.substring(0, 200));
@@ -1287,7 +974,8 @@ Do NOT search for more information. Use what is provided.`;
 
     // SYNTHESIZE: modelo base narra la respuesta final
     const finalSynthStart = Date.now();
-    const synthesizeStep = await this.synthesize(
+    const synthesizeStep = await runSynthesizePhase(
+      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
       input,
       currentContext,
       iteration + 1,
@@ -1311,383 +999,17 @@ Do NOT search for more information. Use what is provided.`;
     };
   }
 
-  private async think(
-    input: AmplifierInput,
-    context: string,
-    iteration: number,
-    modelsUsed: Set<string>,
-    previousSteps: Step[] = [],
-    skipSkills?: boolean,
-    resolvedSkills?: RelevantSkill[]
-  ): Promise<Step> {
-    const startTime = Date.now();
-    // Build a deduplicated tool list. Orchestrator already merges MCP tools into input.availableTools.
-    const mergedTools = [...input.availableTools];
-    if (this.mcpRegistry) {
-      for (const mcpTool of this.mcpRegistry.getMCPToolsForOrchestrator()) {
-        if (!mergedTools.some((tool) => tool.name === mcpTool.name)) {
-          mergedTools.push(mcpTool);
-        }
-      }
-    }
-    const toolsList = mergedTools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n');
-
-    // Detect if we are in mid-execution of a multi-step skill algorithm.
-    // When there are previous act steps AND multi-step skills are active, switch to an
-    // algorithm-mode prompt that explicitly tells the model which step to execute next.
-    const previousActSteps = previousSteps.filter(s => s.type === 'act');
-    const previousObservations = previousSteps.filter(s => s.type === 'observe' && s.output);
-    const skillsToInjectForThink: RelevantSkill[] = (!skipSkills && this.skillRegistry)
-      ? (resolvedSkills ?? await this.skillResolver.resolveRelevantSkills(input.message, this.skillRegistry))
-      : [];
-
-    const multiStepSkills = skillsToInjectForThink.filter(skill => {
-      if (skill.steps?.length && skill.steps.length >= 2) return true;
-      const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
-      const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, '')) || 0), 0);
-      return maxN >= 2;
-    });
-
-    const isAlgorithmMode = multiStepSkills.length > 0;
-
-    let algorithmModeBlock = '';
-    if (isAlgorithmMode) {
-      const skill = multiStepSkills[0];
-      const stepsCompleted = previousActSteps.length;
-
-      // Build step list: prefer structured steps, else extract from content markers
-      let stepDescriptions: string[] = [];
-      if (skill.steps?.length) {
-        stepDescriptions = skill.steps.map((s, i) => `  Step ${i + 1}: ${s.description}${s.tool ? ` [tool: ${s.tool}]` : ''}`);
-      } else {
-        // Extract "Paso N: ..." lines from content as a fallback
-        const pasoLines = (skill.content ?? '')
-          .split('\n')
-          .filter(l => /^\d+\.\s/.test(l.trim()) || /\bpaso\s+\d+/i.test(l))
-          .slice(0, 10)
-          .map((l, i) => `  Step ${i + 1}: ${l.trim()}`);
-        stepDescriptions = pasoLines.length > 0 ? pasoLines : [`  (see skill algorithm below)`];
-      }
-
-      const totalSteps = Math.max(1, skill.steps?.length ?? stepDescriptions.length);
-      const nextStepN = Math.min(stepsCompleted + 1, totalSteps);
-      const expectedToolForNextStep = skill.steps?.[nextStepN - 1]?.tool;
-      const observationSummary = previousObservations
-        .map((s, i) => `  Step ${i + 1} result: ${(s.output ?? '').substring(0, 300)}`)
-        .join('\n');
-
-      algorithmModeBlock = `
-━━━ SKILL ALGORITHM IN PROGRESS: "${skill.name}" ━━━
-Total steps required: ${totalSteps}
-Steps completed: ${stepsCompleted}/${totalSteps}
-
-Algorithm:
-${stepDescriptions.join('\n')}
-
-Results so far:
-${observationSummary}
-
-CURRENT TASK: Execute step ${nextStepN} of the algorithm.
-${expectedToolForNextStep ? `REQUIRED TOOL FOR THIS STEP: ${expectedToolForNextStep}` : ''}
-Return ONLY a JSON tool call for step ${nextStepN}. {"action":"none"} is NOT valid until all ${totalSteps} steps are complete.
-Do NOT return conversational text. Do NOT return {"action":"skill"}.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-    }
-
-    const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
-
-AVAILABLE TOOLS:
-${toolsList}
-
-CRITICAL: To use a tool, respond ONLY with this EXACT JSON format:
-{"action":"tool","tool":"TOOL_NAME","input":{"param":"value"}}
-
-The "input" field MUST be a nested object. Never put params at the root level.
-
-CORRECT examples:
-{"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
-{"action":"tool","tool":"web_search","input":{"query":"search terms"}}
-{"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
-{"action":"tool","tool":"write_file","input":{"path":"/path/to/file.md","content":"File content here"}}
-{"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
-
-WRONG examples (never do this):
-{"action":"execute_command","command":"ls ~/Downloads"}
-{"action":"web_search","query":"something"}
-
-${isAlgorithmMode ? '' : `If you already have enough information:
-{"action":"none"}
-
-`}ABSOLUTE RULES:
-- To CREATE or OVERWRITE a file with content → use write_file (structure: {"path":"...","content":"..."})
-- Never invent file contents — use read_file or write based on actual data
-- Never invent search results — use web_search
-- To list a folder use execute_command with "ls /path/to/folder"
-- For file paths, use the paths provided by the user in the message
-- One tool call per response
-- Never add text outside the JSON
-- ALWAYS use absolute paths starting with / — never relative paths like "ls Downloads" or "mkdir documents/"
-- Extract the target directory from the user's message and prefix every path with it
-- Never invent files or folders — only use what execute_command results actually showed
-
-Iteration: ${iteration}/${this.maxIterations}
-${context ? `Context from previous steps:\n${context}` : ''}`;
-
-    // input.history ya contiene el memoryBlock inyectado por Orchestrator — no duplicar
-    const messages: Message[] = [
-      ...input.history,
-      { role: 'user', content: input.message },
-    ];
-
-    // Inject skills into THINK context
-    const DEBUG = process.env.ENZO_DEBUG === 'true';
-    if (DEBUG) this.log.info(`[AmplifierLoop] SkillRegistry available:`, !!this.skillRegistry);
-    if (this.skillRegistry) {
-      const enabledSkills = this.skillRegistry.getEnabled();
-      if (DEBUG) this.log.info(`[AmplifierLoop] Enabled skills count:`, enabledSkills.length);
-      enabledSkills.forEach(s => {
-        if (DEBUG) this.log.info(`[AmplifierLoop] Skill available: ${s.metadata.name}`);
-      });
-    }
-
-    if (!skipSkills && skillsToInjectForThink.length > 0) {
-      if (DEBUG) this.log.info(`[AmplifierLoop] Relevant skills found:`, skillsToInjectForThink.length);
-      skillsToInjectForThink.forEach(s => {
-        if (DEBUG) this.log.info(`[AmplifierLoop] Relevant skill: ${s.name} (score: ${(s.relevanceScore * 100).toFixed(0)}%)`);
-      });
-
-      for (const skill of skillsToInjectForThink) {
-        // En modo algoritmo evitamos inyectar todo el SKILL.md para reducir latencia/contexto.
-        const content = isAlgorithmMode && multiStepSkills.some(ms => ms.id === skill.id)
-          ? `Skill "${skill.name}" activo en modo algoritmo. Sigue estrictamente el bloque "SKILL ALGORITHM IN PROGRESS".`
-          : `Skill "${skill.name}" disponible para esta consulta (relevancia: ${(skill.relevanceScore * 100).toFixed(0)}%):\n\n${skill.content}`;
-
-        messages.push({ role: 'system', content });
-        if (DEBUG) this.log.info(
-          `[AmplifierLoop] Injected skill "${skill.name}" (relevance: ${(skill.relevanceScore * 100).toFixed(0)}%)${isAlgorithmMode ? ' [algorithm mode]' : ''} into THINK context`
-        );
-      }
-    }
-
-    // Acumular resultados de iteraciones anteriores (solo en modo no-algoritmo; en algoritmo ya están en el system prompt)
-    if (!isAlgorithmMode && previousSteps.length > 0) {
-      const previousResults = previousObservations
-        .map(s => ({
-          role: 'assistant' as const,
-          content: `Resultado de acción anterior: ${s.output}`,
-        }));
-
-      if (previousResults.length > 0) {
-        this.log.info(`[AmplifierLoop] Adding ${previousResults.length} previous results to context`);
-        this.log.info(`[AmplifierLoop] First result preview:`, previousResults[0].content.substring(0, 150));
-      }
-
-      messages.push(...previousResults);
-    }
-
-    if (isAlgorithmMode) {
-      this.log.info(`[AmplifierLoop] Algorithm mode: step ${previousActSteps.length + 1}/${multiStepSkills[0].steps?.length ?? '?'} of skill "${multiStepSkills[0].name}"`);
-    }
-
-    const response = await this.withTimeout(
-      this.baseProvider.complete({
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.5,
-        maxTokens: 512,
-      }),
-      180_000,
-      'think'
-    );
-
-    modelsUsed.add(this.baseProvider.model);
-
+  private phaseDeps(): AmplifierLoopPhaseDeps {
     return {
-      iteration,
-      type: 'think',
-      requestId: input.requestId,
-      output: response.content,
-      durationMs: Date.now() - startTime,
-      status: 'ok',
-      modelUsed: this.baseProvider.model,
+      baseProvider: this.baseProvider,
+      withTimeout: this.withTimeout.bind(this),
+      maxIterations: this.maxIterations,
+      executableTools: this.executableTools,
+      mcpRegistry: this.mcpRegistry,
+      skillRegistry: this.skillRegistry,
+      skillResolver: this.skillResolver,
+      log: this.log,
     };
   }
 
-  private async act(
-    resolvedAction: ResolvedAction,
-    iteration: number,
-    modelsUsed: Set<string>,
-    toolsUsed: Set<string>,
-    userId?: string,
-    requestId?: string
-  ): Promise<Step> {
-    const startTime = Date.now();
-    let output = '';
-
-    try {
-      if (resolvedAction.type === 'tool') {
-        toolsUsed.add(resolvedAction.target);
-        const validationError = validateToolInput(resolvedAction.target, resolvedAction.input, this.executableTools, this.mcpRegistry);
-        if (validationError) {
-          output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
-          return {
-            iteration,
-            type: 'act',
-            requestId,
-            action: resolvedAction.type,
-            target: resolvedAction.target,
-            input: JSON.stringify(resolvedAction.input),
-            output,
-            durationMs: Date.now() - startTime,
-            status: 'error',
-            modelUsed: this.baseProvider.model,
-          };
-        }
-        
-        // Check if this is an MCP tool
-        if (resolvedAction.target.startsWith('mcp_') && this.mcpRegistry) {
-          try {
-            const result = await this.mcpRegistry.callTool(resolvedAction.target, resolvedAction.input);
-            output = `MCP Tool execution successful: ${result}`;
-          } catch (err) {
-            const normalized = normalizeError(err, 'mcp');
-            output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
-          }
-        } else {
-          // Execute internal tool
-          const tool = this.executableTools.find(t => t.name === resolvedAction.target);
-          if (tool) {
-            // Inject userId for RememberTool if not already present
-            const toolInput = resolvedAction.input;
-            if (resolvedAction.target === 'remember' && userId && !toolInput.userId) {
-              toolInput.userId = userId;
-            }
-            const result = await tool.execute(toolInput);
-            if (!result.success) {
-              output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
-            } else if (resolvedAction.target === 'web_search') {
-              output = formatSearchResults(result.data as any, 'compact') || `Tool execution successful: ${JSON.stringify(result.data)}`;
-            } else {
-              output = `Tool execution successful: ${JSON.stringify(result.data)}`;
-            }
-          } else {
-            output = `Tool not found: ${resolvedAction.target}`;
-          }
-        }
-      } else if (resolvedAction.type === 'skill') {
-        toolsUsed.add(resolvedAction.target);
-        if (this.skillRegistry) {
-          const skill =
-            this.skillRegistry.get(resolvedAction.target) ??
-            this.skillRegistry
-              .getAll()
-              .find((available) => available.metadata.name === resolvedAction.target);
-          if (skill) {
-            output = `Skill content:\n${skill.content}`;
-          } else {
-            output = `Skill not found: ${resolvedAction.target}`;
-          }
-        } else {
-          output = `Skill registry not available`;
-        }
-      } else if (resolvedAction.type === 'agent') {
-        toolsUsed.add(resolvedAction.target);
-        // Agent selection is applied before AmplifierLoop (runtime provider/profile resolution in Orchestrator).
-        // Keep this branch explicit to avoid surfacing a misleading "not implemented" message.
-        output = `Agent routing acknowledged for "${resolvedAction.target}". Continuing with active runtime provider.`;
-      } else if (resolvedAction.type === 'escalate') {
-        output = `Escalating to powerful provider for: ${resolvedAction.input}`;
-      } else if (resolvedAction.type === 'mcp') {
-        // TODO: Este caso no debería llegar aquí, MCP se maneja como tool con prefijo mcp_
-        output = `[MCP manejado como tool, este caso es inesperado]`;
-      }
-    } catch (error) {
-      const normalized = normalizeError(error, 'orchestrator');
-      output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
-      this.log.error(`[AmplifierLoop] Action failed at iteration ${iteration}:`, normalized.technicalMessage);
-    }
-
-    return {
-      iteration,
-      type: 'act',
-      requestId,
-      action: resolvedAction.type,
-      target: resolvedAction.target,
-      input: JSON.stringify(resolvedAction.input),
-      output,
-      durationMs: Date.now() - startTime,
-      status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-      modelUsed: this.baseProvider.model,
-    };
-  }
-
-  private observe(actStep: Step, iteration: number, requestId?: string): Step {
-    return {
-      iteration,
-      type: 'observe',
-      requestId,
-      output: actStep.output,
-      status: actStep.status ?? 'ok',
-      modelUsed: this.baseProvider.model,
-    };
-  }
-
-
-  private async synthesize(
-    input: AmplifierInput,
-    context: string,
-    iteration: number,
-    modelsUsed: Set<string>,
-    resolvedSkills: RelevantSkill[] = []
-  ): Promise<Step> {
-    const startTime = Date.now();
-    const userLanguage = input.userLanguage || 'en';
-    const relevantSkillsSection = buildRelevantSkillsSection(resolvedSkills);
-    const requiredTemplateSection = extractOutputTemplates(resolvedSkills);
-    
-    const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-${relevantSkillsSection}
-${requiredTemplateSection}
-
-${context ? `Tasks completed and results:\n${context}\n` : ''}
-
-Write a response to the user:
-- Summarize what you found or did
-- If a file was created, ALWAYS mention the exact file path
-- If you found information, share the key points briefly
-- Be direct — the user wants results, not process descriptions
-- If REQUIRED OUTPUT TEMPLATES are present, follow one template exactly (strict precedence)
-- If a required template field is missing in the context, keep format and write "N/D"
-
-RESPONSE LANGUAGE: ${userLanguage === 'es' ? 'SPANISH' : userLanguage.toUpperCase()}
-Your response MUST be in this language. This is mandatory.
-The language of the context does NOT affect the language of your response.`;
-
-    const messages: Message[] = [
-      ...input.history.slice(-4),
-      { role: 'user', content: input.message },
-    ];
-
-    const response = await this.withTimeout(
-      this.baseProvider.complete({
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.7,
-        maxTokens: 1024,
-      }),
-      180_000,
-      'synthesize'
-    );
-
-    modelsUsed.add(this.baseProvider.model);
-
-    return {
-      iteration,
-      type: 'synthesize',
-      requestId: input.requestId,
-      output: response.content,
-      durationMs: Date.now() - startTime,
-      status: 'ok',
-      modelUsed: this.baseProvider.model,
-    };
-  }
 }
