@@ -23,6 +23,24 @@ function formatWhen(runAtMs: number, timezone?: string): { iso: string; local: s
   }
 }
 
+function tryChileOffsetCorrection(rawRunAt: unknown, timezone: string | undefined): number | null {
+  if (typeof rawRunAt !== 'string') return null;
+  if (timezone !== 'America/Santiago') return null;
+  const s = rawRunAt.trim();
+  if (!/[-+]\d{2}:\d{2}$/.test(s)) return null;
+  if (s.endsWith('-03:00')) {
+    const swapped = s.replace(/-03:00$/, '-04:00');
+    const t = Date.parse(swapped);
+    return Number.isNaN(t) ? null : t;
+  }
+  if (s.endsWith('-04:00')) {
+    const swapped = s.replace(/-04:00$/, '-03:00');
+    const t = Date.parse(swapped);
+    return Number.isNaN(t) ? null : t;
+  }
+  return null;
+}
+
 /**
  * Parse runAt: ISO-8601 string or millisecond number.
  */
@@ -85,6 +103,9 @@ export class ScheduleReminderTool implements ExecutableTool {
     if (ctx.source) {
       input['source'] = ctx.source;
     }
+    if (ctx.timeZone && (!input['timezone'] || String(input['timezone']).trim() === '')) {
+      input['timezone'] = ctx.timeZone;
+    }
   }
 
   async execute(input: {
@@ -105,13 +126,19 @@ export class ScheduleReminderTool implements ExecutableTool {
       if (!parsed.ok) {
         return { success: false, error: parsed.error };
       }
-      const runAtMs = parsed.ms;
+      let runAtMs = parsed.ms;
+      const tz = typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : undefined;
 
       if (!ALLOW_PAST && runAtMs < Date.now() - 2_000) {
-        return {
-          success: false,
-          error: 'runAt is in the past; use a future time (or set ENZO_ALLOW_PAST_REMINDERS=true for tests)',
-        };
+        const corrected = tryChileOffsetCorrection(input.runAt, tz);
+        if (corrected !== null && corrected > Date.now() - 2_000) {
+          runAtMs = corrected;
+        } else {
+          return {
+            success: false,
+            error: 'runAt is in the past; verify timezone/offset (Chile can be -03/-04 depending on date)',
+          };
+        }
       }
 
       const channel: ReminderChannel = input.channel === 'telegram' ? 'telegram' : 'web';
@@ -131,8 +158,6 @@ export class ScheduleReminderTool implements ExecutableTool {
       if (!uid) {
         return { success: false, error: 'userId is required (host should inject it from the session)' };
       }
-
-      const tz = typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : undefined;
 
       const row = this.reminders.create({
         userId: uid,

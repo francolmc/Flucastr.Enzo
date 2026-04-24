@@ -16,6 +16,8 @@ export interface ToolExecutionContext {
   telegramChatId?: string;
   /** Web conversation id; optional target for in-app / future push delivery. */
   conversationId?: string;
+  /** User/session timezone hint (e.g. America/Santiago). */
+  timeZone?: string;
   source?: 'web' | 'telegram' | 'unknown';
 }
 

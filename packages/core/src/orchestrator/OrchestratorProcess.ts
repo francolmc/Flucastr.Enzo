@@ -105,6 +105,7 @@ export async function executeOrchestratorProcess(
     requestId,
     source: input.source,
     conversationId: input.conversationId,
+    timeZone: runtimeHints.timeZone,
     ...input.toolExecutionContext,
   };
 
