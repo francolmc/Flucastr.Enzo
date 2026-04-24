@@ -82,6 +82,36 @@ function isReminderIntent(message: string): boolean {
   );
 }
 
+function extractReminderTimeToken(text: string): string | null {
+  const t12 = text.match(/\b(\d{1,2}:\d{2}\s*(?:am|pm))\b/i);
+  if (t12) return t12[1];
+  const t24 = text.match(/\b(\d{1,2}:\d{2})\b/);
+  if (t24) return t24[1];
+  return null;
+}
+
+function normalizeScheduleReminderInputFromUserMessage(
+  userMessage: string,
+  originalInput: any,
+  timeZone?: string
+): Record<string, unknown> | null {
+  const text =
+    typeof originalInput?.text === 'string' && originalInput.text.trim().length > 0
+      ? originalInput.text.trim()
+      : 'Recordatorio';
+  const timeToken = extractReminderTimeToken(userMessage);
+  if (!timeToken) return null;
+  const next: Record<string, unknown> = {
+    ...((typeof originalInput === 'object' && originalInput) || {}),
+    runAt: timeToken,
+    text,
+  };
+  if (timeZone && typeof timeZone === 'string' && timeZone.trim().length > 0) {
+    next.timezone = timeZone;
+  }
+  return next;
+}
+
 /**
  * SIMPLE / MODERATE fast path: one model call, optional single tool + synthesis.
  */
@@ -346,6 +376,18 @@ Format:
         const validationError = validateToolInput(execName, preparedToolInput, executableTools, mcpRegistry);
         if (validationError) {
           log.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
+          if (execName === 'schedule_reminder') {
+            const repaired = normalizeScheduleReminderInputFromUserMessage(
+              input.message,
+              preparedToolInput,
+              typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
+            );
+            if (repaired) {
+              toolInput = repaired;
+              preparedToolInput = applyExecutableToolContext(execName, repaired, executableTools, execCtx);
+              log.info('[AmplifierLoop] SIMPLE path - repaired schedule_reminder input from user message');
+            }
+          }
           const correctedCall = await requestToolInputCorrection(
             input.message,
             execName,
@@ -364,6 +406,24 @@ Format:
               log.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
             } else {
               execName = resolved.name;
+              if (execName === 'schedule_reminder') {
+                const correctedRunAt = String((correctedCall.toolInput as any)?.runAt ?? '');
+                const currentYear = new Date().getFullYear();
+                const yearMatch = correctedRunAt.match(/^(\d{4})-/);
+                if (yearMatch && Number(yearMatch[1]) < currentYear) {
+                  const repaired = normalizeScheduleReminderInputFromUserMessage(
+                    input.message,
+                    correctedCall.toolInput,
+                    typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
+                  );
+                  if (repaired) {
+                    toolInput = repaired;
+                    log.info(
+                      '[AmplifierLoop] SIMPLE path - dropped stale corrected date for schedule_reminder; using user message time'
+                    );
+                  }
+                }
+              }
               log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
               preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
             }
