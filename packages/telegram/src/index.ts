@@ -167,8 +167,8 @@ async function main() {
       sendTelegram: async (chatId, text) => {
         const b = bot;
         if (!b) {
-          console.warn('[Telegram] Reminder tick: bot not ready, skip send');
-          return;
+          console.warn('[Telegram] Reminder tick: bot not ready, will requeue reminder');
+          throw new Error('Telegram bot not ready');
         }
         await b.telegram.sendMessage(chatId, text);
       },
