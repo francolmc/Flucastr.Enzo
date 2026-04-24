@@ -54,7 +54,7 @@ TOOL SELECTION RULES:
 ${hasPdfMcpTools ? `- mcp_* tools: use these for PDF workflows when available` : ''}
 
 CRITICAL — for execute_command, the "input" field MUST be the exact shell command to run:
-- List folder: "input": "ls /absolute/path"
+- List folder: "input": "ls -la /absolute/path" or "ls -Fa /absolute/path" so entry types are visible
 - Create folder: "input": "mkdir -p /absolute/path"
 - Move files: "input": "mv /source /destination"
 - Combined: "input": "mkdir -p /dest && mv /src/file1 /src/file2 /dest/"
@@ -62,7 +62,7 @@ NEVER put just a path in "input" — always put the full shell command.
 
 PLACEHOLDER PATHS — ABSOLUTELY FORBIDDEN in execute_command:
 - Never use invented templates: /path/to/..., path/to/, <path>, YOUR_PATH_HERE, example/folder
-- Only use absolute paths that appear VERBATIM in the user's message or in CONVERSATION CONTEXT (e.g. /home/franco/Projects)
+- Only use absolute paths that appear VERBATIM in the user's message or in CONVERSATION CONTEXT
 - If the user asks for abstract "task management" or "organize my work/life" without giving real directories to move: return "steps": [] (empty array) — do NOT invent mkdir/mv commands
 
 Respond ONLY with valid JSON, no extra text:
@@ -89,7 +89,7 @@ IMPORTANT: The "dependsOn" field is REQUIRED in every step. First step MUST have
 
 FILE ORGANIZATION TASKS (only when the user names a REAL absolute folder to tidy, e.g. "organize /Users/me/Downloads"):
 - If the file list is NOT in context: generate 2 steps:
-  Step 1: execute_command with "input": "ls /absolute/path/to/folder", "dependsOn": null
+  Step 1: execute_command with "input": "ls -la /absolute/path/to/folder", "dependsOn": null
   Step 2: execute_command with "input": "organize files using ls output", "dependsOn": 1
 - If the file list IS already in context (from a previous ls): generate 1 step:
   Step 1: execute_command with the complete mkdir+mv command directly, "dependsOn": null
@@ -105,20 +105,10 @@ CRITICAL RULES:
 - NEVER use relative paths — always use the absolute path from the user's message
 ${hasPdfMcpTools ? `- If the user asks to read/summarize/extract a .pdf, DO NOT use read_file for that PDF. Prefer MCP PDF tools (mcp_*_display_pdf + mcp_*_interact or other mcp_*_pdf tools).` : ''}
 
-EXAMPLES:
-Task: "search X and create file Y with a summary"
-→ Step 1: web_search (search X)
-→ Step 2: write_file (create Y with summary from step 1)
-That is ALL — 2 steps only.
-
-Task: "list my Downloads folder"
-→ Step 1: execute_command (ls /Users/franco/Downloads)
-That is ALL — 1 step only.
-
-Task: "organiza /Users/franco/Downloads" or "organize /Users/franco/Downloads"
-→ Step 1: execute_command (ls /Users/franco/Downloads)
-→ Step 2: execute_command (organize files using ls output — dependsOn: 1)
-That is ALL — 2 steps only.`;
+ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this block; only use paths the user or context actually provides):
+- Pattern A — search then write: Step 1 web_search for the topic; Step 2 write_file for the output file the user asked for. Total: 2 steps, no extra steps.
+- Pattern B — list one folder the user named with a real absolute path: Step 1 execute_command with ls -la (or ls -Fa) on exactly that path from their message. Total: 1 step.
+- Pattern C — organize one folder they named, listing not in context yet: Step 1 ls -la on their path; Step 2 shell step that uses step 1 output. Total: 2 steps.`;
 
     try {
       const messages: Message[] = [

@@ -31,6 +31,7 @@ ${context ? `Tasks completed and results:\n${context}\n` : ''}
 Write a response to the user:
 - Summarize what you found or did
 - If a file was created, ALWAYS mention the exact file path
+- If the context includes multi-line shell or listing output, quote it verbatim in a markdown code block before summarizing; never invent paths, merge names into groups, or guess file vs directory
 - If you found information, share the key points briefly
 - Be direct — the user wants results, not process descriptions
 - If REQUIRED OUTPUT TEMPLATES are present, follow one template exactly (strict precedence)

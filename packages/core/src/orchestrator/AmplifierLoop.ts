@@ -719,9 +719,17 @@ Do NOT search for more information. Use what is provided.`;
         const lang = input.userLanguage ?? 'en';
         const shouldReturnRaw = shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
         if (!hasError && !hasPlaceholder) {
+          const verbatimLead =
+            shouldReturnRaw && lang === 'es'
+              ? 'Salida del sistema (texto exacto):\n\n'
+              : shouldReturnRaw
+                ? 'System output (verbatim):\n\n'
+                : '';
           const directContent = shouldReturnRaw
-            ? lastStepOutput
-            : (lang === 'es' ? `Listo, operación completada.` : `Done, operation completed.`);
+            ? verbatimLead + lastStepOutput
+            : lang === 'es'
+              ? `Listo, operación completada.`
+              : `Done, operation completed.`;
           this.log.info('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
           return {
             content: directContent,

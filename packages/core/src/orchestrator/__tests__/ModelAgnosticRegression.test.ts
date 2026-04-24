@@ -4,6 +4,10 @@ import { IntentAnalyzer } from '../IntentAnalyzer.js';
 import { ComplexityLevel, AvailableCapabilities } from '../types.js';
 import { CompletionRequest, CompletionResponse, LLMProvider } from '../../providers/types.js';
 import { parseFirstJsonObject } from '../../utils/StructuredJson.js';
+import {
+  isLikelyStructuredShellListingOrLog,
+  shouldReturnRawToolOutput,
+} from '../amplifier/AmplifierLoopFastPathTools.js';
 
 class QueueProvider implements LLMProvider {
   name = 'mock';
@@ -95,6 +99,21 @@ async function runTests() {
   assert(resolved.target === 'execute_command', `Test 4 failed: unexpected target ${resolved.target}`);
   assert(resolved.input?.command === 'pwd', 'Test 4 failed: expected input.command from analyzer');
   console.log('✓ Test 4: capability resolver keeps tool input from analyzer');
+
+  assert(!isLikelyStructuredShellListingOrLog('ok'), 'Test 5a: short single token is not structured listing');
+  assert(
+    isLikelyStructuredShellListingOrLog('line-one\nline-two\nline-three\nline-four'),
+    'Test 5b: four non-empty lines should count as structured shell output'
+  );
+  assert(
+    shouldReturnRawToolOutput('execute_command', 'lista carpeta', 'a\n'.repeat(30)),
+    'Test 5c: long multiline execute_command should bypass paraphrase synthesis'
+  );
+  assert(
+    !shouldReturnRawToolOutput('execute_command', 'hola', 'single'),
+    'Test 5d: tiny execute_command output should not force raw'
+  );
+  console.log('✓ Test 5: structured shell heuristic for verbatim passthrough');
 
   console.log('\nAll model-agnostic regression tests passed.');
 }

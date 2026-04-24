@@ -156,7 +156,7 @@ Valid examples:
 ${toolUsageRule}
 
 TOOL SELECTION — CRITICAL:
-- List / show folder contents → execute_command with "ls /the/folder/path"
+- List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
 - Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
 - Search the internet for information → web_search
 - Call an HTTP/API endpoint when user provides a URL → execute_command with curl
@@ -386,7 +386,14 @@ If responding with plain text (no tool), write in this language.`;
               log.info('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
 
               if (resolved.kind === 'internal' && shouldReturnRawToolOutput(execName, input.message, toolOutput)) {
-                finalContent = toolOutput;
+                const lang = (input.userLanguage ?? 'es').toLowerCase();
+                const verbatimLead =
+                  execName === 'execute_command'
+                    ? lang.startsWith('es')
+                      ? 'Salida del sistema (texto exacto; úsala tal cual para rutas o nombres en mensajes siguientes):\n\n'
+                      : 'System output (verbatim; use exactly as shown for paths or names in follow-ups):\n\n'
+                    : '';
+                finalContent = verbatimLead + toolOutput;
                 log.info('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
               } else {
                 const synthesisPrompt = `${buildAssistantIdentityPrompt(input)}
@@ -400,6 +407,7 @@ ${toolOutput}
 
 Write a response to the user based on this real result.
 Do NOT invent or add information not present in the result.
+If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
 Do NOT explain the internal process or mention tools.
 If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
 Template rules have higher priority than "natural phrasing".

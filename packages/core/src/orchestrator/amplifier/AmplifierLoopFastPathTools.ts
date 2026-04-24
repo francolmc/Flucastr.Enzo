@@ -218,6 +218,16 @@ export function shellOutputIndicatesFailure(output: string): boolean {
   );
 }
 
+/** Multiline shell stdout is easy to garble if paraphrased (names, paths, file vs dir). Skip synthesis when it looks structural, not keyword-specific. */
+export function isLikelyStructuredShellListingOrLog(toolOutput: string): boolean {
+  const t = (toolOutput || '').trim();
+  if (t.length < 16) return false;
+  const lines = t.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length >= 4) return true;
+  if (lines.length >= 2 && t.length > 200) return true;
+  return false;
+}
+
 export function shouldReturnRawToolOutput(toolName: string, userMessage: string, toolOutput: string): boolean {
   const lowerMessage = (userMessage || '').toLowerCase();
   const lowerOutput = (toolOutput || '').toLowerCase();
@@ -232,6 +242,13 @@ export function shouldReturnRawToolOutput(toolName: string, userMessage: string,
     return true;
   }
   if (toolName === 'read_file' && toolOutput.length < 300) {
+    return true;
+  }
+  if (
+    toolName === 'execute_command' &&
+    !shellOutputIndicatesFailure(toolOutput) &&
+    isLikelyStructuredShellListingOrLog(toolOutput)
+  ) {
     return true;
   }
   return false;
