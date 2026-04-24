@@ -76,6 +76,12 @@ function resolveOsLabel(input: AmplifierInput): string {
   return input.runtimeHints?.osLabel ?? 'macOS';
 }
 
+function isReminderIntent(message: string): boolean {
+  return /\b(recorda(?:r|me)?|recu[eé]rdame|alarm(?:a|ar)|remind(?:er| me)?|av[ií]same|medicamento|pastilla)\b/i.test(
+    message
+  );
+}
+
 /**
  * SIMPLE / MODERATE fast path: one model call, optional single tool + synthesis.
  */
@@ -142,7 +148,7 @@ To use a tool, respond ONLY with JSON (no extra text, no markdown):
 {"action":"tool","tool":"TOOL_NAME","input":{PARAMS}}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Built-in tool names: execute_command, web_search, read_file, write_file, remember.
+Built-in tool names: execute_command, web_search, read_file, write_file, remember, schedule_reminder.
 MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
@@ -214,6 +220,37 @@ If responding with plain text (no tool), write in this language.`;
   let finalContent = rawContent;
 
   let normalizedContent = rawContent;
+  const reminderIntent = isReminderIntent(input.message);
+  if (isModerate && !normalizedContent.startsWith('{')) {
+    const forcedTool = reminderIntent ? 'schedule_reminder' : '';
+    const strictPrompt = `${buildAssistantIdentityPrompt(input)}
+You failed to return a valid tool JSON in a MODERATE request.
+Return ONLY JSON now. No prose, no markdown.
+${forcedTool ? `You MUST use tool "${forcedTool}".` : 'You MUST use one of the available tools.'}
+Format:
+{"action":"tool","tool":"TOOL_NAME","input":{...}}`;
+    try {
+      const retry = await withTimeout(
+        baseProvider.complete({
+          messages: [
+            { role: 'system', content: strictPrompt },
+            { role: 'user', content: input.message },
+          ],
+          temperature: 0,
+          maxTokens: 220,
+        }),
+        60_000,
+        'SIMPLE moderate strict-tool retry'
+      );
+      const retried = (retry.content ?? '').trim();
+      if (retried.startsWith('{') || extractFirstJsonObject(retried)) {
+        normalizedContent = retried.startsWith('{') ? retried : extractFirstJsonObject(retried) ?? retried;
+        log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced tool JSON');
+      }
+    } catch (retryErr) {
+      log.warn('[AmplifierLoop] SIMPLE path - strict moderation retry failed:', retryErr);
+    }
+  }
   if (!rawContent.startsWith('{')) {
     const toolnamePattern = rawContent.match(/^(\w+)\s*(\{[\s\S]+)/);
     if (toolnamePattern) {
