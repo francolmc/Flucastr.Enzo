@@ -1,13 +1,15 @@
-import type { ReminderService } from './ReminderService.js';
+import type { ReminderChannel, ReminderService } from './ReminderService.js';
 
 export type ReminderTickerOptions = {
   intervalMs?: number;
-  /** Deliver Telegram reminders. If omitted, telegram rows are still marked sent and logged as skipped. */
+  /** Deliver Telegram reminders. If omitted, ticker should usually run only for `web` channel rows. */
   sendTelegram?: (chatId: string, text: string) => Promise<void>;
+  /** Channels this worker is allowed to consume. Defaults: ['telegram'] if sendTelegram exists, else ['web']. */
+  channels?: ReminderChannel[];
 };
 
 /**
- * Periodically processes due rows (already marked sent in claim — see ReminderService).
+ * Periodically processes due rows (marked sent at claim time in ReminderService).
  * For each due reminder: sends via `sendTelegram` when channel is telegram; logs web channel.
  */
 export function startReminderTicker(
@@ -15,11 +17,17 @@ export function startReminderTicker(
   options: ReminderTickerOptions = {}
 ): NodeJS.Timeout {
   const intervalMs = options.intervalMs ?? 45_000;
+  const channels: ReminderChannel[] =
+    options.channels && options.channels.length > 0
+      ? options.channels
+      : options.sendTelegram
+        ? ['telegram']
+        : ['web'];
   return setInterval(() => {
     void (async () => {
       try {
         for (;;) {
-          const row = reminderService.claimAndMarkNextDue(Date.now());
+          const row = reminderService.claimAndMarkNextDue(Date.now(), channels);
           if (!row) break;
           if (row.channel === 'telegram' && row.targetRef) {
             if (options.sendTelegram) {

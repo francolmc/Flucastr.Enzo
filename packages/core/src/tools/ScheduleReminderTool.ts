@@ -3,6 +3,26 @@ import type { ReminderService, ReminderChannel } from '../memory/ReminderService
 
 const ALLOW_PAST = process.env.ENZO_ALLOW_PAST_REMINDERS === 'true';
 
+function formatWhen(runAtMs: number, timezone?: string): { iso: string; local: string } {
+  const iso = new Date(runAtMs).toISOString();
+  const tz = timezone && timezone.trim().length > 0 ? timezone.trim() : 'America/Santiago';
+  try {
+    const local = new Intl.DateTimeFormat('es-CL', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date(runAtMs));
+    return { iso, local: `${local} (${tz})` };
+  } catch {
+    return { iso, local: iso };
+  }
+}
+
 /**
  * Parse runAt: ISO-8601 string or millisecond number.
  */
@@ -123,10 +143,10 @@ export class ScheduleReminderTool implements ExecutableTool {
         targetRef: targetRef ?? null,
       });
 
-      const when = new Date(row.runAtMs).toISOString();
+      const when = formatWhen(row.runAtMs, row.timezone ?? undefined);
       return {
         success: true,
-        data: `Reminder scheduled id=${row.id} at ${when} (${row.channel})`,
+        data: `Reminder scheduled id=${row.id} at local ${when.local} | utc ${when.iso} (${row.channel})`,
       };
     } catch (error) {
       return {

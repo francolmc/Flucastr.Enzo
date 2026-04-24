@@ -244,6 +244,10 @@ export function shouldReturnRawToolOutput(toolName: string, userMessage: string,
   if (toolName === 'read_file' && toolOutput.length < 300) {
     return true;
   }
+  if (toolName === 'schedule_reminder') {
+    // Keep exact scheduled time/id text to avoid paraphrase mistakes.
+    return true;
+  }
   if (
     toolName === 'execute_command' &&
     !shellOutputIndicatesFailure(toolOutput) &&

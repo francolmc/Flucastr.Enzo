@@ -169,5 +169,6 @@ app.listen(PORT, HOST, () => {
 
 startReminderTicker(reminderService, {
   intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 45_000,
+  channels: ['web'],
 });
 console.log("[API] Reminder ticker started (web reminders log only; use Telegram host for push)");

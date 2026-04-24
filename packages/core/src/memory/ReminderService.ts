@@ -75,18 +75,25 @@ export class ReminderService {
   }
 
   /**
-   * Atomically take the next due pending reminder and mark it sent. Returns the row (before or after) for delivery.
+   * Atomically take the next due pending reminder for the given channels and mark it as sent.
+   * This is process-safe across multiple workers reading from the same SQLite file.
    */
-  claimAndMarkNextDue(nowMs: number): ScheduledReminder | null {
+  claimAndMarkNextDue(nowMs: number, channels?: ReminderChannel[]): ScheduledReminder | null {
     const dbw = this.db.getDb();
     try {
       dbw.run('BEGIN IMMEDIATE', []);
+      const channelFilter = channels && channels.length > 0 ? channels : null;
+      const channelSql =
+        channelFilter && channelFilter.length > 0
+          ? ` AND channel IN (${channelFilter.map(() => '?').join(', ')})`
+          : '';
+      const selectParams = channelFilter ? [nowMs, ...channelFilter] : [nowMs];
       const row = dbw.get(
         `SELECT * FROM scheduled_reminders
-         WHERE status = 'pending' AND runAtMs <= ?
+         WHERE status = 'pending' AND runAtMs <= ?${channelSql}
          ORDER BY runAtMs ASC
          LIMIT 1`,
-        [nowMs]
+        selectParams
       ) as Record<string, unknown> | undefined;
 
       if (!row) {
