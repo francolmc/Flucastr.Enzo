@@ -14,6 +14,7 @@ import { createStatsRouter } from "./routes/stats.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
+import { createRemindersRouter } from "./routes/reminders.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -160,6 +161,7 @@ app.use(createStatsRouter(memoryService));
 app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter(skillRegistry));
 app.use(createMCPRouter(mcpRegistry));
+app.use(createRemindersRouter(reminderService));
 
 app.use(errorHandler);
 

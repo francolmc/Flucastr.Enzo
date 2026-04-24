@@ -17,6 +17,11 @@ export interface ScheduledReminder {
   sentAtMs: number | null;
 }
 
+export interface ReminderStatusCount {
+  status: ReminderStatus;
+  count: number;
+}
+
 /**
  * CRUD and atomic claim for scheduled reminders in the same SQLite file as {@link MemoryService}.
  */
@@ -150,5 +155,48 @@ export class ReminderService {
        WHERE id = ? AND status = 'processing'`,
       [id]
     );
+  }
+
+  getStatusCounts(): ReminderStatusCount[] {
+    const rows = this.db
+      .getDb()
+      .all(
+        `SELECT status, COUNT(*) as count
+         FROM scheduled_reminders
+         GROUP BY status`,
+        []
+      ) as Array<{ status: ReminderStatus; count: number }>;
+    return rows.map((r) => ({ status: r.status, count: Number(r.count) }));
+  }
+
+  listDue(limit: number = 25, channels?: ReminderChannel[]): ScheduledReminder[] {
+    const nowMs = Date.now();
+    const channelFilter = channels && channels.length > 0 ? channels : null;
+    const channelSql =
+      channelFilter && channelFilter.length > 0
+        ? ` AND channel IN (${channelFilter.map(() => '?').join(', ')})`
+        : '';
+    const params = channelFilter ? [nowMs, ...channelFilter, limit] : [nowMs, limit];
+    const rows = this.db
+      .getDb()
+      .all(
+        `SELECT * FROM scheduled_reminders
+         WHERE status = 'pending' AND runAtMs <= ?${channelSql}
+         ORDER BY runAtMs ASC
+         LIMIT ?`,
+        params
+      ) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      userId: String(row.userId),
+      runAtMs: Number(row.runAtMs),
+      message: String(row.message),
+      timezone: row.timezone != null ? String(row.timezone) : null,
+      channel: (row.channel === 'telegram' ? 'telegram' : 'web') as ReminderChannel,
+      targetRef: row.targetRef != null ? String(row.targetRef) : null,
+      status: row.status as ReminderStatus,
+      createdAtMs: Number(row.createdAtMs),
+      sentAtMs: row.sentAtMs != null ? Number(row.sentAtMs) : null,
+    }));
   }
 }
