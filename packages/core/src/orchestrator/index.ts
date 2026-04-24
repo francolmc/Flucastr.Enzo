@@ -15,4 +15,5 @@ export {
 } from './OrchestratorProcess.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 export { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
+export { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 export * from './types.js';

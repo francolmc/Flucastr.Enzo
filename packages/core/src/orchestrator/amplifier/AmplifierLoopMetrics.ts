@@ -6,6 +6,7 @@ export function initStageMetrics(): StageMetrics {
     act: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
     observe: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
     synthesize: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
+    verify: { count: 0, errorCount: 0, totalDurationMs: 0, maxDurationMs: 0 },
   };
 }
 

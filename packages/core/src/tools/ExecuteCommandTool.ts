@@ -1,8 +1,14 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ExecutableTool, ToolResult } from './types.js';
+import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const execAsync = promisify(exec);
+
+export type ExecuteCommandToolOptions = {
+  /** Working directory for the shell (defaults to workspace root). */
+  cwd?: string;
+};
 
 const BLOCKED_COMMANDS = [
   'rm -rf',
@@ -19,7 +25,8 @@ const BLOCKED_COMMANDS = [
 export class ExecuteCommandTool implements ExecutableTool {
   name = 'execute_command';
   readonly actionAliases = ['ejecutar_comando', 'ejecutar'] as const;
-  description = 'Execute a shell command';
+  description =
+    'Execute a shell command. Runs with cwd set to the workspace root unless overridden in the constructor.';
   parameters = {
     type: 'object',
     properties: {
@@ -27,6 +34,12 @@ export class ExecuteCommandTool implements ExecutableTool {
     },
     required: ['command'],
   };
+
+  private readonly cwd: string;
+
+  constructor(options?: ExecuteCommandToolOptions) {
+    this.cwd = resolveWorkspaceRoot(options?.cwd);
+  }
 
   async execute(input: any): Promise<ToolResult> {
     try {
@@ -55,6 +68,7 @@ export class ExecuteCommandTool implements ExecutableTool {
       }
 
       const { stdout, stderr } = await execAsync(command, {
+        cwd: this.cwd,
         timeout: 30000,
         maxBuffer: 10 * 1024 * 1024,
       });

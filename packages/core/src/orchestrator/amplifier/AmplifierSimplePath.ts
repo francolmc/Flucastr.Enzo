@@ -26,6 +26,7 @@ import {
   shouldReturnRawToolOutput,
   validateToolInput,
 } from './AmplifierLoopFastPathTools.js';
+import { runVerifyBeforeSynthesizeIfEnabled } from './AmplifierVerifyPhase.js';
 import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
@@ -54,6 +55,7 @@ export type SimpleModeratePathContext = {
     toolInput: any,
     errorDetail: string
   ) => Promise<{ toolName: string; toolInput: any } | null>;
+  verifyBeforeSynthesize?: boolean;
 };
 
 function formatFastPathDateLine(input: AmplifierInput): string {
@@ -96,6 +98,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     skillRegistry,
     log,
     requestToolInputCorrection,
+    verifyBeforeSynthesize = false,
   } = ctx;
 
   const isModerate = classifiedLevel === ComplexityLevel.MODERATE;
@@ -396,6 +399,21 @@ If responding with plain text (no tool), write in this language.`;
                 finalContent = verbatimLead + toolOutput;
                 log.info('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
               } else {
+                const verifyStart = Date.now();
+                const verified = await runVerifyBeforeSynthesizeIfEnabled(
+                  { baseProvider, withTimeout },
+                  input,
+                  toolOutput,
+                  steps.length + 1,
+                  modelsUsed,
+                  !!verifyBeforeSynthesize
+                );
+                if (verified.step) {
+                  steps.push(verified.step);
+                  recordStageMetric(stageMetrics, 'verify', Date.now() - verifyStart, true);
+                }
+                const evidenceForSynth = verified.context;
+
                 const synthesisPrompt = `${buildAssistantIdentityPrompt(input)}
 ${relevantSkillsSection}
 ${requiredTemplateSection}
@@ -403,7 +421,7 @@ You executed a tool and got this result:
 
 TOOL: ${execName}
 RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
-${toolOutput}
+${evidenceForSynth}
 
 Write a response to the user based on this real result.
 Do NOT invent or add information not present in the result.

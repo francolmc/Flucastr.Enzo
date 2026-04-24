@@ -1,6 +1,7 @@
 import { LLMProvider, Message } from '../providers/types.js';
 import { ClassificationResult, ComplexityLevel } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 export class Classifier {
   private provider: LLMProvider;
@@ -23,6 +24,9 @@ export class Classifier {
     }
     if (this.isLikelyChainedTask(normalizedMessage)) {
       return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow' };
+    }
+    if (impliesMultiToolWorkflow(normalizedMessage)) {
+      return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow' };
     }
     if (this.isLikelySingleToolTask(normalizedMessage)) {
       return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent' };

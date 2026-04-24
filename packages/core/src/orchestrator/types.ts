@@ -32,7 +32,7 @@ export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none
 
 export interface Step {
   iteration: number;
-  type: 'think' | 'act' | 'observe' | 'synthesize';
+  type: 'think' | 'act' | 'observe' | 'synthesize' | 'verify';
   requestId?: string;
   action?: StepAction;
   target?: string;
@@ -50,7 +50,7 @@ export interface StageMetricsSnapshot {
   maxDurationMs: number;
 }
 
-export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize', StageMetricsSnapshot>;
+export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize' | 'verify', StageMetricsSnapshot>;
 
 export interface AmplifierInput {
   message: string;

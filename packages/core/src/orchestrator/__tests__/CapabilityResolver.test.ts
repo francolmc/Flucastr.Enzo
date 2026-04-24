@@ -23,6 +23,11 @@ const mockTools = [
     description: 'Save to memory',
     parameters: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' } } },
   },
+  {
+    name: 'slack_post',
+    description: 'Post to Slack',
+    parameters: { type: 'object', properties: { text: { type: 'string' } } },
+  },
 ];
 
 const mockSkills = [
@@ -166,6 +171,18 @@ async function runTests() {
   console.log('  - Target:', result6.target);
   console.log('Expected target: web_search');
   assert(result6.target === 'web_search', `Test 6 failed: expected web_search, got ${result6.target}`);
+  console.log('✓ Pass');
+  console.log('');
+
+  // Test 7: Custom host tool — action field is the tool name (Format B)
+  console.log('Test 7: Custom tool slack_post via action shorthand');
+  const customShorthand = {
+    action: 'slack_post',
+    text: 'hello team',
+  };
+  const result7 = await resolver.resolve(JSON.stringify(customShorthand), capabilities);
+  assert(result7.type === 'tool', 'Test 7: expected tool');
+  assert(result7.target === 'slack_post', `Test 7: expected slack_post, got ${result7.target}`);
   console.log('✓ Pass');
   console.log('');
 

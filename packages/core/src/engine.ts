@@ -29,7 +29,10 @@ export {
   type ToolResult,
   WebSearchTool,
   ExecuteCommandTool,
+  type ExecuteCommandToolOptions,
   ReadFileTool,
   RememberTool,
   WriteFileTool,
+  resolveWorkspaceRoot,
+  isPathWithinWorkspace,
 } from './tools/index.js';

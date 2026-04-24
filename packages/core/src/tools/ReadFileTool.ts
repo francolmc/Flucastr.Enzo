@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'fs';
 import { resolve, isAbsolute } from 'path';
 import { ExecutableTool, ToolResult } from './types.js';
+import { isPathWithinWorkspace, resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const ALLOWED_EXTENSIONS = ['.txt', '.md', '.json', '.csv', '.log', '.ts', '.js', '.py'];
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -18,13 +19,22 @@ export class ReadFileTool implements ExecutableTool {
   };
 
   private workspacePath: string;
+  /** When true, absolute paths must also lie under the workspace (stricter sandbox). */
+  private readonly strictAbsolutePaths: boolean;
 
   /**
    * @param workspacePath - Absolute root for resolving relative `path` inputs. If omitted, uses
    *   `process.env.ENZO_WORKSPACE_PATH` or `./workspace`.
+   * @param options.strictAbsolutePaths - If true, absolute paths outside the workspace are rejected.
+   *   Default: `true` when `ENZO_STRICT_WORKSPACE === 'true'`, else false (preserves reading user folders).
    */
-  constructor(workspacePath?: string) {
+  constructor(
+    workspacePath?: string,
+    options?: { strictAbsolutePaths?: boolean }
+  ) {
     this.workspacePath = workspacePath || process.env.ENZO_WORKSPACE_PATH || './workspace';
+    this.strictAbsolutePaths =
+      options?.strictAbsolutePaths ?? process.env.ENZO_STRICT_WORKSPACE === 'true';
   }
 
   async execute(input: any): Promise<ToolResult> {
@@ -43,9 +53,19 @@ export class ReadFileTool implements ExecutableTool {
       // Resolve the full path
       let fullPath: string;
       if (isAbsolute(filePath)) {
-        // If path is absolute, use it directly
         console.log(`[ReadFileTool] Using absolute path:`, filePath);
-        fullPath = filePath;
+        fullPath = resolve(filePath);
+        const resolvedWorkspace = resolveWorkspaceRoot(this.workspacePath);
+        if (this.strictAbsolutePaths && !isPathWithinWorkspace(fullPath, resolvedWorkspace)) {
+          console.error(`[ReadFileTool] Access denied: absolute path outside workspace`, {
+            fullPath,
+            resolvedWorkspace,
+          });
+          return {
+            success: false,
+            error: `Access denied: absolute path must be inside workspace ${resolvedWorkspace} (set ENZO_STRICT_WORKSPACE=false to allow any absolute read)`,
+          };
+        }
       } else {
         // If path is relative, resolve within workspace
         console.log(`[ReadFileTool] Resolving relative path within workspace:`, filePath);

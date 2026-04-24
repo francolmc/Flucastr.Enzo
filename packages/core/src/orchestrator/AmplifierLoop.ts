@@ -39,6 +39,8 @@ import { runThinkPhase } from './amplifier/AmplifierThinkPhase.js';
 import { runActPhase, type AmplifierLoopPhaseDeps } from './amplifier/AmplifierActPhase.js';
 import { runObservePhase } from './amplifier/AmplifierObservePhase.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
+import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
+import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 export type AmplifierLoopOptions = {
   maxIterations?: number;
@@ -47,6 +49,8 @@ export type AmplifierLoopOptions = {
   log?: AmplifierLoopLog;
   /** false disables file-organization subtask path */
   fileOrganization?: boolean;
+  /** When true (or env ENZO_VERIFY_BEFORE_SYNTHESIS=true), run a short verification pass before final synthesis. */
+  verifyBeforeSynthesize?: boolean;
 };
 
 export class AmplifierLoop {
@@ -63,6 +67,7 @@ export class AmplifierLoop {
   private executableTools: ExecutableTool[];
   private skillRegistry?: SkillRegistry;
   private mcpRegistry?: MCPRegistry;
+  private verifyBeforeSynthesize: boolean;
 
   constructor(
     baseProvider: LLMProvider,
@@ -75,6 +80,8 @@ export class AmplifierLoop {
     this.maxIterations = options?.maxIterations ?? 8;
     this.skillRegistry = options?.skillRegistry;
     this.mcpRegistry = options?.mcpRegistry;
+    this.verifyBeforeSynthesize =
+      options?.verifyBeforeSynthesize ?? process.env.ENZO_VERIFY_BEFORE_SYNTHESIS === 'true';
     this.capabilityResolver = new CapabilityResolver();
     this.intentAnalyzer = new IntentAnalyzer(baseProvider);
     this.capabilityResolver.setIntentAnalyzer(this.intentAnalyzer);
@@ -186,7 +193,13 @@ No markdown. No prose.`;
       this.log.info(`[AmplifierLoop] Multi-step skill detected: minRequiredSteps=${minRequiredSteps}`);
     }
 
-    if ((input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) && !hasMultiStepSkillRequirement) {
+    const skipFastPathForMultiTool = impliesMultiToolWorkflow(input.message);
+
+    if (
+      (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) &&
+      !hasMultiStepSkillRequirement &&
+      !skipFastPathForMultiTool
+    ) {
       return runSimpleModerateFastPath({
         input,
         classifiedLevel: input.classifiedLevel,
@@ -205,7 +218,12 @@ No markdown. No prose.`;
         skillRegistry: this.skillRegistry,
         log: this.log,
         requestToolInputCorrection: this.requestToolInputCorrection.bind(this),
+        verifyBeforeSynthesize: this.verifyBeforeSynthesize,
       });
+    }
+
+    if (skipFastPathForMultiTool && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
+      this.log.info('[AmplifierLoop] Fast-path disabled: implicit multi-tool workflow detected');
     }
 
     if (hasMultiStepSkillRequirement && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
@@ -226,6 +244,11 @@ No markdown. No prose.`;
 
       this.log.info(`[AmplifierLoop] Executing ${subtasks.length} subtask(s) sequentially`);
 
+      if (subtasks.length === 0) {
+        this.log.warn(
+          '[AmplifierLoop] COMPLEX decomposition returned no steps — falling back to full ReAct loop'
+        );
+      } else {
       // Ejecutar cada subtarea secuencialmente
       for (const subtask of subtasks) {
         this.log.info(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
@@ -748,11 +771,25 @@ Do NOT search for more information. Use what is provided.`;
         );
       }
 
+      const verifyComplexStart = Date.now();
+      const verifiedComplex = await runVerifyBeforeSynthesizeIfEnabled(
+        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+        input,
+        accumulatedContext,
+        iteration,
+        modelsUsed,
+        this.verifyBeforeSynthesize
+      );
+      if (verifiedComplex.step) {
+        steps.push(verifiedComplex.step);
+        recordStageMetric(stageMetrics, 'verify', Date.now() - verifyComplexStart, true);
+      }
+
       const complexSynthStart = Date.now();
       const synthesizeStep = await runSynthesizePhase(
         { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
         input,
-        accumulatedContext,
+        verifiedComplex.context,
         iteration,
         modelsUsed,
         preResolvedSkills
@@ -761,7 +798,7 @@ Do NOT search for more information. Use what is provided.`;
       steps.push(synthesizeStep);
 
       return {
-        content: synthesizeStep.output ?? accumulatedContext,
+        content: synthesizeStep.output ?? verifiedComplex.context,
         requestId,
         stepsUsed: steps,
         modelsUsed: Array.from(modelsUsed),
@@ -771,6 +808,7 @@ Do NOT search for more information. Use what is provided.`;
         stageMetrics,
         complexityUsed: ComplexityLevel.COMPLEX,
       };
+      }
     }
 
     let forcedToolRetryCount = 0;
@@ -981,12 +1019,26 @@ Do NOT search for more information. Use what is provided.`;
       }
     }
 
+    const verifyMainStart = Date.now();
+    const verifiedMain = await runVerifyBeforeSynthesizeIfEnabled(
+      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+      input,
+      currentContext,
+      iteration + 1,
+      modelsUsed,
+      this.verifyBeforeSynthesize
+    );
+    if (verifiedMain.step) {
+      steps.push(verifiedMain.step);
+      recordStageMetric(stageMetrics, 'verify', Date.now() - verifyMainStart, true);
+    }
+
     // SYNTHESIZE: modelo base narra la respuesta final
     const finalSynthStart = Date.now();
     const synthesizeStep = await runSynthesizePhase(
       { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
       input,
-      currentContext,
+      verifiedMain.context,
       iteration + 1,
       modelsUsed,
       preResolvedSkills
@@ -996,7 +1048,7 @@ Do NOT search for more information. Use what is provided.`;
     input.onProgress?.(synthesizeStep);
 
     return {
-      content: synthesizeStep.output || '',
+      content: synthesizeStep.output || verifiedMain.context,
       requestId,
       stepsUsed: steps,
       modelsUsed: Array.from(modelsUsed),

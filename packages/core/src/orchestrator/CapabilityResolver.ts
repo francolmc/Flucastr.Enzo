@@ -18,10 +18,22 @@ export class CapabilityResolver {
     return this.resolveFromAI(thought, available);
   }
 
-  private normalizeAction(parsed: any): any {
-    const knownTools = ['execute_command', 'web_search', 'read_file', 'remember', 'write_file'];
+  /**
+   * Flatten shorthand JSON (params on root) and infer tool from parameter shape.
+   * `availableToolNames` must list every tool the host registered (plus MCP names when present).
+   */
+  private normalizeAction(parsed: any, availableToolNames: string[]): any {
+    const nameSet = new Set(availableToolNames);
+    const isAvailable = (n: string) => nameSet.has(n);
 
     const inputObj = parsed.input ?? {};
+    const mergedInput: any = { ...inputObj };
+    for (const key of Object.keys(parsed)) {
+      if (!['action', 'tool', 'input', 'reasoning', 'reason'].includes(key)) {
+        mergedInput[key] = parsed[key];
+      }
+    }
+
     const parsedTool = typeof parsed.tool === 'string' ? parsed.tool.trim() : '';
     const parsedAction = typeof parsed.action === 'string' ? parsed.action.trim() : '';
     const explicitMcpTool =
@@ -29,50 +41,35 @@ export class CapabilityResolver {
       (parsedAction.startsWith('mcp_') && parsedAction) ||
       null;
 
-    // Inferir tool desde combinación de parámetros (más preciso que mapeo 1:1)
-    // IMPORTANTE: 'path' solo no es suficiente — read_file y write_file ambos usan 'path'
-    // La presencia de 'content' distingue write_file de read_file
     let inferredTool: string | undefined;
-
-    if ('command' in inputObj) {
+    if ('command' in mergedInput) {
       inferredTool = 'execute_command';
-    } else if ('query' in inputObj) {
+    } else if ('query' in mergedInput) {
       inferredTool = 'web_search';
-    } else if ('path' in inputObj && 'content' in inputObj) {
+    } else if ('path' in mergedInput && 'content' in mergedInput) {
       inferredTool = 'write_file';
-    } else if ('path' in inputObj) {
+    } else if ('path' in mergedInput) {
       inferredTool = 'read_file';
-    } else if ('key' in inputObj || 'value' in inputObj) {
+    } else if ('key' in mergedInput || 'value' in mergedInput) {
       inferredTool = 'remember';
     }
 
-    // Determinar nombre de tool — prioridad:
-    // 0. Si viene una tool MCP explícita, preservarla tal cual
-    // 1. Campo "tool" del JSON si es válido (el modelo lo especificó explícitamente)
-    // 2. Tool inferida desde el input (fallback para formatos incorrectos)
-    // 3. Campo "action" si es nombre de tool conocida
+    const inferred = inferredTool && isAvailable(inferredTool) ? inferredTool : undefined;
+
     const toolName = explicitMcpTool
-      ?? (knownTools.includes(parsed.tool) ? parsed.tool : null)
-      ?? inferredTool
-      ?? (knownTools.includes(parsed.action) ? parsed.action : null);
+      ?? (parsedTool && isAvailable(parsedTool) ? parsedTool : null)
+      ?? inferred
+      ?? (parsedAction && isAvailable(parsedAction) ? parsedAction : null);
 
     if (!toolName || toolName === 'none') {
       return parsed;
     }
 
-    // Si hay params fuera de input, moverlos adentro
-    const finalInput: any = { ...inputObj };
-    for (const key of Object.keys(parsed)) {
-      if (!['action', 'tool', 'input', 'reasoning', 'reason'].includes(key)) {
-        finalInput[key] = parsed[key];
-      }
-    }
-
-    if (parsed.tool !== toolName) {
+    if (parsed.tool !== toolName && parsed.action !== toolName) {
       console.log(`[CapabilityResolver] Normalized tool: "${parsed.tool ?? parsed.action}" → "${toolName}"`);
     }
 
-    return { action: 'tool', tool: toolName, input: finalInput };
+    return { action: 'tool', tool: toolName, input: mergedInput };
   }
 
   private resolveFromJSON(
@@ -85,12 +82,12 @@ export class CapabilityResolver {
       console.warn(`[CapabilityResolver] Full thought:`, thought.substring(0, 300));
     }
 
+    const toolNames = available.tools.map((t) => t.name);
     const parsedResult = parseFirstJsonObject<any>(thought, { tryRepair: true });
     if (parsedResult) {
       try {
         let parsed = parsedResult.value;
-        // Normalize format B to format A if needed
-        parsed = this.normalizeAction(parsed);
+        parsed = this.normalizeAction(parsed, toolNames);
         
         // Check if JSON has the correct format
         if (!parsed.action) {

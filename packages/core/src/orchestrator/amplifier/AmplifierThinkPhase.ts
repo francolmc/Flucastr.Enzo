@@ -199,11 +199,15 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     );
   }
 
+  const useNativeToolCalling =
+    process.env.ENZO_NATIVE_TOOL_CALLING === 'true' && !isAlgorithmMode && mergedTools.length > 0;
+
   const response = await withTimeout(
     baseProvider.complete({
       messages: [{ role: 'system', content: systemPrompt }, ...messages],
       temperature: 0.5,
       maxTokens: 512,
+      ...(useNativeToolCalling ? { tools: mergedTools } : {}),
     }),
     180_000,
     'think'
@@ -211,11 +215,32 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
 
   modelsUsed.add(baseProvider.model);
 
+  let thinkOutput = response.content ?? '';
+  if (response.toolCalls?.length) {
+    const tc = response.toolCalls[0]!;
+    let args: Record<string, unknown> =
+      typeof tc.arguments === 'object' && tc.arguments !== null && !Array.isArray(tc.arguments)
+        ? (tc.arguments as Record<string, unknown>)
+        : {};
+    if (typeof tc.arguments === 'string') {
+      try {
+        const parsed = JSON.parse(tc.arguments) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>;
+        }
+      } catch {
+        args = {};
+      }
+    }
+    const jsonLine = JSON.stringify({ action: 'tool', tool: tc.name, input: args });
+    thinkOutput = thinkOutput.trim() ? `${jsonLine}\n${thinkOutput}` : jsonLine;
+  }
+
   return {
     iteration,
     type: 'think',
     requestId: input.requestId,
-    output: response.content,
+    output: thinkOutput,
     durationMs: Date.now() - startTime,
     status: 'ok',
     modelUsed: baseProvider.model,
