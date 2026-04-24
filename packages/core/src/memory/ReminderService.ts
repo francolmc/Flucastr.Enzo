@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseManager } from './Database.js';
 
-export type ReminderStatus = 'pending' | 'sent' | 'cancelled';
+export type ReminderStatus = 'pending' | 'processing' | 'sent' | 'cancelled';
 export type ReminderChannel = 'telegram' | 'web';
 
 export interface ScheduledReminder {
@@ -75,10 +75,10 @@ export class ReminderService {
   }
 
   /**
-   * Atomically take the next due pending reminder for the given channels and mark it as sent.
-   * This is process-safe across multiple workers reading from the same SQLite file.
+   * Atomically take the next due pending reminder for the given channels and mark it as processing.
+   * Caller must later mark it sent or requeue it on failure.
    */
-  claimAndMarkNextDue(nowMs: number, channels?: ReminderChannel[]): ScheduledReminder | null {
+  claimNextDue(nowMs: number, channels?: ReminderChannel[]): ScheduledReminder | null {
     const dbw = this.db.getDb();
     try {
       dbw.run('BEGIN IMMEDIATE', []);
@@ -102,10 +102,9 @@ export class ReminderService {
       }
 
       const id = String(row.id);
-      const sentAt = Date.now();
       dbw.run(
-        `UPDATE scheduled_reminders SET status = 'sent', sentAtMs = ? WHERE id = ? AND status = 'pending'`,
-        [sentAt, id]
+        `UPDATE scheduled_reminders SET status = 'processing' WHERE id = ? AND status = 'pending'`,
+        [id]
       );
       const ch = dbw.get('SELECT changes() as ch', []) as { ch: number } | undefined;
       dbw.run('COMMIT', []);
@@ -121,9 +120,9 @@ export class ReminderService {
         timezone: row.timezone != null ? String(row.timezone) : null,
         channel: (row.channel === 'telegram' ? 'telegram' : 'web') as ReminderChannel,
         targetRef: row.targetRef != null ? String(row.targetRef) : null,
-        status: 'sent',
+        status: 'processing',
         createdAtMs: Number(row.createdAtMs),
-        sentAtMs: sentAt,
+        sentAtMs: row.sentAtMs != null ? Number(row.sentAtMs) : null,
       };
     } catch (e) {
       try {
@@ -133,5 +132,23 @@ export class ReminderService {
       }
       throw e;
     }
+  }
+
+  markSent(id: string): void {
+    this.run(
+      `UPDATE scheduled_reminders
+       SET status = 'sent', sentAtMs = ?
+       WHERE id = ? AND status = 'processing'`,
+      [Date.now(), id]
+    );
+  }
+
+  requeue(id: string): void {
+    this.run(
+      `UPDATE scheduled_reminders
+       SET status = 'pending'
+       WHERE id = ? AND status = 'processing'`,
+      [id]
+    );
   }
 }

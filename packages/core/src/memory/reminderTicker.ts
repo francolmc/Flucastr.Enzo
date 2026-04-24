@@ -9,7 +9,7 @@ export type ReminderTickerOptions = {
 };
 
 /**
- * Periodically processes due rows (marked sent at claim time in ReminderService).
+ * Periodically processes due rows.
  * For each due reminder: sends via `sendTelegram` when channel is telegram; logs web channel.
  */
 export function startReminderTicker(
@@ -27,7 +27,7 @@ export function startReminderTicker(
     void (async () => {
       try {
         for (;;) {
-          const row = reminderService.claimAndMarkNextDue(Date.now(), channels);
+          const row = reminderService.claimNextDue(Date.now(), channels);
           if (!row) break;
           if (row.channel === 'telegram' && row.targetRef) {
             if (options.sendTelegram) {
@@ -36,16 +36,20 @@ export function startReminderTicker(
                   row.targetRef,
                   `Recordatorio: ${row.message}\n_id:${row.id}_`
                 );
+                reminderService.markSent(row.id);
               } catch (e) {
                 console.error('[Reminders] Telegram send failed:', e);
+                reminderService.requeue(row.id);
               }
             } else {
               console.warn(
                 `[Reminders] Telegram reminder ${row.id} has no sendTelegram handler (message: ${row.message})`
               );
+              reminderService.requeue(row.id);
             }
           } else {
             console.log(`[Reminders] Web / no target — user ${row.userId}: ${row.message} (id ${row.id})`);
+            reminderService.markSent(row.id);
           }
         }
       } catch (e) {
