@@ -41,10 +41,81 @@ function tryChileOffsetCorrection(rawRunAt: unknown, timezone: string | undefine
   return null;
 }
 
+function getTimeZoneDateParts(date: Date, timeZone: string): { year: number; month: number; day: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const year = Number(parts.find((p) => p.type === 'year')?.value);
+    const month = Number(parts.find((p) => p.type === 'month')?.value);
+    const day = Number(parts.find((p) => p.type === 'day')?.value);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+    return { year, month, day };
+  } catch {
+    return null;
+  }
+}
+
+function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      timeZoneName: 'shortOffset',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(date);
+    const tz = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+    const m = tz.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/i);
+    if (!m) return null;
+    const sign = m[1] === '-' ? -1 : 1;
+    const hh = Number(m[2] ?? '0');
+    const mm = Number(m[3] ?? '0');
+    return sign * (hh * 60 + mm);
+  } catch {
+    return null;
+  }
+}
+
+function parseTimeOnly(runAt: string): { hour: number; minute: number } | null {
+  const s = runAt.trim().toLowerCase();
+  const m12 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+  if (m12) {
+    let hour = Number(m12[1]);
+    const minute = Number(m12[2]);
+    const meridian = m12[3].toLowerCase();
+    if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+    if (meridian === 'am') {
+      if (hour === 12) hour = 0;
+    } else if (hour !== 12) {
+      hour += 12;
+    }
+    return { hour, minute };
+  }
+  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) {
+    const hour = Number(m24[1]);
+    const minute = Number(m24[2]);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return { hour, minute };
+  }
+  return null;
+}
+
 /**
- * Parse runAt: ISO-8601 string or millisecond number.
+ * Parse runAt: ISO-8601 string, millisecond number, or time-only ("8:58 am", "20:15").
  */
-function parseRunAtToMs(value: unknown): { ok: true; ms: number } | { ok: false; error: string } {
+function parseRunAtToMs(
+  value: unknown,
+  timezone: string,
+  nowMs: number
+): { ok: true; ms: number } | { ok: false; error: string } {
   if (value === null || value === undefined) {
     return { ok: false, error: 'runAt is required' };
   }
@@ -52,9 +123,25 @@ function parseRunAtToMs(value: unknown): { ok: true; ms: number } | { ok: false;
     return { ok: true, ms: Math.round(value) };
   }
   if (typeof value === 'string' && value.trim() !== '') {
-    const t = Date.parse(value);
+    const raw = value.trim();
+    const t = Date.parse(raw);
     if (Number.isNaN(t)) {
-      return { ok: false, error: 'runAt could not be parsed as a date' };
+      const timeOnly = parseTimeOnly(raw);
+      if (!timeOnly) {
+        return { ok: false, error: 'runAt could not be parsed as a date/time' };
+      }
+      const now = new Date(nowMs);
+      const d = getTimeZoneDateParts(now, timezone);
+      if (!d) return { ok: false, error: `runAt could not resolve date in timezone ${timezone}` };
+      const baseUtcLike = Date.UTC(d.year, d.month - 1, d.day, timeOnly.hour, timeOnly.minute, 0, 0);
+      const offset = getTimeZoneOffsetMinutes(new Date(baseUtcLike), timezone);
+      if (offset === null) return { ok: false, error: `runAt could not resolve timezone offset for ${timezone}` };
+      let runAtMs = baseUtcLike - offset * 60_000;
+      if (runAtMs < nowMs - 2_000) {
+        // Time-only inputs are treated as "next occurrence" if today's time already passed.
+        runAtMs += 24 * 60 * 60 * 1000;
+      }
+      return { ok: true, ms: runAtMs };
     }
     return { ok: true, ms: t };
   }
@@ -122,12 +209,12 @@ export class ScheduleReminderTool implements ExecutableTool {
         return { success: false, error: 'text must be a non-empty string' };
       }
 
-      const parsed = parseRunAtToMs(input.runAt);
+      const tz = typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : 'America/Santiago';
+      const parsed = parseRunAtToMs(input.runAt, tz, Date.now());
       if (!parsed.ok) {
         return { success: false, error: parsed.error };
       }
       let runAtMs = parsed.ms;
-      const tz = typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : undefined;
 
       if (!ALLOW_PAST && runAtMs < Date.now() - 2_000) {
         const corrected = tryChileOffsetCorrection(input.runAt, tz);
@@ -136,7 +223,7 @@ export class ScheduleReminderTool implements ExecutableTool {
         } else {
           return {
             success: false,
-            error: 'runAt is in the past; verify timezone/offset (Chile can be -03/-04 depending on date)',
+            error: 'runAt is in the past; verify timezone/offset (Chile can be -03/-04 depending on date) or specify a future date',
           };
         }
       }
