@@ -4,6 +4,7 @@ import { dirname } from 'path';
 
 export class WriteFileTool implements ExecutableTool {
   name = 'write_file';
+  readonly actionAliases = ['escribir_archivo', 'crear_archivo'] as const;
   description = 'Create or overwrite a file with the given content';
   parameters = {
     type: 'object',

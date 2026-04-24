@@ -7,6 +7,7 @@ const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 
 export class ReadFileTool implements ExecutableTool {
   name = 'read_file';
+  readonly actionAliases = ['leer_archivo', 'leer'] as const;
   description = 'Read a file from the filesystem';
   parameters = {
     type: 'object',
@@ -18,6 +19,10 @@ export class ReadFileTool implements ExecutableTool {
 
   private workspacePath: string;
 
+  /**
+   * @param workspacePath - Absolute root for resolving relative `path` inputs. If omitted, uses
+   *   `process.env.ENZO_WORKSPACE_PATH` or `./workspace`.
+   */
   constructor(workspacePath?: string) {
     this.workspacePath = workspacePath || process.env.ENZO_WORKSPACE_PATH || './workspace';
   }

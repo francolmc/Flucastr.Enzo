@@ -61,7 +61,7 @@ export class Orchestrator {
     }
     this.memoryService = memoryService;
 
-    // Initialize tool registry if not provided (empty — hosts should register tools, e.g. createDefaultToolRegistry in api/telegram)
+    // Initialize tool registry if not provided (empty — hosts should register tools, e.g. @enzo/bootstrap createDefaultToolRegistry)
     let toolRegistry = options?.toolRegistry;
     if (!toolRegistry) {
       toolRegistry = new ToolRegistry();

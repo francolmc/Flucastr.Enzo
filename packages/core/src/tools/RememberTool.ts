@@ -1,8 +1,9 @@
-import { ExecutableTool, ToolResult } from './types.js';
+import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
 import { MemoryService } from '../memory/MemoryService.js';
 
 export class RememberTool implements ExecutableTool {
   name = 'remember';
+  readonly actionAliases = ['recordar', 'guardar_memoria'] as const;
   description = 'Save information to memory explicitly';
   parameters = {
     type: 'object',
@@ -18,6 +19,15 @@ export class RememberTool implements ExecutableTool {
 
   constructor(memoryService: MemoryService) {
     this.memoryService = memoryService;
+  }
+
+  injectExecutionContext(input: Record<string, unknown>, ctx: ToolExecutionContext): void {
+    const uid = ctx.userId;
+    if (!uid || typeof uid !== 'string') return;
+    const existing = input['userId'];
+    if (existing === undefined || existing === null || String(existing).trim() === '') {
+      input['userId'] = uid;
+    }
   }
 
   async execute(input: any): Promise<ToolResult> {

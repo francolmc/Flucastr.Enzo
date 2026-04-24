@@ -3,9 +3,9 @@ import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { Step, ResolvedAction } from '../types.js';
-import { formatSearchResults } from '../../utils/SearchResultFormatter.js';
 import { normalizeError } from '../NormalizedError.js';
-import { validateToolInput } from './AmplifierLoopFastPathTools.js';
+import { applyExecutableToolContext, validateToolInput } from './AmplifierLoopFastPathTools.js';
+import type { ToolExecutionContext } from '../../tools/types.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import type { ThinkPhaseDeps } from './AmplifierThinkPhase.js';
 
@@ -36,29 +36,30 @@ export async function runActPhase(
   try {
     if (resolvedAction.type === 'tool') {
       toolsUsed.add(resolvedAction.target);
-      const validationError = validateToolInput(
-        resolvedAction.target,
-        resolvedAction.input,
-        executableTools,
-        mcpRegistry
-      );
-      if (validationError) {
-        output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
-        return {
-          iteration,
-          type: 'act',
-          requestId,
-          action: resolvedAction.type,
-          target: resolvedAction.target,
-          input: JSON.stringify(resolvedAction.input),
-          output,
-          durationMs: Date.now() - startTime,
-          status: 'error',
-          modelUsed: baseProvider.model,
-        };
-      }
+      const fmtCtx: ToolExecutionContext = { userId, requestId, outputStyle: 'compact' };
 
       if (resolvedAction.target.startsWith('mcp_') && mcpRegistry) {
+        const validationError = validateToolInput(
+          resolvedAction.target,
+          resolvedAction.input,
+          executableTools,
+          mcpRegistry
+        );
+        if (validationError) {
+          output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
+          return {
+            iteration,
+            type: 'act',
+            requestId,
+            action: resolvedAction.type,
+            target: resolvedAction.target,
+            input: JSON.stringify(resolvedAction.input),
+            output,
+            durationMs: Date.now() - startTime,
+            status: 'error',
+            modelUsed: baseProvider.model,
+          };
+        }
         try {
           const result = await mcpRegistry.callTool(resolvedAction.target, resolvedAction.input);
           output = `MCP Tool execution successful: ${result}`;
@@ -67,21 +68,45 @@ export async function runActPhase(
           output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
         }
       } else {
+        const toolInput = applyExecutableToolContext(
+          resolvedAction.target,
+          resolvedAction.input,
+          executableTools,
+          fmtCtx
+        );
+        const validationError = validateToolInput(
+          resolvedAction.target,
+          toolInput,
+          executableTools,
+          mcpRegistry
+        );
+        if (validationError) {
+          output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
+          return {
+            iteration,
+            type: 'act',
+            requestId,
+            action: resolvedAction.type,
+            target: resolvedAction.target,
+            input: JSON.stringify(resolvedAction.input),
+            output,
+            durationMs: Date.now() - startTime,
+            status: 'error',
+            modelUsed: baseProvider.model,
+          };
+        }
+
         const tool = executableTools.find((t) => t.name === resolvedAction.target);
         if (tool) {
-          const toolInput = resolvedAction.input;
-          if (resolvedAction.target === 'remember' && userId && !toolInput.userId) {
-            toolInput.userId = userId;
-          }
           const result = await tool.execute(toolInput);
           if (!result.success) {
             output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
-          } else if (resolvedAction.target === 'web_search') {
-            output =
-              formatSearchResults(result.data as any, 'compact') ||
-              `Tool execution successful: ${JSON.stringify(result.data)}`;
           } else {
-            output = `Tool execution successful: ${JSON.stringify(result.data)}`;
+            const formatted = tool.formatToolOutput?.(result.data, fmtCtx);
+            output =
+              formatted !== undefined && formatted.length > 0
+                ? formatted
+                : `Tool execution successful: ${JSON.stringify(result.data)}`;
           }
         } else {
           output = `Tool not found: ${resolvedAction.target}`;

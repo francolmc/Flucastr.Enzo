@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
 import { Orchestrator, OllamaProvider, AnthropicProvider, MemoryService, SkillRegistry, MCPRegistry, ConfigService, EncryptionService, ensureLocalSecret } from "@enzo/core";
-import { createDefaultToolRegistry } from "./createDefaultToolRegistry.js";
+import { createDefaultToolRegistry } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -74,7 +74,7 @@ const anthropicProvider = anthropicApiKey
 const memoryService = new MemoryService(dbPath);
 
 const skillRegistry = new SkillRegistry(undefined, memoryService);
-const toolRegistry = createDefaultToolRegistry(memoryService, undefined, configService);
+const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
 const orchestrator = new Orchestrator(
   ollamaProvider,
   anthropicProvider,

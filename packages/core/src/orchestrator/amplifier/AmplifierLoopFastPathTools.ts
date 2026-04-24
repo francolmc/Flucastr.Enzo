@@ -1,5 +1,5 @@
 import type { Tool } from '../../providers/types.js';
-import type { ExecutableTool } from '../../tools/types.js';
+import type { ExecutableTool, ToolExecutionContext } from '../../tools/types.js';
 import type { AmplifierInput } from '../types.js';
 import type { MCPRegistry } from '../../mcp/MCPRegistry.js';
 import { ToolCallValidator } from '../ToolCallValidator.js';
@@ -39,6 +39,33 @@ export function extractFirstJsonObject(text: string): string | null {
   return null;
 }
 
+function canonicalizeToolNameLower(toolNameLower: string, executableTools: ExecutableTool[]): string {
+  const exact = executableTools.find((t) => t.name.toLowerCase() === toolNameLower);
+  if (exact) return exact.name.toLowerCase();
+  for (const t of executableTools) {
+    if (t.actionAliases?.some((a) => a.toLowerCase() === toolNameLower)) {
+      return t.name.toLowerCase();
+    }
+  }
+  return toolNameLower;
+}
+
+/** Shallow copy of tool input with optional host/runtime fields applied before validation and execute. */
+export function applyExecutableToolContext(
+  toolName: string,
+  toolInput: unknown,
+  executableTools: ExecutableTool[],
+  ctx: ToolExecutionContext
+): Record<string, unknown> {
+  const tool = executableTools.find((t) => t.name === toolName);
+  const base: Record<string, unknown> =
+    typeof toolInput === 'object' && toolInput !== null && !Array.isArray(toolInput)
+      ? { ...(toolInput as Record<string, unknown>) }
+      : {};
+  tool?.injectExecutionContext?.(base, ctx);
+  return base;
+}
+
 export function normalizeFastPathToolCall(
   parsed: any,
   executableTools: ExecutableTool[]
@@ -56,31 +83,30 @@ export function normalizeFastPathToolCall(
     }
   }
 
-  const esActionToTool: Record<string, string> = {
-    ejecutar_comando: 'execute_command',
-    ejecutar: 'execute_command',
-    buscar_web: 'web_search',
-    buscar: 'web_search',
-    buscar_en_internet: 'web_search',
-    leer_archivo: 'read_file',
-    leer: 'read_file',
-    escribir_archivo: 'write_file',
-    crear_archivo: 'write_file',
-    recordar: 'remember',
-    guardar_memoria: 'remember',
-  };
   const actionVal = String(normalized.action ?? '').toLowerCase();
-  if (actionVal in esActionToTool) {
-    if (!normalized.tool) {
-      normalized.tool = esActionToTool[actionVal];
+  if (actionVal) {
+    for (const tool of executableTools) {
+      const hit = tool.actionAliases?.some((a) => actionVal === a.toLowerCase());
+      if (hit) {
+        normalized.action = 'tool';
+        if (!normalized.tool) {
+          normalized.tool = tool.name;
+        }
+        break;
+      }
     }
-    normalized.action = 'tool';
   }
 
   let toolName = String(normalized.tool ?? normalized.action ?? '').toLowerCase();
   let toolInput = normalized.input ?? {};
 
-  const knownToolNames = new Set(executableTools.map((tool) => tool.name.toLowerCase()));
+  const knownToolNames = new Set<string>();
+  for (const tool of executableTools) {
+    knownToolNames.add(tool.name.toLowerCase());
+    for (const alias of tool.actionAliases ?? []) {
+      knownToolNames.add(alias.toLowerCase());
+    }
+  }
   if (!knownToolNames.has(toolName) && toolName !== 'none' && toolName !== '') {
     const originalAction = String(normalized.action ?? actionVal).toLowerCase();
     if (originalAction === 'execute_command' || originalAction === 'ejecutar_comando' || originalAction === 'ejecutar') {
@@ -88,6 +114,8 @@ export function normalizeFastPathToolCall(
       toolName = 'execute_command';
     }
   }
+
+  toolName = canonicalizeToolNameLower(toolName, executableTools);
 
   return { toolName, toolInput };
 }

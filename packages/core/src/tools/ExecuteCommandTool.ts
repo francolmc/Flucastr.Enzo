@@ -18,6 +18,7 @@ const BLOCKED_COMMANDS = [
 
 export class ExecuteCommandTool implements ExecutableTool {
   name = 'execute_command';
+  readonly actionAliases = ['ejecutar_comando', 'ejecutar'] as const;
   description = 'Execute a shell command';
   parameters = {
     type: 'object',

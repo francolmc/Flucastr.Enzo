@@ -7,7 +7,6 @@ import {
   type StageMetrics,
   type InjectedSkillUsage,
 } from '../types.js';
-import { formatSearchResults } from '../../utils/SearchResultFormatter.js';
 import { extractToolOutput } from '../../utils/ToolOutputExtractor.js';
 import { parseFirstJsonObject, repairJsonString } from '../../utils/StructuredJson.js';
 import { normalizeError } from '../NormalizedError.js';
@@ -19,6 +18,7 @@ import {
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
 import {
+  applyExecutableToolContext,
   extractFirstJsonObject,
   mergeAvailableToolDefinitions,
   normalizeFastPathToolCall,
@@ -294,8 +294,10 @@ If responding with plain text (no tool), write in this language.`;
 
       if (resolved) {
         let execName = resolved.name;
+        const execCtx = { userId: input.userId, requestId: requestId ?? input.requestId };
+        let preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
 
-        const validationError = validateToolInput(execName, toolInput, executableTools, mcpRegistry);
+        const validationError = validateToolInput(execName, preparedToolInput, executableTools, mcpRegistry);
         if (validationError) {
           log.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
           const correctedCall = await requestToolInputCorrection(
@@ -317,12 +319,18 @@ If responding with plain text (no tool), write in this language.`;
             } else {
               execName = resolved.name;
               log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
+              preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
             }
           }
         }
 
         if (resolved) {
-          const validationAfterCorrection = validateToolInput(execName, toolInput, executableTools, mcpRegistry);
+          const validationAfterCorrection = validateToolInput(
+            execName,
+            preparedToolInput,
+            executableTools,
+            mcpRegistry
+          );
           if (validationAfterCorrection) {
             finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
             log.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
@@ -339,16 +347,21 @@ If responding with plain text (no tool), write in this language.`;
               if (!tool) {
                 setupError = `Herramienta interna no encontrada: ${execName}`;
               } else {
-                const result = await tool.execute(toolInput);
-                rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
-                if (execName === 'web_search' && result.success) {
-                  const formatted = formatSearchResults(result.data as any, 'full');
-                  if (formatted) rawToolOutput = formatted;
-                }
+                const result = await tool.execute(preparedToolInput);
+                const fmtCtx = {
+                  userId: input.userId,
+                  requestId: requestId ?? input.requestId,
+                  outputStyle: 'full' as const,
+                };
+                const formatted = result.success ? tool.formatToolOutput?.(result.data, fmtCtx) : undefined;
+                rawToolOutput =
+                  formatted !== undefined && formatted.length > 0
+                    ? formatted
+                    : extractToolOutput(result, { maxChars: 3000 });
               }
             } else if (mcpRegistry) {
               try {
-                rawToolOutput = await mcpRegistry.callTool(execName, toolInput);
+                rawToolOutput = await mcpRegistry.callTool(execName, preparedToolInput);
               } catch (mcpErr) {
                 const normalizedMcpError = normalizeError(mcpErr, 'mcp');
                 rawToolOutput = `Error [${normalizedMcpError.code}]: ${normalizedMcpError.technicalMessage}`;

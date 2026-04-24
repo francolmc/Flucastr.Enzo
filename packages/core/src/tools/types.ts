@@ -6,6 +6,23 @@ export interface ToolResult {
   error?: string;
 }
 
+/** Passed into optional tool hooks (inject / format). */
+export interface ToolExecutionContext {
+  userId?: string;
+  requestId?: string;
+  /** Used by tools that support multiple presentation modes (e.g. web search). */
+  outputStyle?: 'full' | 'compact';
+}
+
 export interface ExecutableTool extends Tool {
   execute(input: any): Promise<ToolResult>;
+  /**
+   * Lowercase values of the JSON `action` field that imply this tool (fast-path i18n).
+   * Example: `ejecutar_comando` → `execute_command`.
+   */
+  actionAliases?: readonly string[];
+  /** Mutates `input` before validation and `execute` (e.g. inject `userId` for remember). */
+  injectExecutionContext?(input: Record<string, unknown>, ctx: ToolExecutionContext): void;
+  /** When set, successful act-phase output uses this instead of `JSON.stringify(data)`. */
+  formatToolOutput?(data: unknown, ctx: ToolExecutionContext): string | undefined;
 }

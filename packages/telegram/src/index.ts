@@ -21,17 +21,17 @@ function resolveSharedPath(envValue: string | undefined, fallbackAbsolutePath: s
   return path.resolve(workspaceRoot, normalized);
 }
 
-import { 
-  OllamaProvider, 
-  AnthropicProvider, 
-  MemoryService, 
+import {
+  OllamaProvider,
+  AnthropicProvider,
+  MemoryService,
   Orchestrator,
   SkillRegistry,
   ConfigService,
   EncryptionService,
-  ensureLocalSecret
+  ensureLocalSecret,
 } from '@enzo/core';
-import { createDefaultToolRegistry } from './createDefaultToolRegistry.js';
+import { createDefaultToolRegistry } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
@@ -92,7 +92,7 @@ async function main() {
     }
 
     // 3. Initialize Orchestrator
-    const toolRegistry = createDefaultToolRegistry(memoryService, undefined, configService);
+    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,

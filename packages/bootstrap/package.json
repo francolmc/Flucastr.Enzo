@@ -1,0 +1,24 @@
+{
+  "name": "@enzo/bootstrap",
+  "version": "0.1.0",
+  "description": "Shared product wiring for Enzo hosts (default tool registry)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@enzo/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "typescript": "^5.3.3"
+  }
+}

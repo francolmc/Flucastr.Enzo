@@ -8,7 +8,13 @@ import {
   WriteFileTool,
 } from '@enzo/core';
 
-/** Product wiring: Tavily + default tools. Kept out of `@enzo/core` to avoid secret coupling in the library surface. */
+/**
+ * Default tool set for API / Telegram: Tavily-backed search, shell, filesystem, memory.
+ * Tavily key comes from `ConfigService` (encrypted system secret) or `TAVILY_API_KEY`.
+ *
+ * @param workspacePath - Root for `read_file` when paths are relative. If omitted, `ReadFileTool` uses
+ *   `process.env.ENZO_WORKSPACE_PATH` or falls back to `./workspace` (see `ReadFileTool` in `@enzo/core`).
+ */
 export function createDefaultToolRegistry(
   memoryService: MemoryService,
   workspacePath?: string,

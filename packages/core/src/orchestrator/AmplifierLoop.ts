@@ -9,7 +9,6 @@ import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { MCPRegistry } from '../mcp/index.js';
 import { SkillResolver, RelevantSkill } from './SkillResolver.js';
 import { Decomposer, Subtask } from './Decomposer.js';
-import { formatSearchResults } from '../utils/SearchResultFormatter.js';
 import { extractFilePath, extractTargetDir } from '../utils/PathExtractor.js';
 import { extractToolOutput } from '../utils/ToolOutputExtractor.js';
 import { FileOrganizationService } from '../services/FileOrganizationService.js';
@@ -555,7 +554,9 @@ ${accumulatedContext}`;
               }
               const result = await wsTool.execute(directInput);
               if (result.success) {
-                const wsOutput = formatSearchResults(result.data as any, 'compact') || JSON.stringify(result.data);
+                const wsOutput =
+                  wsTool.formatToolOutput?.(result.data, { outputStyle: 'compact' }) ??
+                  `Tool execution successful: ${JSON.stringify(result.data)}`;
                 toolsUsed.add('web_search');
                 accumulatedContext += (accumulatedContext ? '\n\n' : '') + wsOutput;
                 steps.push({

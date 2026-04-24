@@ -17,6 +17,9 @@ importers:
 
   packages/api:
     dependencies:
+      '@enzo/bootstrap':
+        specifier: workspace:*
+        version: link:../bootstrap
       '@enzo/core':
         specifier: workspace:*
         version: link:../core
@@ -48,6 +51,19 @@ importers:
       tsx:
         specifier: ^4.7.0
         version: 4.21.0
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/bootstrap:
+    dependencies:
+      '@enzo/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.10.6
+        version: 20.19.39
       typescript:
         specifier: ^5.3.3
         version: 5.9.3
@@ -119,6 +135,9 @@ importers:
 
   packages/telegram:
     dependencies:
+      '@enzo/bootstrap':
+        specifier: workspace:*
+        version: link:../bootstrap
       '@enzo/core':
         specifier: workspace:*
         version: link:../core

@@ -6,10 +6,11 @@
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "pnpm -F @enzo/core build && tsc",
+    "build": "pnpm -F @enzo/core build && pnpm -F @enzo/bootstrap build && tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@enzo/bootstrap": "workspace:*",
     "@enzo/core": "workspace:*",
     "dotenv": "^16.3.1",
     "telegraf": "^4.14.1"

@@ -1,7 +1,9 @@
-import { ExecutableTool, ToolResult } from './types.js';
+import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
+import { formatSearchResults, type WebSearchData } from '../utils/SearchResultFormatter.js';
 
 export class WebSearchTool implements ExecutableTool {
   name = 'web_search';
+  readonly actionAliases = ['buscar_web', 'buscar', 'buscar_en_internet'] as const;
   description = 'Search the internet for real-time information using Tavily';
   parameters = {
     type: 'object',
@@ -12,6 +14,12 @@ export class WebSearchTool implements ExecutableTool {
   };
 
   constructor(private readonly resolveApiKey?: () => string | null) {}
+
+  formatToolOutput(data: unknown, ctx: ToolExecutionContext): string | undefined {
+    const style = ctx.outputStyle ?? 'compact';
+    const text = formatSearchResults(data as WebSearchData, style);
+    return text.length > 0 ? text : undefined;
+  }
 
   async execute(input: any): Promise<ToolResult> {
     try {
