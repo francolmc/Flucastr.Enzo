@@ -30,6 +30,8 @@ import {
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
+  ReminderService,
+  startReminderTicker,
 } from '@enzo/core';
 import { createDefaultToolRegistry } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -66,6 +68,7 @@ async function main() {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     fs.mkdirSync(skillsPath, { recursive: true });
     const memoryService = new MemoryService(dbPath);
+    const reminderService = new ReminderService(dbPath);
     console.log(`[Telegram] MemoryService initialized (${dbPath})`);
     console.log(`[Telegram] Shared skills path: ${skillsPath}`);
 
@@ -92,7 +95,7 @@ async function main() {
     }
 
     // 3. Initialize Orchestrator
-    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
+    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService, reminderService);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -102,6 +105,7 @@ async function main() {
     console.log('[Telegram] Orchestrator initialized');
 
     let bot: Telegraf<EnzoContext> | null = null;
+    let reminderTicker: NodeJS.Timeout | null = null;
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
     let currentSignature = '';
@@ -154,6 +158,22 @@ async function main() {
 
     await launchBot('initial');
 
+    if (reminderTicker) {
+      clearInterval(reminderTicker);
+    }
+    reminderTicker = startReminderTicker(reminderService, {
+      intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 45_000,
+      sendTelegram: async (chatId, text) => {
+        const b = bot;
+        if (!b) {
+          console.warn('[Telegram] Reminder tick: bot not ready, skip send');
+          return;
+        }
+        await b.telegram.sendMessage(chatId, text);
+      },
+    });
+    console.log('[Telegram] Reminder ticker started');
+
     // 4. Config hot-reload polling
     configPoller = setInterval(async () => {
       if (isReloading) return;
@@ -175,6 +195,10 @@ async function main() {
       if (configPoller) {
         clearInterval(configPoller);
         configPoller = null;
+      }
+      if (reminderTicker) {
+        clearInterval(reminderTicker);
+        reminderTicker = null;
       }
       if (bot) {
         bot.stop(signal);

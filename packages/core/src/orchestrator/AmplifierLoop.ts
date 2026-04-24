@@ -695,7 +695,8 @@ Do NOT search for more information. Use what is provided.`;
             modelsUsed,
             toolsUsed,
             input.userId,
-            requestId
+            requestId,
+            input.toolExecutionContext
           );
           recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
           steps.push(actStep);
@@ -951,7 +952,8 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         toolsUsed,
         input.userId,
-        requestId
+        requestId,
+        input.toolExecutionContext
       );
       recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !(actStep.output || '').toLowerCase().includes('error'));
       steps.push(actStep);

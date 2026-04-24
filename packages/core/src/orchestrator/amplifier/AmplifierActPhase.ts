@@ -27,7 +27,8 @@ export async function runActPhase(
   modelsUsed: Set<string>,
   toolsUsed: Set<string>,
   userId?: string,
-  requestId?: string
+  requestId?: string,
+  toolSession?: Partial<ToolExecutionContext>
 ): Promise<Step> {
   const { baseProvider, executableTools, mcpRegistry, skillRegistry, log } = deps;
   const startTime = Date.now();
@@ -36,7 +37,12 @@ export async function runActPhase(
   try {
     if (resolvedAction.type === 'tool') {
       toolsUsed.add(resolvedAction.target);
-      const fmtCtx: ToolExecutionContext = { userId, requestId, outputStyle: 'compact' };
+      const fmtCtx: ToolExecutionContext = {
+        outputStyle: 'compact',
+        ...toolSession,
+        userId: userId ?? toolSession?.userId,
+        requestId: requestId ?? toolSession?.requestId,
+      };
 
       if (resolvedAction.target.startsWith('mcp_') && mcpRegistry) {
         const validationError = validateToolInput(

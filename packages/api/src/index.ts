@@ -5,7 +5,7 @@ import fsSync from "fs";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
-import { Orchestrator, OllamaProvider, AnthropicProvider, MemoryService, SkillRegistry, MCPRegistry, ConfigService, EncryptionService, ensureLocalSecret } from "@enzo/core";
+import { Orchestrator, OllamaProvider, AnthropicProvider, MemoryService, SkillRegistry, MCPRegistry, ConfigService, EncryptionService, ensureLocalSecret, ReminderService, startReminderTicker } from "@enzo/core";
 import { createDefaultToolRegistry } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
@@ -72,9 +72,10 @@ const anthropicProvider = anthropicApiKey
   : undefined;
 
 const memoryService = new MemoryService(dbPath);
+const reminderService = new ReminderService(dbPath);
 
 const skillRegistry = new SkillRegistry(undefined, memoryService);
-const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
+const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService, reminderService);
 const orchestrator = new Orchestrator(
   ollamaProvider,
   anthropicProvider,
@@ -165,3 +166,8 @@ app.use(errorHandler);
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Enzo API corriendo en http://${HOST}:${PORT}`);
 });
+
+startReminderTicker(reminderService, {
+  intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 45_000,
+});
+console.log("[API] Reminder ticker started (web reminders log only; use Telegram host for push)");

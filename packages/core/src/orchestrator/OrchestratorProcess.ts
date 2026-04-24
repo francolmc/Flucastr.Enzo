@@ -100,6 +100,14 @@ export async function executeOrchestratorProcess(
   } as const;
   const runtimeHints = { ...defaultRuntimeHints, ...(input.runtimeHints ?? {}) };
 
+  const toolExecutionContext = {
+    userId: input.userId,
+    requestId,
+    source: input.source,
+    conversationId: input.conversationId,
+    ...input.toolExecutionContext,
+  };
+
   let amplifierResult: AmplifierResult;
   const runtimeAmplifierLoop = b.createAmplifierLoop(runtimeProvider);
   try {
@@ -121,6 +129,7 @@ export async function executeOrchestratorProcess(
       userLanguage: input.userLanguage ?? 'es',
       onProgress: input.onProgress,
       runtimeHints,
+      toolExecutionContext,
     });
   } catch (amplifierError) {
     console.error('[Orchestrator] AmplifierLoop error:', amplifierError);
@@ -145,6 +154,7 @@ export async function executeOrchestratorProcess(
         userLanguage: input.userLanguage ?? 'es',
         onProgress: input.onProgress,
         runtimeHints,
+        toolExecutionContext,
       });
     } else {
       const errorMsg = amplifierError instanceof Error ? amplifierError.message : String(amplifierError);

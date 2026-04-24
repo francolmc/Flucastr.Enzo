@@ -41,6 +41,8 @@ function getProgressEmoji(step: Step): string {
         return '⚡';
       case 'remember':
         return '💾';
+      case 'schedule_reminder':
+        return '⏰';
       default:
         return '⚙️';
     }
@@ -65,6 +67,8 @@ function getProgressText(step: Step): string {
         return 'Ejecutando comando...';
       case 'remember':
         return 'Guardando en memoria...';
+      case 'schedule_reminder':
+        return 'Programando recordatorio...';
       default:
         return 'Ejecutando herramienta...';
     }
@@ -127,6 +131,11 @@ async function processMessageInBackground(
       userLanguage: langContext.userLanguage,
       agentId: resolvedAgentId,
       classifiedLevel: complexityLevel as any,
+      toolExecutionContext: {
+        source: 'telegram',
+        conversationId,
+        telegramChatId: ctx.chat?.id != null ? String(ctx.chat.id) : undefined,
+      },
       runtimeHints: {
         homeDir: process.env.HOME,
         osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,

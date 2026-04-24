@@ -52,6 +52,8 @@ export class CapabilityResolver {
       inferredTool = 'read_file';
     } else if ('key' in mergedInput || 'value' in mergedInput) {
       inferredTool = 'remember';
+    } else if ('runAt' in mergedInput && 'text' in mergedInput) {
+      inferredTool = 'schedule_reminder';
     }
 
     const inferred = inferredTool && isAvailable(inferredTool) ? inferredTool : undefined;

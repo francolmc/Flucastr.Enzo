@@ -299,7 +299,11 @@ If responding with plain text (no tool), write in this language.`;
 
       if (resolved) {
         let execName = resolved.name;
-        const execCtx = { userId: input.userId, requestId: requestId ?? input.requestId };
+        const execCtx = {
+          userId: input.userId,
+          requestId: requestId ?? input.requestId,
+          ...input.toolExecutionContext,
+        };
         let preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
 
         const validationError = validateToolInput(execName, preparedToolInput, executableTools, mcpRegistry);

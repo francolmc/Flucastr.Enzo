@@ -12,6 +12,11 @@ export interface ToolExecutionContext {
   requestId?: string;
   /** Used by tools that support multiple presentation modes (e.g. web search). */
   outputStyle?: 'full' | 'compact';
+  /** Set when the request comes from the Telegram bot; used e.g. for schedule_reminder delivery. */
+  telegramChatId?: string;
+  /** Web conversation id; optional target for in-app / future push delivery. */
+  conversationId?: string;
+  source?: 'web' | 'telegram' | 'unknown';
 }
 
 export interface ExecutableTool extends Tool {

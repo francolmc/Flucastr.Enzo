@@ -6,9 +6,16 @@ import { MCPServerConfig } from '../mcp/types.js';
 
 export class MemoryService {
   private db: DatabaseManager;
+  private readonly resolvedDbPath: string;
 
   constructor(dbPath?: string) {
+    this.resolvedDbPath = dbPath || process.env.DB_PATH || './enzo.db';
     this.db = DatabaseManager.getInstance(dbPath);
+  }
+
+  /** Same path used to open the DB (for ReminderService and other co-located stores). */
+  getDbPath(): string {
+    return this.resolvedDbPath;
   }
 
   private runAsync(sql: string, params: any[] = []): Promise<void> {

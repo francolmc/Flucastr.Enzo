@@ -1,6 +1,7 @@
 import { Message, Tool, LLMProvider } from '../providers/types.js';
 import type { Subtask, DecompositionResult } from './Decomposer.js';
 import type { AssistantProfile, UserProfile } from '../config/ConfigService.js';
+import type { ToolExecutionContext } from '../tools/types.js';
 
 export enum ComplexityLevel {
   SIMPLE = 'SIMPLE',
@@ -77,6 +78,8 @@ export interface AmplifierInput {
     timeLocale?: string;
     timeZone?: string;
   };
+  /** Merged into tool execution (schedule_reminder, remember, etc.). Usually set by the orchestrator from the request. */
+  toolExecutionContext?: ToolExecutionContext;
   decomposition?: {
     steps: Subtask[];
     originalMessage: string;
@@ -168,6 +171,8 @@ export interface OrchestratorInput {
   onProgress?: (step: Step) => void;
   /** Passed through to AmplifierInput when present; else process() supplies env defaults. */
   runtimeHints?: AmplifierInput['runtimeHints'];
+  /** Optional; merged with userId/requestId/source/conversationId inside process(). */
+  toolExecutionContext?: Partial<ToolExecutionContext>;
 }
 
 export const AVAILABLE_TOOLS = [
