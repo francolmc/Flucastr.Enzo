@@ -2,6 +2,7 @@ import { LLMProvider, Message } from '../providers/types.js';
 import { ClassificationResult, ComplexityLevel } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+import { isTemporalReminderIntent } from './reminderIntentHeuristics.js';
 
 export class Classifier {
   private provider: LLMProvider;
@@ -24,6 +25,9 @@ export class Classifier {
     }
     if (this.isLikelyChainedTask(normalizedMessage)) {
       return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow' };
+    }
+    if (isTemporalReminderIntent(normalizedMessage)) {
+      return { level: ComplexityLevel.MODERATE, reason: 'temporal reminder intent requires schedule_reminder' };
     }
     if (impliesMultiToolWorkflow(normalizedMessage)) {
       return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow' };

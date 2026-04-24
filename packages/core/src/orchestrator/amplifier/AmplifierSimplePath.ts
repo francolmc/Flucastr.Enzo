@@ -31,6 +31,7 @@ import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
+import { hasExplicitReminderCue, isTemporalReminderIntent } from '../reminderIntentHeuristics.js';
 
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
@@ -74,12 +75,6 @@ function resolveHomeDir(input: AmplifierInput): string {
 
 function resolveOsLabel(input: AmplifierInput): string {
   return input.runtimeHints?.osLabel ?? 'macOS';
-}
-
-function isReminderIntent(message: string): boolean {
-  return /\b(recorda(?:r|me)?|recu[eé]rdame|alarm(?:a|ar)|remind(?:er| me)?|av[ií]same|medicamento|pastilla)\b/i.test(
-    message
-  );
 }
 
 function extractReminderTimeToken(text: string): string | null {
@@ -205,6 +200,9 @@ TOOL SELECTION — CRITICAL:
 - External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
 - Run any other shell command → execute_command
 - NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
+- schedule_reminder vs remember:
+  - If the user asks to be reminded/alerted at a specific time/date (recuérdame/avísame + hora/fecha), use schedule_reminder.
+  - If the user only shares a fact for memory without asking for an alert, use remember.
 
 RULES:
 - NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
@@ -250,7 +248,9 @@ If responding with plain text (no tool), write in this language.`;
   let finalContent = rawContent;
 
   let normalizedContent = rawContent;
-  const reminderIntent = isReminderIntent(input.message);
+  const isTelegram = input.toolExecutionContext?.source === 'telegram';
+  const reminderIntent = isTemporalReminderIntent(input.message);
+  const explicitReminderCue = hasExplicitReminderCue(input.message);
   if (isModerate && !normalizedContent.startsWith('{')) {
     const forcedTool = reminderIntent ? 'schedule_reminder' : '';
     const strictPrompt = `${buildAssistantIdentityPrompt(input)}
@@ -431,16 +431,43 @@ Format:
         }
 
         if (resolved) {
-          const validationAfterCorrection = validateToolInput(
-            execName,
-            preparedToolInput,
-            executableTools,
-            mcpRegistry
-          );
-          if (validationAfterCorrection) {
-            finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
-            log.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
+          if (isTelegram && reminderIntent && resolved.name === 'remember') {
+            const forcedReminder = normalizeScheduleReminderInputFromUserMessage(
+              input.message,
+              preparedToolInput,
+              typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
+            );
+            if (forcedReminder) {
+              toolName = 'schedule_reminder';
+              resolved = resolveFastPathToolForExecution('schedule_reminder', mergedToolDefs, executableTools);
+              if (resolved) {
+                execName = resolved.name;
+                toolInput = forcedReminder;
+                preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
+                log.info('[AmplifierLoop] SIMPLE path - Telegram reminder intent: overriding remember -> schedule_reminder');
+              }
+            } else {
+              finalContent =
+                'Para programar el recordatorio necesito la hora exacta (por ejemplo: 09:15 o 9:15 am).';
+              log.info('[AmplifierLoop] SIMPLE path - reminder intent without parseable time, asking clarification');
+              resolved = null;
+            }
+          }
+
+          if (!resolved) {
+            // reminder intent without parseable time: finalContent already set above
+            log.info('[AmplifierLoop] SIMPLE path - skipping execution because no tool was resolved');
           } else {
+            const validationAfterCorrection = validateToolInput(
+              execName,
+              preparedToolInput,
+              executableTools,
+              mcpRegistry
+            );
+            if (validationAfterCorrection) {
+              finalContent = `Tool input validation failed: ${validationAfterCorrection}`;
+              log.warn(`[AmplifierLoop] SIMPLE path - ${validationAfterCorrection}`);
+            } else {
             toolsUsed.add(execName);
             log.info(`[AmplifierLoop] SIMPLE path - ejecutando "${execName}" (${resolved.kind}):`, toolInput);
 
@@ -482,9 +509,9 @@ Format:
               !setupError && !rawToolOutput.toLowerCase().startsWith('error')
             );
 
-            if (setupError) {
-              finalContent = setupError;
-            } else {
+              if (setupError) {
+                finalContent = setupError;
+              } else {
               const toolOutput = rawToolOutput;
 
               log.info('[AmplifierLoop] SIMPLE path - resultado tool (preview):', toolOutput.substring(0, 200));
@@ -568,6 +595,7 @@ ${
                   : toolOutput;
               }
             }
+          }
           }
         }
       } else if (toolName && toolName !== 'none') {
