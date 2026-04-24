@@ -8,12 +8,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const workspaceRoot = path.resolve(__dirname, '../../..');
 
-function resolveSharedPath(envValue: string | undefined, fallbackAbsolutePath: string): string {
-  if (!envValue || envValue.trim().length === 0) {
+function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
+  if (!configValue || configValue.trim().length === 0) {
     return fallbackAbsolutePath;
   }
 
-  const normalized = envValue.replace(/^~(?=$|\/|\\)/, homedir());
+  const normalized = configValue.replace(/^~(?=$|\/|\\)/, homedir());
   if (path.isAbsolute(normalized)) {
     return normalized;
   }
@@ -62,8 +62,8 @@ async function main() {
     console.log('[Telegram] Initializing Enzo bot...');
 
     // 1. Initialize MemoryService
-    const dbPath = resolveSharedPath(process.env.DB_PATH, path.join(homedir(), '.enzo', 'enzo.db'));
-    const skillsPath = resolveSharedPath(process.env.ENZO_SKILLS_PATH, path.join(homedir(), '.enzo', 'skills'));
+    const dbPath = resolveSharedPath(systemConfig.dbPath, path.join(homedir(), '.enzo', 'enzo.db'));
+    const skillsPath = resolveSharedPath(systemConfig.enzoSkillsPath, path.join(homedir(), '.enzo', 'skills'));
     process.env.ENZO_SKILLS_PATH = skillsPath;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     fs.mkdirSync(skillsPath, { recursive: true });
