@@ -135,7 +135,8 @@ ${
 - Never invent file contents — use read_file or write based on actual data
 - Never invent search results — use web_search
 - To list a folder use execute_command with "ls /path/to/folder"
-- For file paths, use the paths provided by the user in the message
+- For file paths, use the paths provided by the user in the message OR copy path segments VERBATIM from prior tool output (especially ls). NEVER translate or rename files (e.g. "organized tasks.txt" must not become "tareas organizadas.txt").
+- If the user refers to a file loosely but context lists a different exact name, use that exact name from context or run ls again — do not guess a translated filename.
 - One tool call per response
 - Never add text outside the JSON
 - ALWAYS use absolute paths starting with / — never relative paths like "ls Downloads" or "mkdir documents/"

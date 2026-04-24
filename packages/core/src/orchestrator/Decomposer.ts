@@ -48,7 +48,7 @@ Available tools: ${toolsList}
 TOOL SELECTION RULES:
 - web_search: search the internet for information
 - write_file: create or write content to a file (use this, NOT execute_command, to create files)
-- read_file: read an existing file
+- read_file: read an existing file — the path must be verbatim from the user message or from prior ls output; never translate or paraphrase file names
 - execute_command: run shell commands — NOT for creating files with content
 - remember: save a fact to memory
 ${hasPdfMcpTools ? `- mcp_* tools: use these for PDF workflows when available` : ''}

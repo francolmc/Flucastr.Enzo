@@ -169,6 +169,8 @@ TOOL SELECTION — CRITICAL:
 
 RULES:
 - NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
+- FILE AND FOLDER NAMES ARE LITERAL BYTES: every path segment in read_file / execute_command must match EXACTLY what appeared in prior ls (stdout) or in the user's message. NEVER translate, localize, or paraphrase names (e.g. if ls showed organized tasks.txt, do NOT use tareas organizadas.txt or tasks.txt unless that exact name exists).
+- If the user uses a vague or partial filename and the exact name is unclear, run execute_command with ls on that directory again — do NOT invent or guess a path.
 - Never invent file contents — use read_file
 - Never invent search results — use web_search
 - Never invent system metrics (RAM, disk, processes) — always run the command with execute_command

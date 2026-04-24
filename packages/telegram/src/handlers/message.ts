@@ -90,7 +90,7 @@ async function processMessageInBackground(
     // Step 0: Setup language middleware
     const languageMiddleware = new LanguageMiddleware(ctx.orchestrator.getBaseProvider());
     
-    // Step 1: Detect language and translate to English if needed
+    // Step 1: Detect language; optionally translate input to English (see TELEGRAM_TRANSLATE_INPUT in LanguageMiddleware)
     const langContext = await languageMiddleware.processInput(messageText, userId);
     const workingMessage = langContext.translatedInput;
     console.log(`[Telegram] Language: ${langContext.userLanguage}, translated: ${langContext.wasTranslated}`);
@@ -119,6 +119,7 @@ async function processMessageInBackground(
     // Step 4: Process with orchestrator (no time limit in background)
     const result = await ctx.orchestrator.process({
       message: workingMessage,
+      originalMessage: langContext.originalInput,
       conversationId,
       userId,
       source: 'telegram',

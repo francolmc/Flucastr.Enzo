@@ -7,16 +7,61 @@ export interface LanguageContext {
   wasTranslated: boolean;
 }
 
+/**
+ * Telegram-only: optional translate user input → English before classify/process, and optionally
+ * translate assistant output → user language.
+ *
+ * `TELEGRAM_TRANSLATE_INPUT` (default `auto`):
+ * - `off` — never translate user messages; preserves paths and literals; still detects language for `userLanguage`.
+ * - `auto` — skip input translation for common model-friendly languages: en, es, pt.
+ * - `on` — legacy: only `en` skips translation; all other detected languages are translated to English (extra LLM call).
+ *
+ * `TELEGRAM_TRANSLATE_OUTPUT` (default unset = on): set to `off` to never translate bot replies (skip second LLM call;
+ * rely on core `userLanguage` so the model answers in the right language).
+ */
 export class LanguageMiddleware {
   private provider: LLMProvider;
   private languageCache: Map<string, string>;
 
-  private readonly UNIVERSAL_LANGUAGES = ['en'];
+  /** User reads assistant text in this language — never translate our output to another script. */
+  private static readonly OUTPUT_SKIP_TRANSLATION: readonly string[] = ['en'];
+
+  /** Legacy policy `on`: only English skips translate-to-English on input. */
+  private static readonly INPUT_NO_TRANSLATE_LEGACY: readonly string[] = ['en'];
+
+  /** Policy `auto`: these skip translate-to-English on input (reduces distortion for ES/PT-first users). */
+  private static readonly INPUT_NO_TRANSLATE_AUTO: readonly string[] = ['en', 'es', 'pt'];
+
   private readonly DEFAULT_LANGUAGE: string;
   private readonly MIN_TEXT_LENGTH = 3;
 
   private static looksLikeTelegramBotCommand(message: string): boolean {
     return /^\s*\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(message);
+  }
+
+  /** `TELEGRAM_TRANSLATE_INPUT`: off | on | auto (default auto). */
+  private static translateInputPolicy(): 'off' | 'on' | 'auto' {
+    const v = (process.env.TELEGRAM_TRANSLATE_INPUT ?? 'auto').toLowerCase().trim();
+    if (v === 'off' || v === 'false' || v === '0') return 'off';
+    if (v === 'on' || v === 'true' || v === '1') return 'on';
+    return 'auto';
+  }
+
+  /** Whether we should call translateToEnglish for this detected language. */
+  private static shouldTranslateInputToEnglish(detectedLanguage: string): boolean {
+    const policy = LanguageMiddleware.translateInputPolicy();
+    if (policy === 'off') return false;
+    const list =
+      policy === 'on'
+        ? LanguageMiddleware.INPUT_NO_TRANSLATE_LEGACY
+        : LanguageMiddleware.INPUT_NO_TRANSLATE_AUTO;
+    return !list.includes(detectedLanguage);
+  }
+
+  /** `TELEGRAM_TRANSLATE_OUTPUT=off` skips the post-process translate-to-user-language LLM call. */
+  private static isOutputTranslationDisabled(): boolean {
+    const v = (process.env.TELEGRAM_TRANSLATE_OUTPUT ?? '').toLowerCase().trim();
+    return v === 'off' || v === 'false' || v === '0';
   }
 
   constructor(provider: LLMProvider, defaultLanguage?: string) {
@@ -36,7 +81,7 @@ export class LanguageMiddleware {
       console.log(`[LanguageMiddleware] Using cached language: ${detectedLanguage} for user ${userId}`);
     }
 
-    const needsTranslation = !this.UNIVERSAL_LANGUAGES.includes(detectedLanguage);
+    const needsTranslation = LanguageMiddleware.shouldTranslateInputToEnglish(detectedLanguage);
 
     if (!needsTranslation) {
       return {
@@ -68,7 +113,12 @@ export class LanguageMiddleware {
   }
 
   async processOutput(response: string, targetLanguage: string): Promise<string> {
-    if (this.UNIVERSAL_LANGUAGES.includes(targetLanguage)) {
+    const outputOff = LanguageMiddleware.isOutputTranslationDisabled();
+    if (outputOff) {
+      return response;
+    }
+
+    if (LanguageMiddleware.OUTPUT_SKIP_TRANSLATION.includes(targetLanguage)) {
       return response;
     }
 

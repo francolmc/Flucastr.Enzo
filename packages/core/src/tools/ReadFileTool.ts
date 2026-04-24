@@ -89,9 +89,14 @@ export class ReadFileTool implements ExecutableTool {
         data: content,
       };
     } catch (error) {
+      let message = error instanceof Error ? error.message : String(error);
+      if (/ENOENT|no such file|no se encuentra/i.test(message)) {
+        message +=
+          ' — Use the exact path and filename from ls output or the user message; do not translate or rename file segments.';
+      }
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       };
     }
   }
