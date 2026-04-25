@@ -162,7 +162,7 @@ async function main() {
       clearInterval(reminderTicker);
     }
     reminderTicker = startReminderTicker(reminderService, {
-      intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 45_000,
+      intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 15_000,
       channels: ['telegram'],
       sendTelegram: async (chatId, text) => {
         const b = bot;

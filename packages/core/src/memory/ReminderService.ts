@@ -157,6 +157,21 @@ export class ReminderService {
     );
   }
 
+  /**
+   * Move stuck rows from `processing` back to `pending` (e.g. process crash or hung network after claim).
+   * Only affects rows whose scheduled time is at least `minMsPastRunAt` in the past.
+   */
+  requeueStaleProcessing(minMsPastRunAt: number, nowMs: number = Date.now()): number {
+    this.run(
+      `UPDATE scheduled_reminders
+       SET status = 'pending'
+       WHERE status = 'processing' AND ? - runAtMs > ?`,
+      [nowMs, minMsPastRunAt]
+    );
+    const ch = this.get<{ c: number }>('SELECT changes() as c', []);
+    return ch?.c ?? 0;
+  }
+
   getStatusCounts(): ReminderStatusCount[] {
     const rows = this.db
       .getDb()
