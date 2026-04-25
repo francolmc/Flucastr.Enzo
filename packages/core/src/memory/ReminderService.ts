@@ -23,13 +23,25 @@ export interface ReminderStatusCount {
 }
 
 /**
+ * Optional hook: hosts (e.g. Telegram) can schedule one-shot `setTimeout` delivery when a row is created.
+ * Must be cheap; avoid throwing.
+ */
+export type ReminderCreatedListener = (row: ScheduledReminder) => void;
+
+/**
  * CRUD and atomic claim for scheduled reminders in the same SQLite file as {@link MemoryService}.
  */
 export class ReminderService {
   private readonly db: DatabaseManager;
+  private onReminderCreated: ReminderCreatedListener | null = null;
 
   constructor(dbPath?: string) {
     this.db = DatabaseManager.getInstance(dbPath);
+  }
+
+  /** Fires in-process after a row is written (e.g. to arm a one-shot `setTimeout` alongside polling). */
+  setReminderCreatedListener(handler: ReminderCreatedListener | null): void {
+    this.onReminderCreated = handler;
   }
 
   private run(sql: string, params: any[] = []): void {
@@ -65,7 +77,7 @@ export class ReminderService {
         now,
       ]
     );
-    return {
+    const created: ScheduledReminder = {
       id,
       userId: input.userId,
       runAtMs: input.runAtMs,
@@ -77,6 +89,14 @@ export class ReminderService {
       createdAtMs: now,
       sentAtMs: null,
     };
+    if (this.onReminderCreated) {
+      try {
+        this.onReminderCreated(created);
+      } catch (e) {
+        console.error('[Reminders] onReminderCreated error:', e);
+      }
+    }
+    return created;
   }
 
   /**
@@ -117,18 +137,76 @@ export class ReminderService {
         return null;
       }
 
-      return {
-        id,
-        userId: String(row.userId),
-        runAtMs: Number(row.runAtMs),
-        message: String(row.message),
-        timezone: row.timezone != null ? String(row.timezone) : null,
-        channel: (row.channel === 'telegram' ? 'telegram' : 'web') as ReminderChannel,
-        targetRef: row.targetRef != null ? String(row.targetRef) : null,
-        status: 'processing',
-        createdAtMs: Number(row.createdAtMs),
-        sentAtMs: row.sentAtMs != null ? Number(row.sentAtMs) : null,
-      };
+      return this.mapRow(row, 'processing')!;
+    } catch (e) {
+      try {
+        dbw.run('ROLLBACK', []);
+      } catch {
+        // ignore
+      }
+      throw e;
+    }
+  }
+
+  private mapRow(
+    row: Record<string, unknown> | undefined,
+    status: ReminderStatus
+  ): ScheduledReminder | null {
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      userId: String(row.userId),
+      runAtMs: Number(row.runAtMs),
+      message: String(row.message),
+      timezone: row.timezone != null ? String(row.timezone) : null,
+      channel: (row.channel === 'telegram' ? 'telegram' : 'web') as ReminderChannel,
+      targetRef: row.targetRef != null ? String(row.targetRef) : null,
+      status,
+      createdAtMs: Number(row.createdAtMs),
+      sentAtMs: row.sentAtMs != null ? Number(row.sentAtMs) : null,
+    };
+  }
+
+  /**
+   * Claim a specific row if it is due and still pending (atomic). Used for one-shot timers alongside {@link claimNextDue}.
+   */
+  claimByIdIfDue(
+    id: string,
+    nowMs: number,
+    channels?: ReminderChannel[]
+  ): ScheduledReminder | null {
+    const dbw = this.db.getDb();
+    try {
+      dbw.run('BEGIN IMMEDIATE', []);
+      const channelFilter = channels && channels.length > 0 ? channels : null;
+      const channelSql =
+        channelFilter && channelFilter.length > 0
+          ? ` AND channel IN (${channelFilter.map(() => '?').join(', ')})`
+          : '';
+      const selectParams = channelFilter ? [id, nowMs, ...channelFilter] : [id, nowMs];
+      const row = dbw.get(
+        `SELECT * FROM scheduled_reminders
+         WHERE id = ? AND status = 'pending' AND runAtMs <= ?${channelSql}`,
+        selectParams
+      ) as Record<string, unknown> | undefined;
+
+      if (!row) {
+        dbw.run('COMMIT', []);
+        return null;
+      }
+
+      const rowId = String(row.id);
+      dbw.run(
+        `UPDATE scheduled_reminders SET status = 'processing' WHERE id = ? AND status = 'pending'`,
+        [rowId]
+      );
+      const ch = dbw.get('SELECT changes() as ch', []) as { ch: number } | undefined;
+      dbw.run('COMMIT', []);
+      if (!ch || ch.ch !== 1) {
+        return null;
+      }
+
+      return this.mapRow(row, 'processing');
     } catch (e) {
       try {
         dbw.run('ROLLBACK', []);
@@ -213,5 +291,29 @@ export class ReminderService {
       createdAtMs: Number(row.createdAtMs),
       sentAtMs: row.sentAtMs != null ? Number(row.sentAtMs) : null,
     }));
+  }
+
+  /**
+   * All future or past (still pending) rows — used to re-arm one-shot timers after process restart.
+   */
+  listPendingScheduled(maxRows: number = 200, channels?: ReminderChannel[]): ScheduledReminder[] {
+    const channelFilter = channels && channels.length > 0 ? channels : null;
+    const channelSql =
+      channelFilter && channelFilter.length > 0
+        ? ` AND channel IN (${channelFilter.map(() => '?').join(', ')})`
+        : '';
+    const params = channelFilter ? [...channelFilter, maxRows] : [maxRows];
+    const rows = this.db
+      .getDb()
+      .all(
+        `SELECT * FROM scheduled_reminders
+         WHERE status = 'pending'${channelSql}
+         ORDER BY runAtMs ASC
+         LIMIT ?`,
+        params
+      ) as Array<Record<string, unknown>>;
+    return rows
+      .map((row) => this.mapRow(row, 'pending'))
+      .filter((r): r is ScheduledReminder => r != null);
   }
 }

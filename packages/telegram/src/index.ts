@@ -32,6 +32,8 @@ import {
   ensureLocalSecret,
   ReminderService,
   startReminderTicker,
+  deliverOneTelegramReminder,
+  type TelegramDeliverOptions,
 } from '@enzo/core';
 import { createDefaultToolRegistry } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -106,6 +108,7 @@ async function main() {
 
     let bot: Telegraf<EnzoContext> | null = null;
     let reminderTicker: NodeJS.Timeout | null = null;
+    const oneShotTimers = new Map<string, ReturnType<typeof setTimeout>>();
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
     let currentSignature = '';
@@ -158,22 +161,80 @@ async function main() {
 
     await launchBot('initial');
 
+    const sendTimeoutMs = Number(process.env.ENZO_REMINDER_SEND_TIMEOUT_MS) || 60_000;
+    const sendTelegramMessage = async (chatId: string, text: string) => {
+      const b = bot;
+      if (!b) {
+        console.warn('[Telegram] Reminder send: bot not ready, will requeue reminder');
+        throw new Error('Telegram bot not ready');
+      }
+      await b.telegram.sendMessage(chatId, text);
+    };
+    const telegramDeliverOpts: TelegramDeliverOptions = {
+      sendTelegram: sendTelegramMessage,
+      sendTimeoutMs,
+    };
+
+    const nodeMaxTimeoutMs = 2147483647;
+    const maxOneShotDays = 20;
+
+    const clearOneShot = (id: string) => {
+      const t = oneShotTimers.get(id);
+      if (t !== undefined) {
+        clearTimeout(t);
+        oneShotTimers.delete(id);
+      }
+    };
+
+    const armOneShotForRow = (row: { id: string; channel: string; runAtMs: number; targetRef: string | null }) => {
+      if (row.channel !== 'telegram' || !row.targetRef) return;
+      clearOneShot(row.id);
+      const untilMs = row.runAtMs - Date.now();
+      if (untilMs > maxOneShotDays * 24 * 60 * 60 * 1000) {
+        console.log(
+          `[Reminders] one-shot not armed id=${row.id} (more than ${maxOneShotDays}d away); polling will deliver.`
+        );
+        return;
+      }
+      const delayMs = Math.max(0, Math.min(untilMs, nodeMaxTimeoutMs));
+      const handle = setTimeout(() => {
+        oneShotTimers.delete(row.id);
+        void (async () => {
+          const claimed = reminderService.claimByIdIfDue(row.id, Date.now(), ['telegram']);
+          if (!claimed) {
+            return;
+          }
+          await deliverOneTelegramReminder(reminderService, claimed, telegramDeliverOpts);
+        })();
+      }, delayMs);
+      oneShotTimers.set(row.id, handle);
+      console.log(
+        `[Reminders] one-shot armed id=${row.id} fireInMs=${delayMs} runAtMs=${row.runAtMs} chat=${row.targetRef}`
+      );
+    };
+
+    reminderService.setReminderCreatedListener((row) => {
+      if (row.channel === 'telegram') {
+        armOneShotForRow(row);
+      }
+    });
+
     if (reminderTicker) {
       clearInterval(reminderTicker);
     }
     reminderTicker = startReminderTicker(reminderService, {
       intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 15_000,
+      sendTimeoutMs,
       channels: ['telegram'],
-      sendTelegram: async (chatId, text) => {
-        const b = bot;
-        if (!b) {
-          console.warn('[Telegram] Reminder tick: bot not ready, will requeue reminder');
-          throw new Error('Telegram bot not ready');
-        }
-        await b.telegram.sendMessage(chatId, text);
-      },
+      sendTelegram: sendTelegramMessage,
     });
-    console.log('[Telegram] Reminder ticker started');
+    console.log('[Telegram] Reminder ticker started (polling + one-shot at schedule time)');
+
+    const rehydrate = reminderService.listPendingScheduled(500, ['telegram']);
+    for (const r of rehydrate) {
+      armOneShotForRow(r);
+    }
+    console.log(`[Reminders] rehydrated ${rehydrate.length} pending telegram reminder(s) with one-shot timers`);
 
     // 4. Config hot-reload polling
     configPoller = setInterval(async () => {
@@ -201,6 +262,10 @@ async function main() {
         clearInterval(reminderTicker);
         reminderTicker = null;
       }
+      for (const t of oneShotTimers.values()) {
+        clearTimeout(t);
+      }
+      oneShotTimers.clear();
       if (bot) {
         bot.stop(signal);
       }

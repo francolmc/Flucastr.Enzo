@@ -1,4 +1,4 @@
-import type { ReminderChannel, ReminderService } from './ReminderService.js';
+import type { ReminderChannel, ReminderService, ScheduledReminder } from './ReminderService.js';
 
 export type ReminderTickerOptions = {
   intervalMs?: number;
@@ -40,6 +40,40 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
         }
       );
   });
+}
+
+export type TelegramDeliverOptions = {
+  sendTelegram: (chatId: string, text: string) => Promise<void>;
+  sendTimeoutMs: number;
+};
+
+/** Send a row that is already in `processing` (after claim). Requeues on failure. */
+export async function deliverOneTelegramReminder(
+  reminderService: ReminderService,
+  row: ScheduledReminder,
+  options: TelegramDeliverOptions
+): Promise<'sent' | 'requeued'> {
+  if (row.channel !== 'telegram' || !row.targetRef) {
+    reminderService.requeue(row.id);
+    return 'requeued';
+  }
+  try {
+    await withTimeout(
+      options.sendTelegram(
+        row.targetRef,
+        `Recordatorio: ${row.message}\n_id:${row.id}_`
+      ),
+      options.sendTimeoutMs,
+      `Telegram send timed out after ${options.sendTimeoutMs}ms`
+    );
+    reminderService.markSent(row.id);
+    console.log(`[Reminders] sent telegram id=${row.id} chat=${row.targetRef}`);
+    return 'sent';
+  } catch (e) {
+    console.error(`[Reminders] Telegram send failed id=${row.id}:`, e);
+    reminderService.requeue(row.id);
+    return 'requeued';
+  }
 }
 
 /**
@@ -84,23 +118,12 @@ export function startReminderTicker(
           claimed += 1;
           if (row.channel === 'telegram' && row.targetRef) {
             if (options.sendTelegram) {
-              try {
-                await withTimeout(
-                  options.sendTelegram(
-                    row.targetRef,
-                    `Recordatorio: ${row.message}\n_id:${row.id}_`
-                  ),
-                  sendTimeoutMs,
-                  `Telegram send timed out after ${sendTimeoutMs}ms`
-                );
-                reminderService.markSent(row.id);
-                sent += 1;
-                console.log(`[Reminders] sent telegram id=${row.id} chat=${row.targetRef}`);
-              } catch (e) {
-                console.error(`[Reminders] Telegram send failed id=${row.id}:`, e);
-                reminderService.requeue(row.id);
-                requeued += 1;
-              }
+              const out = await deliverOneTelegramReminder(reminderService, row, {
+                sendTelegram: options.sendTelegram,
+                sendTimeoutMs,
+              });
+              if (out === 'sent') sent += 1;
+              else requeued += 1;
             } else {
               console.warn(
                 `[Reminders] Telegram reminder ${row.id} has no sendTelegram handler (message: ${row.message})`

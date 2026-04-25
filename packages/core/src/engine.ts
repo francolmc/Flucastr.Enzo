@@ -37,4 +37,10 @@ export {
   resolveWorkspaceRoot,
   isPathWithinWorkspace,
 } from './tools/index.js';
-export { ReminderService, startReminderTicker, type ReminderTickerOptions } from './memory/index.js';
+export {
+  ReminderService,
+  startReminderTicker,
+  deliverOneTelegramReminder,
+  type ReminderTickerOptions,
+  type TelegramDeliverOptions,
+} from './memory/index.js';
