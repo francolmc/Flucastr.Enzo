@@ -6,8 +6,6 @@ import {
   ReadFileTool,
   RememberTool,
   WriteFileTool,
-  ScheduleReminderTool,
-  ReminderService,
   resolveWorkspaceRoot,
 } from '@enzo/core';
 
@@ -21,17 +19,14 @@ import {
 export function createDefaultToolRegistry(
   memoryService: MemoryService,
   workspacePath?: string,
-  configService?: ConfigService,
-  reminderService?: ReminderService
+  configService?: ConfigService
 ): ToolRegistry {
   const registry = new ToolRegistry();
   const resolvedWorkspace = resolveWorkspaceRoot(workspacePath);
-  const reminders = reminderService ?? new ReminderService(memoryService.getDbPath());
   registry.register(new WebSearchTool(() => configService?.getSystemSecret('tavilyApiKeyEncrypted') ?? null));
   registry.register(new ExecuteCommandTool({ cwd: resolvedWorkspace }));
   registry.register(new ReadFileTool(workspacePath));
   registry.register(new RememberTool(memoryService));
   registry.register(new WriteFileTool(workspacePath));
-  registry.register(new ScheduleReminderTool(reminders));
   return registry;
 }

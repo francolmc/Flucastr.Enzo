@@ -33,16 +33,6 @@ export {
   ReadFileTool,
   RememberTool,
   WriteFileTool,
-  ScheduleReminderTool,
   resolveWorkspaceRoot,
   isPathWithinWorkspace,
 } from './tools/index.js';
-export {
-  ReminderService,
-  startReminderTicker,
-  deliverOneTelegramReminder,
-  setTelegramReminderScheduledHandler,
-  notifyTelegramReminderScheduled,
-  type ReminderTickerOptions,
-  type TelegramDeliverOptions,
-} from './memory/index.js';

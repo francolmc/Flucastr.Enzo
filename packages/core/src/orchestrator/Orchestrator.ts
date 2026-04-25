@@ -24,7 +24,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { executeOrchestratorProcess, type OrchestratorProcessBindings } from './OrchestratorProcess.js';
-import { isTemporalReminderIntent } from './reminderIntentHeuristics.js';
 
 export class Orchestrator {
   private classifier: Classifier;
@@ -120,10 +119,6 @@ export class Orchestrator {
     this.syncBaseProviderFromConfig();
     const cid = conversationId ?? `telegram_${userId}`;
     const history = await this.loadHistory(cid);
-    if (source === 'telegram' && isTemporalReminderIntent(message)) {
-      console.log('[Orchestrator] classify() - Telegram temporal reminder intent forced to MODERATE');
-      return ComplexityLevel.MODERATE;
-    }
     const classification = await this.classifier.classify(message, history);
     console.log(`[Orchestrator] classify() - Message classified as: ${classification.level}`);
     return classification.level;

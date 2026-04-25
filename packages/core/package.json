@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "pnpm run build && node dist/tools/__tests__/ToolRegistry.test.js && node dist/tools/__tests__/WorkspacePathPolicy.test.js && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/TaskRoutingHints.test.js && node dist/orchestrator/__tests__/ReminderIntentHeuristics.test.js && node dist/orchestrator/__tests__/DecomposerEmptySteps.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js && node dist/orchestrator/__tests__/CoreFlowAudit.test.js && node dist/orchestrator/__tests__/RegressionDatasetGate.test.js && node dist/providers/__tests__/RetryPolicy.test.js"
+    "test": "pnpm run build && node dist/tools/__tests__/ToolRegistry.test.js && node dist/tools/__tests__/WorkspacePathPolicy.test.js && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/TaskRoutingHints.test.js && node dist/orchestrator/__tests__/DecomposerEmptySteps.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js && node dist/orchestrator/__tests__/CoreFlowAudit.test.js && node dist/orchestrator/__tests__/RegressionDatasetGate.test.js && node dist/providers/__tests__/RetryPolicy.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -78,7 +78,7 @@ export interface AmplifierInput {
     timeLocale?: string;
     timeZone?: string;
   };
-  /** Merged into tool execution (schedule_reminder, remember, etc.). Usually set by the orchestrator from the request. */
+  /** Merged into tool execution (e.g. remember). Usually set by the orchestrator from the request. */
   toolExecutionContext?: ToolExecutionContext;
   decomposition?: {
     steps: Subtask[];

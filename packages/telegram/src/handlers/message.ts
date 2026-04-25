@@ -41,8 +41,6 @@ function getProgressEmoji(step: Step): string {
         return '⚡';
       case 'remember':
         return '💾';
-      case 'schedule_reminder':
-        return '⏰';
       default:
         return '⚙️';
     }
@@ -67,8 +65,6 @@ function getProgressText(step: Step): string {
         return 'Ejecutando comando...';
       case 'remember':
         return 'Guardando en memoria...';
-      case 'schedule_reminder':
-        return 'Programando recordatorio...';
       default:
         return 'Ejecutando herramienta...';
     }

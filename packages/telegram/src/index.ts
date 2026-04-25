@@ -30,11 +30,6 @@ import {
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
-  ReminderService,
-  startReminderTicker,
-  deliverOneTelegramReminder,
-  setTelegramReminderScheduledHandler,
-  type TelegramDeliverOptions,
 } from '@enzo/core';
 import { createDefaultToolRegistry } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -64,18 +59,15 @@ async function main() {
 
     console.log('[Telegram] Initializing Enzo bot...');
 
-    // 1. Initialize MemoryService
     const dbPath = resolveSharedPath(systemConfig.dbPath, path.join(homedir(), '.enzo', 'enzo.db'));
     const skillsPath = resolveSharedPath(systemConfig.enzoSkillsPath, path.join(homedir(), '.enzo', 'skills'));
     process.env.ENZO_SKILLS_PATH = skillsPath;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     fs.mkdirSync(skillsPath, { recursive: true });
     const memoryService = new MemoryService(dbPath);
-    const reminderService = new ReminderService(dbPath);
     console.log(`[Telegram] MemoryService initialized (${dbPath})`);
     console.log(`[Telegram] Shared skills path: ${skillsPath}`);
 
-    // 2. Initialize SkillRegistry
     const skillRegistry = new SkillRegistry(undefined, memoryService);
     await skillRegistry.reload();
     console.log('[Telegram] SkillRegistry initialized and loaded');
@@ -97,8 +89,7 @@ async function main() {
       console.log('[Telegram] AnthropicProvider initialized');
     }
 
-    // 3. Initialize Orchestrator
-    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService, reminderService);
+    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -108,8 +99,6 @@ async function main() {
     console.log('[Telegram] Orchestrator initialized');
 
     let bot: Telegraf<EnzoContext> | null = null;
-    let reminderTicker: NodeJS.Timeout | null = null;
-    const oneShotTimers = new Map<string, ReturnType<typeof setTimeout>>();
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
     let currentSignature = '';
@@ -162,85 +151,6 @@ async function main() {
 
     await launchBot('initial');
 
-    const sendTimeoutMs = Number(process.env.ENZO_REMINDER_SEND_TIMEOUT_MS) || 60_000;
-    const sendTelegramMessage = async (chatId: string, text: string) => {
-      const b = bot;
-      if (!b) {
-        console.warn('[Telegram] Reminder send: bot not ready, will requeue reminder');
-        throw new Error('Telegram bot not ready');
-      }
-      const dest = /^\d+$/.test(String(chatId)) ? Number(chatId) : chatId;
-      await b.telegram.sendMessage(dest, text);
-    };
-    const telegramDeliverOpts: TelegramDeliverOptions = {
-      sendTelegram: sendTelegramMessage,
-      sendTimeoutMs,
-    };
-
-    const nodeMaxTimeoutMs = 2147483647;
-    const maxOneShotDays = 20;
-
-    const clearOneShot = (id: string) => {
-      const t = oneShotTimers.get(id);
-      if (t !== undefined) {
-        clearTimeout(t);
-        oneShotTimers.delete(id);
-      }
-    };
-
-    const armOneShotForRow = (row: { id: string; channel: string; runAtMs: number; targetRef: string | null }) => {
-      if (row.channel !== 'telegram' || !row.targetRef) return;
-      clearOneShot(row.id);
-      const untilMs = row.runAtMs - Date.now();
-      if (untilMs > maxOneShotDays * 24 * 60 * 60 * 1000) {
-        console.log(
-          `[Reminders] one-shot not armed id=${row.id} (more than ${maxOneShotDays}d away); polling will deliver.`
-        );
-        return;
-      }
-      const delayMs = Math.max(0, Math.min(untilMs, nodeMaxTimeoutMs));
-      const handle = setTimeout(() => {
-        oneShotTimers.delete(row.id);
-        void (async () => {
-          const claimed = reminderService.claimByIdIfDue(row.id, Date.now(), ['telegram']);
-          if (!claimed) {
-            return;
-          }
-          await deliverOneTelegramReminder(reminderService, claimed, telegramDeliverOpts);
-        })();
-      }, delayMs);
-      oneShotTimers.set(row.id, handle);
-      console.log(
-        `[Reminders] one-shot armed id=${row.id} fireInMs=${delayMs} runAtMs=${row.runAtMs} chat=${row.targetRef}`
-      );
-    };
-
-    /** Must run from the tool after insert (see reminderHostRegistry); do not rely only on ReminderService instance listener. */
-    setTelegramReminderScheduledHandler(armOneShotForRow);
-    reminderService.setReminderCreatedListener((row) => {
-      if (row.channel === 'telegram') {
-        armOneShotForRow(row);
-      }
-    });
-
-    if (reminderTicker) {
-      clearInterval(reminderTicker);
-    }
-    reminderTicker = startReminderTicker(reminderService, {
-      intervalMs: Number(process.env.ENZO_REMINDER_TICK_MS) || 15_000,
-      sendTimeoutMs,
-      channels: ['telegram'],
-      sendTelegram: sendTelegramMessage,
-    });
-    console.log('[Telegram] Reminder ticker started (polling + one-shot at schedule time)');
-
-    const rehydrate = reminderService.listPendingScheduled(500, ['telegram']);
-    for (const r of rehydrate) {
-      armOneShotForRow(r);
-    }
-    console.log(`[Reminders] rehydrated ${rehydrate.length} pending telegram reminder(s) with one-shot timers`);
-
-    // 4. Config hot-reload polling
     configPoller = setInterval(async () => {
       if (isReloading) return;
       const nextSignature = buildSignature();
@@ -255,22 +165,12 @@ async function main() {
       }
     }, 5000);
 
-    // 5. Handle graceful shutdown
     const shutdown = (signal: string) => {
       console.log(`[Telegram] ${signal} received, stopping bot...`);
       if (configPoller) {
         clearInterval(configPoller);
         configPoller = null;
       }
-      if (reminderTicker) {
-        clearInterval(reminderTicker);
-        reminderTicker = null;
-      }
-      for (const t of oneShotTimers.values()) {
-        clearTimeout(t);
-      }
-      oneShotTimers.clear();
-      setTelegramReminderScheduledHandler(null);
       if (bot) {
         bot.stop(signal);
       }

@@ -31,8 +31,6 @@ import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
-import { hasExplicitReminderCue, isTemporalReminderIntent } from '../reminderIntentHeuristics.js';
-
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
   classifiedLevel: ComplexityLevel;
@@ -75,36 +73,6 @@ function resolveHomeDir(input: AmplifierInput): string {
 
 function resolveOsLabel(input: AmplifierInput): string {
   return input.runtimeHints?.osLabel ?? 'macOS';
-}
-
-function extractReminderTimeToken(text: string): string | null {
-  const t12 = text.match(/\b(\d{1,2}:\d{2}\s*(?:am|pm))\b/i);
-  if (t12) return t12[1];
-  const t24 = text.match(/\b(\d{1,2}:\d{2})\b/);
-  if (t24) return t24[1];
-  return null;
-}
-
-function normalizeScheduleReminderInputFromUserMessage(
-  userMessage: string,
-  originalInput: any,
-  timeZone?: string
-): Record<string, unknown> | null {
-  const text =
-    typeof originalInput?.text === 'string' && originalInput.text.trim().length > 0
-      ? originalInput.text.trim()
-      : 'Recordatorio';
-  const timeToken = extractReminderTimeToken(userMessage);
-  if (!timeToken) return null;
-  const next: Record<string, unknown> = {
-    ...((typeof originalInput === 'object' && originalInput) || {}),
-    runAt: timeToken,
-    text,
-  };
-  if (timeZone && typeof timeZone === 'string' && timeZone.trim().length > 0) {
-    next.timezone = timeZone;
-  }
-  return next;
 }
 
 /**
@@ -173,7 +141,7 @@ To use a tool, respond ONLY with JSON (no extra text, no markdown):
 {"action":"tool","tool":"TOOL_NAME","input":{PARAMS}}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Built-in tool names: execute_command, web_search, read_file, write_file, remember, schedule_reminder.
+Built-in tool names: execute_command, web_search, read_file, write_file, remember.
 MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
@@ -200,10 +168,6 @@ TOOL SELECTION — CRITICAL:
 - External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
 - Run any other shell command → execute_command
 - NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
-- schedule_reminder vs remember:
-  - If the user asks to be reminded/alerted at a specific time/date (recuérdame/avísame + hora/fecha), use schedule_reminder.
-  - If the user only shares a fact for memory without asking for an alert, use remember.
-
 RULES:
 - NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
 - FILE AND FOLDER NAMES ARE LITERAL BYTES: every path segment in read_file / execute_command must match EXACTLY what appeared in prior ls (stdout) or in the user's message. NEVER translate, localize, or paraphrase names (e.g. if ls showed organized tasks.txt, do NOT use tareas organizadas.txt or tasks.txt unless that exact name exists).
@@ -248,11 +212,8 @@ If responding with plain text (no tool), write in this language.`;
   let finalContent = rawContent;
 
   let normalizedContent = rawContent;
-  const isTelegram = input.toolExecutionContext?.source === 'telegram';
-  const reminderIntent = isTemporalReminderIntent(input.message);
-  const explicitReminderCue = hasExplicitReminderCue(input.message);
   if (isModerate && !normalizedContent.startsWith('{')) {
-    const forcedTool = reminderIntent ? 'schedule_reminder' : '';
+    const forcedTool = '';
     const strictPrompt = `${buildAssistantIdentityPrompt(input)}
 You failed to return a valid tool JSON in a MODERATE request.
 Return ONLY JSON now. No prose, no markdown.
@@ -376,18 +337,6 @@ Format:
         const validationError = validateToolInput(execName, preparedToolInput, executableTools, mcpRegistry);
         if (validationError) {
           log.warn(`[AmplifierLoop] SIMPLE path - invalid tool input: ${validationError}`);
-          if (execName === 'schedule_reminder') {
-            const repaired = normalizeScheduleReminderInputFromUserMessage(
-              input.message,
-              preparedToolInput,
-              typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
-            );
-            if (repaired) {
-              toolInput = repaired;
-              preparedToolInput = applyExecutableToolContext(execName, repaired, executableTools, execCtx);
-              log.info('[AmplifierLoop] SIMPLE path - repaired schedule_reminder input from user message');
-            }
-          }
           const correctedCall = await requestToolInputCorrection(
             input.message,
             execName,
@@ -406,24 +355,6 @@ Format:
               log.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
             } else {
               execName = resolved.name;
-              if (execName === 'schedule_reminder') {
-                const correctedRunAt = String((correctedCall.toolInput as any)?.runAt ?? '');
-                const currentYear = new Date().getFullYear();
-                const yearMatch = correctedRunAt.match(/^(\d{4})-/);
-                if (yearMatch && Number(yearMatch[1]) < currentYear) {
-                  const repaired = normalizeScheduleReminderInputFromUserMessage(
-                    input.message,
-                    correctedCall.toolInput,
-                    typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
-                  );
-                  if (repaired) {
-                    toolInput = repaired;
-                    log.info(
-                      '[AmplifierLoop] SIMPLE path - dropped stale corrected date for schedule_reminder; using user message time'
-                    );
-                  }
-                }
-              }
               log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
               preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
             }
@@ -431,33 +362,6 @@ Format:
         }
 
         if (resolved) {
-          if (isTelegram && reminderIntent && resolved.name === 'remember') {
-            const forcedReminder = normalizeScheduleReminderInputFromUserMessage(
-              input.message,
-              preparedToolInput,
-              typeof execCtx.timeZone === 'string' ? execCtx.timeZone : undefined
-            );
-            if (forcedReminder) {
-              toolName = 'schedule_reminder';
-              resolved = resolveFastPathToolForExecution('schedule_reminder', mergedToolDefs, executableTools);
-              if (resolved) {
-                execName = resolved.name;
-                toolInput = forcedReminder;
-                preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
-                log.info('[AmplifierLoop] SIMPLE path - Telegram reminder intent: overriding remember -> schedule_reminder');
-              }
-            } else {
-              finalContent =
-                'Para programar el recordatorio necesito la hora exacta (por ejemplo: 09:15 o 9:15 am).';
-              log.info('[AmplifierLoop] SIMPLE path - reminder intent without parseable time, asking clarification');
-              resolved = null;
-            }
-          }
-
-          if (!resolved) {
-            // reminder intent without parseable time: finalContent already set above
-            log.info('[AmplifierLoop] SIMPLE path - skipping execution because no tool was resolved');
-          } else {
             const validationAfterCorrection = validateToolInput(
               execName,
               preparedToolInput,
@@ -595,7 +499,6 @@ ${
                   : toolOutput;
               }
             }
-          }
           }
         }
       } else if (toolName && toolName !== 'none') {

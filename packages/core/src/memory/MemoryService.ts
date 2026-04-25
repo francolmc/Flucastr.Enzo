@@ -13,7 +13,7 @@ export class MemoryService {
     this.db = DatabaseManager.getInstance(dbPath);
   }
 
-  /** Same path used to open the DB (for ReminderService and other co-located stores). */
+  /** Same path used to open the DB. */
   getDbPath(): string {
     return this.resolvedDbPath;
   }

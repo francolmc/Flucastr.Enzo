@@ -5,5 +5,4 @@ export { ExecuteCommandTool, type ExecuteCommandToolOptions } from './ExecuteCom
 export { ReadFileTool } from './ReadFileTool.js';
 export { RememberTool } from './RememberTool.js';
 export { WriteFileTool } from './WriteFileTool.js';
-export { ScheduleReminderTool } from './ScheduleReminderTool.js';
 export { resolveWorkspaceRoot, isPathWithinWorkspace } from './workspacePathPolicy.js';

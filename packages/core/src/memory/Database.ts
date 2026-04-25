@@ -162,24 +162,6 @@ export class DatabaseManager {
     db.exec('CREATE INDEX IF NOT EXISTS idx_usage_stats_user_created ON usage_stats(userId, createdAt DESC);');
     db.exec('CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(userId, createdAt DESC);');
 
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS scheduled_reminders (
-        id TEXT PRIMARY KEY,
-        userId TEXT NOT NULL,
-        runAtMs INTEGER NOT NULL,
-        message TEXT NOT NULL,
-        timezone TEXT,
-        channel TEXT NOT NULL,
-        targetRef TEXT,
-        status TEXT NOT NULL,
-        createdAtMs INTEGER NOT NULL,
-        sentAtMs INTEGER
-      );
-    `);
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_scheduled_reminders_due ON scheduled_reminders(status, runAtMs);'
-    );
-    db.exec('CREATE INDEX IF NOT EXISTS idx_scheduled_reminders_user ON scheduled_reminders(userId);');
   }
 
   private buildSiblingLegacyJsonPath(sqlitePath: string): string | null {
