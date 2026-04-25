@@ -41,6 +41,8 @@ export {
   ReminderService,
   startReminderTicker,
   deliverOneTelegramReminder,
+  setTelegramReminderScheduledHandler,
+  notifyTelegramReminderScheduled,
   type ReminderTickerOptions,
   type TelegramDeliverOptions,
 } from './memory/index.js';

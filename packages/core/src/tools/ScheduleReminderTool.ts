@@ -1,5 +1,6 @@
 import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
 import type { ReminderService, ReminderChannel } from '../memory/ReminderService.js';
+import { notifyTelegramReminderScheduled } from '../memory/reminderHostRegistry.js';
 
 const ALLOW_PAST = process.env.ENZO_ALLOW_PAST_REMINDERS === 'true';
 
@@ -254,6 +255,8 @@ export class ScheduleReminderTool implements ExecutableTool {
         channel,
         targetRef: targetRef ?? null,
       });
+
+      notifyTelegramReminderScheduled(row);
 
       const when = formatWhen(row.runAtMs, row.timezone ?? undefined);
       return {

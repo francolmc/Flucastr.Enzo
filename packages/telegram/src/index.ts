@@ -33,6 +33,7 @@ import {
   ReminderService,
   startReminderTicker,
   deliverOneTelegramReminder,
+  setTelegramReminderScheduledHandler,
   type TelegramDeliverOptions,
 } from '@enzo/core';
 import { createDefaultToolRegistry } from '@enzo/bootstrap';
@@ -168,7 +169,8 @@ async function main() {
         console.warn('[Telegram] Reminder send: bot not ready, will requeue reminder');
         throw new Error('Telegram bot not ready');
       }
-      await b.telegram.sendMessage(chatId, text);
+      const dest = /^\d+$/.test(String(chatId)) ? Number(chatId) : chatId;
+      await b.telegram.sendMessage(dest, text);
     };
     const telegramDeliverOpts: TelegramDeliverOptions = {
       sendTelegram: sendTelegramMessage,
@@ -213,6 +215,8 @@ async function main() {
       );
     };
 
+    /** Must run from the tool after insert (see reminderHostRegistry); do not rely only on ReminderService instance listener. */
+    setTelegramReminderScheduledHandler(armOneShotForRow);
     reminderService.setReminderCreatedListener((row) => {
       if (row.channel === 'telegram') {
         armOneShotForRow(row);
@@ -266,6 +270,7 @@ async function main() {
         clearTimeout(t);
       }
       oneShotTimers.clear();
+      setTelegramReminderScheduledHandler(null);
       if (bot) {
         bot.stop(signal);
       }
