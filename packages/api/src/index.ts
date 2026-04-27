@@ -6,7 +6,6 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
 import {
-  AgentRouter,
   Orchestrator,
   OllamaProvider,
   AnthropicProvider,
@@ -17,7 +16,7 @@ import {
   EncryptionService,
   ensureLocalSecret,
 } from "@enzo/core";
-import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway } from "@enzo/bootstrap";
+import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway, createAgentRouter } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -85,7 +84,7 @@ const anthropicProvider = anthropicApiKey
 
 const memoryService = new MemoryService(dbPath);
 const agentNotificationGateway = createNotificationGateway(memoryService);
-const agentRouter = new AgentRouter({ notificationGateway: agentNotificationGateway });
+const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
 
 const skillRegistry = new SkillRegistry(undefined, memoryService);
 const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);

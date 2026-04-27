@@ -1,0 +1,137 @@
+import type { ConfigService } from '../config/ConfigService.js';
+import { fetchWithRetry } from '../providers/retry.js';
+import { WriteFileTool } from '../tools/WriteFileTool.js';
+import { resolveWorkspaceRoot } from '../tools/workspacePathPolicy.js';
+import type { DelegationResult } from './AgentRouter.js';
+
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+export const ANTHROPIC_DELEGATION_MODEL = 'claude-sonnet-4-20250514';
+const MAX_TOKENS = 8000;
+
+const FILE_TAG_RE = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
+
+function extractTextBlocks(data: { content?: unknown }): string {
+  let content = '';
+  const raw = data.content;
+  if (raw && Array.isArray(raw)) {
+    for (const block of raw as { type?: string; text?: string }[]) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        content += block.text;
+      }
+    }
+  }
+  return content;
+}
+
+function stripFileTags(text: string): string {
+  return text.replace(new RegExp(FILE_TAG_RE.source, 'g'), '').trim();
+}
+
+/**
+ * Call Anthropic Messages API with a single user message and optional system string.
+ * Returns concatenated text blocks or an error (no throw).
+ */
+export async function runAnthropicDelegatedTask(options: {
+  configService: ConfigService;
+  workspacePath?: string;
+  agentId: 'claude_code' | 'doc_agent';
+  systemPrompt: string;
+  userPrompt: string;
+  fetchImpl?: typeof fetch;
+}): Promise<DelegationResult> {
+  const { configService, agentId, systemPrompt, userPrompt } = options;
+  const agent = agentId;
+  const apiKey = configService.getProviderApiKey('anthropic');
+  if (!apiKey || !apiKey.trim()) {
+    return {
+      success: false,
+      agent,
+      output: '',
+      error: 'Anthropic API key is not configured. Set the anthropic key in config or provide ANTHROPIC_API_KEY.',
+    };
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot(options.workspacePath);
+  const fetchFn = options.fetchImpl ?? fetch;
+
+  try {
+    const response = await fetchWithRetry(
+      ANTHROPIC_MESSAGES_URL,
+      {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_DELEGATION_MODEL,
+          max_tokens: MAX_TOKENS,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+      },
+      { providerName: 'anthropic', fetchFn, maxAttempts: 2 }
+    );
+
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        const errBody = (await response.json()) as { error?: { message?: string; type?: string } };
+        detail = errBody?.error?.message || errBody?.error?.type || detail;
+      } catch {
+        // keep HTTP detail
+      }
+      return { success: false, agent, output: '', error: `Anthropic API error: ${detail}` };
+    }
+
+    const data = (await response.json()) as { content?: unknown };
+    const rawText = extractTextBlocks(data);
+    return await processFileTagsAndBuildResult(rawText, agent, workspaceRoot);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, agent, output: '', error: `Request failed: ${msg}` };
+  }
+}
+
+async function processFileTagsAndBuildResult(
+  rawText: string,
+  agent: 'claude_code' | 'doc_agent',
+  workspaceRoot: string
+): Promise<DelegationResult> {
+  const re = new RegExp(FILE_TAG_RE.source, 'g');
+  const matches = [...rawText.matchAll(re)];
+  if (matches.length === 0) {
+    return { success: true, agent, output: rawText.trim() };
+  }
+
+  const writeTool = new WriteFileTool(workspaceRoot);
+  const filesCreated: string[] = [];
+
+  for (const m of matches) {
+    const filePath = m[1]?.trim() ?? '';
+    const fileContent = m[2] ?? '';
+    const result = await writeTool.execute({ path: filePath, content: fileContent });
+    if (!result.success) {
+      return {
+        success: false,
+        agent,
+        output: stripFileTags(rawText),
+        filesCreated,
+        error: result.error ?? 'write_file failed',
+      };
+    }
+    if (typeof result.data === 'string') {
+      const pathMatch = result.data.match(/File created successfully at (.+)$/);
+      if (pathMatch?.[1]) {
+        filesCreated.push(pathMatch[1].trim());
+      } else {
+        filesCreated.push(filePath);
+      }
+    } else {
+      filesCreated.push(filePath);
+    }
+  }
+
+  return { success: true, agent, output: stripFileTags(rawText), filesCreated };
+}

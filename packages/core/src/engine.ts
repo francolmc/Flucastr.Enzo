@@ -17,6 +17,15 @@ export { EscalationManager } from './orchestrator/EscalationManager.js';
 export { SkillResolver, type RelevantSkill } from './orchestrator/SkillResolver.js';
 export { ModelSelector } from './orchestrator/ModelSelector.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './orchestrator/OrchestratorCapabilities.js';
+export { ClaudeCodeAgent } from './agents/ClaudeCodeAgent.js';
+export { DocAgent } from './agents/DocAgent.js';
+export {
+  AgentRouter,
+  type AgentRouterContract,
+  type AgentRouterOptions,
+  type DelegationRequest,
+  type DelegationResult,
+} from './agents/AgentRouter.js';
 export { initStageMetrics, recordStageMetric } from './orchestrator/amplifier/AmplifierLoopMetrics.js';
 export * from './orchestrator/types.js';
 export * from './echo/index.js';

@@ -6,6 +6,7 @@ export {
   type DelegationRequest,
   type DelegationResult,
   type AgentRouterContract,
+  type AgentRouterOptions,
   AgentRouter,
   DELEGATION_NOT_CONFIGURED,
 } from '../agents/AgentRouter.js';

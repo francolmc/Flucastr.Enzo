@@ -43,6 +43,7 @@ import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+import type { MemoryService } from '../memory/MemoryService.js';
 
 export type AmplifierLoopOptions = {
   maxIterations?: number;
@@ -55,6 +56,8 @@ export type AmplifierLoopOptions = {
   verifyBeforeSynthesize?: boolean;
   /** When set, THINK may emit `delegate` and the loop will run specialized agents. */
   agentRouter?: AgentRouterContract;
+  /** When set, delegation outcomes are written to long-term memory after each agent result. */
+  memoryService?: MemoryService;
 };
 
 export class AmplifierLoop {
@@ -73,6 +76,7 @@ export class AmplifierLoop {
   private mcpRegistry?: MCPRegistry;
   private verifyBeforeSynthesize: boolean;
   private agentRouter?: AgentRouterContract;
+  private memoryService?: MemoryService;
 
   constructor(
     baseProvider: LLMProvider,
@@ -88,6 +92,7 @@ export class AmplifierLoop {
     this.verifyBeforeSynthesize =
       options?.verifyBeforeSynthesize ?? process.env.ENZO_VERIFY_BEFORE_SYNTHESIS === 'true';
     this.agentRouter = options?.agentRouter;
+    this.memoryService = options?.memoryService;
     this.capabilityResolver = new CapabilityResolver();
     this.intentAnalyzer = new IntentAnalyzer(baseProvider);
     this.capabilityResolver.setIntentAnalyzer(this.intentAnalyzer);
@@ -176,6 +181,27 @@ export class AmplifierLoop {
 
     const result = await this.agentRouter.delegate(delegationRequest);
     const routerMs = Date.now() - routerStart;
+
+    if (this.memoryService) {
+      try {
+        const userId = input.userId;
+        await this.memoryService.remember(
+          userId,
+          'other',
+          `Delegated to ${result.agent} on ${new Date().toLocaleDateString()}: ${d.task.substring(0, 100)}. Result: ${result.output.substring(0, 200)}`
+        );
+        if (result.filesCreated?.length) {
+          await this.memoryService.remember(
+            userId,
+            'other',
+            `Files created by ${result.agent}: ${result.filesCreated.join(', ')}`
+          );
+        }
+      } catch (err) {
+        this.log.warn('[AmplifierLoop] Failed to persist delegation memory:', err);
+      }
+    }
+
     const observeOutput = AmplifierLoop.formatDelegationObserve(d.agent, result);
     return {
       actTrace,

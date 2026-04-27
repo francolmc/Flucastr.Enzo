@@ -347,6 +347,7 @@ ${providerList}`;
       /** Off while we validate portability; set `true` (omit) to re-enable COMPLEX organize path */
       fileOrganization: false,
       agentRouter: this.agentRouter,
+      memoryService: this.memoryService,
     });
   }
 

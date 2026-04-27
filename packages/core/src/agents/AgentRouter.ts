@@ -1,4 +1,6 @@
 import type { NotificationGateway } from '../echo/NotificationGateway.js';
+import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
+import type { DocAgent } from './DocAgent.js';
 
 export interface DelegationRequest {
   agent: string;
@@ -35,11 +37,21 @@ export type AgentRouterContract = {
   delegate(request: DelegationRequest): Promise<DelegationResult>;
 };
 
+export type AgentRouterOptions = {
+  claudeCodeAgent: ClaudeCodeAgent;
+  docAgent: DocAgent;
+  notificationGateway?: Pick<NotificationGateway, 'notify'>;
+};
+
 export class AgentRouter implements AgentRouterContract {
   private readonly notificationGateway?: Pick<NotificationGateway, 'notify'>;
+  private readonly claudeCodeAgent: ClaudeCodeAgent;
+  private readonly docAgent: DocAgent;
 
-  constructor(options?: { notificationGateway?: Pick<NotificationGateway, 'notify'> }) {
-    this.notificationGateway = options?.notificationGateway;
+  constructor(options: AgentRouterOptions) {
+    this.notificationGateway = options.notificationGateway;
+    this.claudeCodeAgent = options.claudeCodeAgent;
+    this.docAgent = options.docAgent;
   }
 
   async delegate(request: DelegationRequest): Promise<DelegationResult> {
@@ -47,10 +59,10 @@ export class AgentRouter implements AgentRouterContract {
     switch (request.agent) {
       case 'claude_code':
         await this.notifyIfConfigured(request.context.userId, displayName);
-        return this.runClaudeCodeAgent(request);
+        return this.claudeCodeAgent.execute(request);
       case 'doc_agent':
         await this.notifyIfConfigured(request.context.userId, displayName);
-        return this.runDocAgent(request);
+        return this.docAgent.execute(request);
       default:
         return {
           success: false,
@@ -70,23 +82,5 @@ export class AgentRouter implements AgentRouterContract {
       `⚙️ Esto requiere un agente especializado (${displayName}). Lo resuelvo y te cuento.`,
       { priority: 'NORMAL' }
     );
-  }
-
-  private async runClaudeCodeAgent(request: DelegationRequest): Promise<DelegationResult> {
-    return {
-      success: false,
-      agent: request.agent,
-      output: '',
-      error: 'claude_code agent is not wired to an external runner yet (stub).',
-    };
-  }
-
-  private async runDocAgent(request: DelegationRequest): Promise<DelegationResult> {
-    return {
-      success: false,
-      agent: request.agent,
-      output: '',
-      error: 'doc_agent is not wired to a document pipeline yet (stub).',
-    };
   }
 }
