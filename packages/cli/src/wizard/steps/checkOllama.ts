@@ -27,7 +27,7 @@ export async function checkOllama(baseUrl: string = 'http://localhost:11434'): P
 
     console.log(chalk.white('¿Qué necesitas hacer?'));
     console.log(chalk.gray('→ Si no tienes Ollama: ve a https://ollama.ai y descárgalo'));
-    console.log(chalk.gray('→ Si ya lo tienes: ábrelo y vuelve a ejecutar "pnpm exec enzo setup"\n'));
+    console.log(chalk.gray('→ Si ya lo tienes: ábrelo y vuelve a ejecutar "./enzo setup"\n'));
 
     const answers = await inquirer.prompt([
       {

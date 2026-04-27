@@ -28,8 +28,8 @@ export interface ScheduleEnzoSupervisorRestartResult {
  * After `git pull` + build, restarts the full Enzo stack.
  *
  * - `ENZO_UPDATE_RESTART_CMD` or `ENZO_RESTART_CMD` (if set): run as a shell step (e.g. `systemctl --user restart enzo`).
- * - Otherwise: if `.enzo-supervisor.json` exists (written by `enzo start`) and the PID is alive, spawns a detached
- *   worker that SIGTERMs the old supervisor and runs `pnpm exec enzo start` again.
+ * - Otherwise: if `.enzo-supervisor.json` exists (written by `./enzo start`) and the PID is alive, spawns a detached
+ *   worker that SIGTERMs the old supervisor and runs `./enzo start` again.
  */
 export function scheduleEnzoSupervisorRestart(options: {
   cwd: string;
@@ -53,7 +53,7 @@ export function scheduleEnzoSupervisorRestart(options: {
     return {
       kind: 'skipped',
       userMessage:
-        'Código y build al día, pero no hay registro de un `pnpm exec enzo start` en este repo ' +
+        'Código y build al día, pero no hay registro de un `./enzo start` en este repo ' +
         `(falta ${ENZO_SUPERVISOR_STATE_FILENAME}). Arranca manualmente o define ENZO_UPDATE_RESTART_CMD en el entorno del proceso.`,
     };
   }
@@ -64,14 +64,14 @@ export function scheduleEnzoSupervisorRestart(options: {
   } catch {
     return {
       kind: 'skipped',
-      userMessage: `No se pudo leer ${ENZO_SUPERVISOR_STATE_FILENAME}. Reinicia a mano: \`pnpm exec enzo start\`.`,
+      userMessage: `No se pudo leer ${ENZO_SUPERVISOR_STATE_FILENAME}. Reinicia a mano: \`./enzo start\`.`,
     };
   }
 
   if (!isProcessAlive(state.pid)) {
     return {
       kind: 'skipped',
-      userMessage: 'El supervisor (`enzo start`) no estaba corriendo. Inicia: `pnpm exec enzo start`.',
+      userMessage: 'El supervisor (`./enzo start`) no estaba corriendo. Inicia: `./enzo start`.',
     };
   }
 
@@ -86,7 +86,7 @@ export function scheduleEnzoSupervisorRestart(options: {
   return {
     kind: 'supervisor',
     userMessage:
-      'Reinicio programado: en unos segundos se detendrá el stack actual y volverá a levantar `enzo start`. ' +
+      'Reinicio programado: en unos segundos se detendrá el stack actual y volverá a levantar `./enzo start`. ' +
       'El bot puede tardar un momento en volver a responder.',
   };
 }

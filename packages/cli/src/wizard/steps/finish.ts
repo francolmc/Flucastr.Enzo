@@ -58,7 +58,7 @@ export async function finish(state: WizardState): Promise<FinishResult> {
     console.log(chalk.green(`✅ Configuración guardada en ${getConfigPath()}\n`));
 
     console.log(chalk.white('Para iniciar Enzo escribe:'));
-    console.log(chalk.cyan('  pnpm exec enzo start\n'));
+    console.log(chalk.cyan('  ./enzo start\n'));
 
     const answers = await inquirer.prompt([
       {

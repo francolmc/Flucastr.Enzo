@@ -3,10 +3,15 @@ import { join } from 'path';
 
 export const ENZO_SUPERVISOR_STATE_FILENAME = '.enzo-supervisor.json';
 
+/** Root wrapper that runs the CLI: `node packages/cli/dist/index.js "$@"` */
+export function resolveEnzoScriptPath(repoRoot: string): string {
+  return join(repoRoot, 'enzo');
+}
+
 export interface EnzoSupervisorState {
-  /** PID of the `enzo start` (CLI) process that supervises UI + API + Telegram. */
+  /** PID of the `./enzo start` (CLI) process that supervises UI + API + Telegram. */
   pid: number;
-  /** Repository root (cwd where `pnpm exec enzo start` was run). */
+  /** Repository root (cwd where `./enzo start` was run). */
   root: string;
   startedAt: string;
 }

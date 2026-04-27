@@ -10,7 +10,7 @@ export async function start(): Promise<void> {
     if (!configExists()) {
       console.log('\n');
       console.log(chalk.red('❌ No hay configuración. Ejecuta primero:\n'));
-      console.log(chalk.cyan('  pnpm exec enzo setup\n'));
+      console.log(chalk.cyan('  ./enzo setup\n'));
       process.exit(1);
     }
     const configService = createConfigService();

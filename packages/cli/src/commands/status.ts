@@ -7,7 +7,7 @@ export async function status(): Promise<void> {
       console.log('\n');
       console.log(chalk.yellow('⚠️  No hay configuración.\n'));
       console.log(chalk.white('Ejecuta primero:\n'));
-      console.log(chalk.cyan('  pnpm exec enzo setup\n'));
+      console.log(chalk.cyan('  ./enzo setup\n'));
       return;
     }
     const configService = createConfigService();
@@ -33,7 +33,7 @@ export async function status(): Promise<void> {
 
     console.log('\n');
     console.log(chalk.white('Para iniciar Enzo:'));
-    console.log(chalk.cyan('  pnpm exec enzo start\n'));
+    console.log(chalk.cyan('  ./enzo start\n'));
   } catch (error) {
     console.log('\n');
     console.log(chalk.red(`❌ Error: ${error instanceof Error ? error.message : String(error)}`));

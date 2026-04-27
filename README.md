@@ -94,11 +94,11 @@ Servicios por defecto:
 
 ```bash
 pnpm dev
-pnpm exec enzo setup
-pnpm exec enzo start
-pnpm exec enzo status
-pnpm exec enzo stop
-pnpm exec enzo update
+./enzo setup
+./enzo start
+./enzo status
+./enzo stop
+./enzo update
 ```
 
 Comandos por paquete:

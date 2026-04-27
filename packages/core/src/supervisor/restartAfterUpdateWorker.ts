@@ -1,8 +1,9 @@
 /**
- * Subprocess: wait, SIGTERM the old `enzo start` supervisor, then launch a new one.
+ * Subprocess: wait, SIGTERM the old `./enzo start` supervisor, then launch a new one.
  * Invoked with: `node restartAfterUpdateWorker.js <pid> <repoRoot>`
  */
 import { spawn } from 'child_process';
+import { resolveEnzoScriptPath } from './supervisorState.js';
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -23,7 +24,8 @@ async function main(): Promise<void> {
   }
   await delay(4000);
 
-  const child = spawn('pnpm', ['exec', 'enzo', 'start'], {
+  const enzo = resolveEnzoScriptPath(root);
+  const child = spawn(enzo, ['start'], {
     cwd: root,
     shell: true,
     detached: true,

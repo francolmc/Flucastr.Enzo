@@ -1,4 +1,4 @@
-import { scheduleEnzoSupervisorRestart } from '@enzo/core';
+import { resolveEnzoScriptPath, scheduleEnzoSupervisorRestart } from '@enzo/core';
 import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
 import { startTyping } from '../typing.js';
@@ -168,7 +168,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         '- `/clear` - limpiar historial de conversación',
         '- `/memory` - ver memorias guardadas',
         '- `/agent` o `/agents` - listar o configurar agente por conversación',
-        '- `/update` - actualizar y reiniciar el stack (solo admin; requiere `enzo start` o ENZO_UPDATE_RESTART_CMD)',
+        '- `/update` - actualizar y reiniciar el stack (solo admin; requiere `./enzo start` o ENZO_UPDATE_RESTART_CMD)',
         '',
         'Ejemplos de agente:',
         '- `/agent` o `/agents`',
@@ -322,9 +322,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
       ]);
       await runStep(ctx, 'Instalando dependencias (`pnpm install`)...', 'pnpm', ['install']);
       await runStep(ctx, 'Compilando paquetes (`pnpm build`)...', 'pnpm', ['build']);
-      await runStep(ctx, 'Verificando configuración (`pnpm exec enzo status`)...', 'pnpm', [
-        'exec',
-        'enzo',
+      await runStep(ctx, 'Verificando configuración (`./enzo status`)...', resolveEnzoScriptPath(process.cwd()), [
         'status',
       ]);
 

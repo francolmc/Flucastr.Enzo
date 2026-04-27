@@ -1,4 +1,4 @@
-import { scheduleEnzoSupervisorRestart } from '@enzo/core';
+import { resolveEnzoScriptPath, scheduleEnzoSupervisorRestart } from '@enzo/core';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
@@ -21,7 +21,7 @@ export async function update(): Promise<void> {
     await runCommand('pnpm', ['build']);
 
     console.log(chalk.blue('• Verificando estado final...'));
-    await runCommand('pnpm', ['exec', 'enzo', 'status']);
+    await runCommand(resolveEnzoScriptPath(process.cwd()), ['status']);
 
     const restart = scheduleEnzoSupervisorRestart({ cwd: process.cwd() });
     if (restart.kind === 'skipped') {

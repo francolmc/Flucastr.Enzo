@@ -25,7 +25,7 @@ export async function setup(): Promise<void> {
     }
 
     console.log(chalk.white('Próximos pasos:'));
-    console.log(chalk.cyan('  pnpm exec enzo start\n'));
+    console.log(chalk.cyan('  ./enzo start\n'));
   } catch (error) {
     console.log('\n');
     console.log(chalk.red(`❌ Error: ${error instanceof Error ? error.message : String(error)}`));

@@ -61,7 +61,7 @@ function showHelp(): void {
   console.log(chalk.cyan('🦊 Enzo CLI - Tu asistente personal\n'));
 
   console.log(chalk.white('Uso:'));
-  console.log(chalk.gray('  pnpm exec enzo <comando>\n'));
+  console.log(chalk.gray('  ./enzo <comando>\n'));
 
   console.log(chalk.white('Comandos:'));
   console.log(chalk.gray('  setup    Configurar Enzo (wizard interactivo)'));
@@ -71,10 +71,10 @@ function showHelp(): void {
   console.log(chalk.gray('  update   Actualizar Enzo'));
   console.log(chalk.gray('  help     Mostrar esta ayuda\n'));
 
-  console.log(chalk.white('Ejemplos:'));
-  console.log(chalk.cyan('  pnpm exec enzo setup'));
-  console.log(chalk.cyan('  pnpm exec enzo start'));
-  console.log(chalk.cyan('  pnpm exec enzo status\n'));
+  console.log(chalk.white('Ejemplos (desde la raíz del repositorio):'));
+  console.log(chalk.cyan('  ./enzo setup'));
+  console.log(chalk.cyan('  ./enzo start'));
+  console.log(chalk.cyan('  ./enzo status\n'));
 }
 
 main().catch((error) => {
