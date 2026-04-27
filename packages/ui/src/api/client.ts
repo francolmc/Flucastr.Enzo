@@ -12,6 +12,11 @@ import {
   SkillRecord,
   SkillsResponse,
   InjectedSkillUsage,
+  UIMemory,
+  EchoEngineStatus,
+  EchoResult,
+  Notification,
+  Project,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -378,6 +383,66 @@ class ApiClient {
     return this.request('/skills/reload', {
       method: 'POST',
     });
+  }
+
+  // Memory APIs
+  async getMemory(userId: string): Promise<{ memories: UIMemory[] }> {
+    return this.request(`/memory/${encodeURIComponent(userId)}`);
+  }
+
+  async createMemory(userId: string, key: string, value: string): Promise<void> {
+    await this.request(`/memory/${encodeURIComponent(userId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    });
+  }
+
+  async updateMemory(userId: string, key: string, value: string): Promise<void> {
+    await this.request(
+      `/memory/${encodeURIComponent(userId)}/${encodeURIComponent(key)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      }
+    );
+  }
+
+  async deleteMemory(userId: string, key: string): Promise<void> {
+    await this.request(
+      `/memory/${encodeURIComponent(userId)}/${encodeURIComponent(key)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  // Echo APIs
+  async getEchoStatus(): Promise<EchoEngineStatus> {
+    return this.request('/echo/status');
+  }
+
+  async runEchoTask(taskId: string): Promise<EchoResult> {
+    return this.request(`/echo/${encodeURIComponent(taskId)}/run`, {
+      method: 'POST',
+    });
+  }
+
+  async toggleEchoTask(taskId: string): Promise<void> {
+    await this.request(`/echo/${encodeURIComponent(taskId)}/toggle`, {
+      method: 'POST',
+    });
+  }
+
+  async getRecentNotifications(userId: string): Promise<Notification[]> {
+    const data = await this.request<Notification[] | { error?: string }>(
+      `/echo/notifications/${encodeURIComponent(userId)}`
+    );
+    return Array.isArray(data) ? data : [];
+  }
+
+  // Projects API
+  async getProjects(userId: string): Promise<{ projects: Project[] }> {
+    return this.request(`/projects/${encodeURIComponent(userId)}`);
   }
 
   // MCP APIs

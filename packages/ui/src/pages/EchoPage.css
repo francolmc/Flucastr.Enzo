@@ -1,0 +1,122 @@
+.echo-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+}
+
+.echo-page .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.echo-page .muted {
+  color: var(--text-muted);
+}
+
+.btn-refresh-echo {
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.error-banner {
+  padding: 0.75rem 1rem;
+  background: rgba(233, 122, 122, 0.12);
+  border: 1px solid rgba(233, 122, 122, 0.35);
+  border-radius: 8px;
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
+.echo-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.empty-echo {
+  padding: 1.5rem;
+  color: var(--text-muted);
+}
+
+.echo-task-card {
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.echo-task-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.echo-task-title {
+  margin: 0;
+  font-size: 1.05rem;
+  flex: 1;
+}
+
+.echo-task-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.toggle-active {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.82rem;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.toggle-active.on {
+  border-color: rgba(76, 175, 130, 0.45);
+  color: #9de6bf;
+}
+
+.toggle-active.off {
+  opacity: 0.85;
+}
+
+.btn-run-round {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.echo-line {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.echo-run-flash {
+  margin: 0.35rem 0 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}

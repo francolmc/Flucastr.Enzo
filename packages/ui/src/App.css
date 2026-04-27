@@ -56,6 +56,14 @@
 
 .nav-item-title {
   font-size: 0.93rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.nav-icon {
+  flex-shrink: 0;
+  line-height: 1;
 }
 
 .nav-item-subtitle {

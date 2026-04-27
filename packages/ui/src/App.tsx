@@ -5,37 +5,43 @@ import StatsPage from './pages/StatsPage';
 import ConfigPage from './pages/ConfigPage';
 import SkillsPage from './pages/SkillsPage';
 import MCPPage from './pages/MCPPage';
+import DashboardPage from './pages/DashboardPage';
+import MemoryPage from './pages/MemoryPage';
+import ProjectsPage from './pages/ProjectsPage';
+import EchoPage from './pages/EchoPage';
+import { formatRelativeTime } from './utils/timeFormat';
 import './App.css';
 
-type Page = 'chat' | 'stats' | 'skills' | 'mcp' | 'config';
+export type Page =
+  | 'dashboard'
+  | 'memory'
+  | 'projects'
+  | 'echo'
+  | 'chat'
+  | 'stats'
+  | 'skills'
+  | 'mcp'
+  | 'config';
 
 const NAV_ITEMS: Array<{
   id: Page;
   label: string;
   description: string;
+  icon?: string;
 }> = [
-  { id: 'chat', label: 'Chat', description: 'Conversaciones y contexto' },
-  { id: 'stats', label: 'Insights', description: 'Métricas y señales' },
-  { id: 'skills', label: 'Skills', description: 'Capacidades del asistente' },
-  { id: 'mcp', label: 'MCP', description: 'Conectores y tools' },
-  { id: 'config', label: 'Config', description: 'Modelos y agentes' },
+  { id: 'dashboard', label: 'Dashboard', description: 'Resumen del sistema', icon: '📊' },
+  { id: 'memory', label: 'Memoria', description: 'Contexto persistente', icon: '🧠' },
+  { id: 'projects', label: 'Proyectos', description: 'Vista por proyecto', icon: '🚀' },
+  { id: 'echo', label: 'Echo', description: 'Tareas programadas', icon: '🔄' },
+  { id: 'chat', label: 'Chat', description: 'Conversaciones y contexto', icon: '💬' },
+  { id: 'skills', label: 'Skills', description: 'Capacidades del asistente', icon: '⚡' },
+  { id: 'stats', label: 'Insights', description: 'Métricas y señales', icon: '📈' },
+  { id: 'mcp', label: 'MCP', description: 'Conectores y tools', icon: '🔌' },
+  { id: 'config', label: 'Config', description: 'Modelos y agentes', icon: '⚙️' },
 ];
 
-function formatRelativeTime(timestamp: number): string {
-  const deltaMs = Date.now() - timestamp;
-  const deltaMinutes = Math.floor(deltaMs / 60000);
-  if (deltaMinutes < 1) return 'ahora';
-  if (deltaMinutes < 60) return `hace ${deltaMinutes} min`;
-  const deltaHours = Math.floor(deltaMinutes / 60);
-  if (deltaHours < 24) return `hace ${deltaHours} h`;
-  return new Date(timestamp).toLocaleDateString('es-ES', {
-    day: '2-digit',
-    month: 'short',
-  });
-}
-
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('chat');
+  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const {
     conversations,
     conversationId,
@@ -52,7 +58,7 @@ function App() {
     loadConfig();
     loadAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Solo ejecutar una vez al montar
+  }, []);
 
   const handleSelectConversation = async (id: string) => {
     await loadHistory(id);
@@ -90,7 +96,10 @@ function App() {
               className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
               onClick={() => setCurrentPage(item.id)}
             >
-              <span className="nav-item-title">{item.label}</span>
+              <span className="nav-item-title">
+                {item.icon ? <span className="nav-icon">{item.icon}</span> : null}
+                {item.label}
+              </span>
               <span className="nav-item-subtitle">{item.description}</span>
             </button>
           ))}
@@ -151,10 +160,18 @@ function App() {
             <p>{activePage?.description}</p>
           </div>
           <div className="main-header-meta">
-            <span className="badge">{conversations.length} conversaciones</span>
+            {currentPage === 'chat' && (
+              <span className="badge">{conversations.length} conversaciones</span>
+            )}
             <span className="badge">Operativo</span>
           </div>
         </header>
+        {currentPage === 'dashboard' && (
+          <DashboardPage onNavigate={(p) => setCurrentPage(p)} />
+        )}
+        {currentPage === 'memory' && <MemoryPage />}
+        {currentPage === 'projects' && <ProjectsPage />}
+        {currentPage === 'echo' && <EchoPage />}
         {currentPage === 'chat' && <ChatPage />}
         {currentPage === 'stats' && <StatsPage />}
         {currentPage === 'skills' && <SkillsPage />}

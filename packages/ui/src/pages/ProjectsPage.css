@@ -1,0 +1,73 @@
+.projects-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+}
+
+.projects-page .muted {
+  color: var(--text-muted);
+  padding: 1rem;
+}
+
+.empty-projects {
+  padding: 2rem 1.5rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.error-banner {
+  padding: 0.75rem 1rem;
+  background: rgba(233, 122, 122, 0.12);
+  border: 1px solid rgba(233, 122, 122, 0.35);
+  border-radius: 8px;
+  color: var(--error);
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.project-card {
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.project-name {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.project-emoji {
+  margin-right: 0.25rem;
+}
+
+.project-activity {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.project-pending {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.project-pending ul {
+  margin: 0.4rem 0 0 1rem;
+  padding: 0;
+}
+
+.project-pending li {
+  margin-bottom: 0.25rem;
+}
+
+.pending-empty {
+  margin: 0.35rem 0 0 0;
+  font-style: italic;
+  color: var(--text-muted);
+}

@@ -184,3 +184,51 @@ export interface StatsData {
   byDay: Array<{ date: string; count: number; tokens: number; costUsd: number }>;
   averageDurationMs: number;
 }
+
+/** Memory row from GET /api/memory/:userId */
+export interface UIMemory {
+  id: string;
+  userId: string;
+  key: string;
+  value: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EchoResult {
+  success: boolean;
+  message?: string;
+  notified?: boolean;
+  error?: string;
+}
+
+export interface EchoTaskStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  lastRun?: string;
+  nextRun?: string;
+  lastResult?: EchoResult;
+}
+
+export interface EchoEngineStatus {
+  running: boolean;
+  tasks: EchoTaskStatus[];
+}
+
+export type NotificationPriority = 'URGENT' | 'NORMAL' | 'LOW';
+export type NotificationChannel = 'telegram' | 'log';
+
+export interface Notification {
+  message: string;
+  priority: NotificationPriority;
+  sentAt: string;
+  channel: NotificationChannel;
+}
+
+export interface Project {
+  name: string;
+  lastActivity: string;
+  pendingItems: string[];
+}
