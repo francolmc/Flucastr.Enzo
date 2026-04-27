@@ -5,6 +5,7 @@ import {
   InputChunker,
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
+  AudioConverter,
 } from '@enzo/core';
 import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
@@ -87,7 +88,8 @@ async function processMessageInBackground(
   messageText: string,
   conversationId: string,
   explicitAgentId: string | undefined,
-  requestId: string
+  requestId: string,
+  responsePrefix?: string
 ): Promise<void> {
   const typingSession = startTyping(ctx);
   let progressMessageId: number | null = null;
@@ -172,14 +174,18 @@ async function processMessageInBackground(
       langContext.userLanguage
     );
 
+    const prefixedContent = responsePrefix
+      ? `${responsePrefix}\n${translatedContent}`
+      : translatedContent;
+
     // Prepare response with metadata
     const metadata = `_⚡ ${result.modelUsed} · ${result.durationMs}ms_`;
 
     // Handle message splitting if necessary
-    if (translatedContent.length + metadata.length + 10 > MAX_MESSAGE_LENGTH) {
+    if (prefixedContent.length + metadata.length + 10 > MAX_MESSAGE_LENGTH) {
       // Content is too long, split it
       const chunks: string[] = [];
-      let remaining = translatedContent;
+      let remaining = prefixedContent;
 
       while (remaining.length > MAX_MESSAGE_LENGTH - 50) {
         chunks.push(remaining.substring(0, MAX_MESSAGE_LENGTH - 50));
@@ -201,7 +207,7 @@ async function processMessageInBackground(
       await ctx.reply(finalMessage);
     } else {
       // Message fits in one, send with metadata
-      const finalMessage = `${translatedContent}\n\n${metadata}`;
+      const finalMessage = `${prefixedContent}\n\n${metadata}`;
       await ctx.reply(finalMessage);
     }
 
@@ -227,30 +233,94 @@ async function processMessageInBackground(
   }
 }
 
+function buildTranscriptionPrefix(transcribedText: string): string {
+  return `🎙️ _"${transcribedText}"_`;
+}
+
+async function preloadMessageContext(
+  ctx: EnzoContext,
+  userId: string
+): Promise<{ conversationId: string; requestId: string; explicitAgentId?: string }> {
+  const conversationId = getCurrentConversationId(userId);
+  const requestId = randomUUID();
+
+  let explicitAgentId: string | undefined;
+  try {
+    explicitAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
+  } catch (error) {
+    console.warn('[Telegram] Failed to load conversation active agent:', error);
+  }
+
+  return { conversationId, requestId, explicitAgentId };
+}
+
+async function allowAndPersistChat(ctx: EnzoContext, userId: string): Promise<boolean> {
+  const allowedUsers = getAllowedUsers();
+  if (!allowedUsers.has(userId)) {
+    console.warn(`[Telegram] Unauthorized access attempt from user ${userId}`);
+    await ctx.reply('No tienes acceso a Enzo.');
+    return false;
+  }
+
+  const chatId = ctx.chat?.id != null ? String(ctx.chat.id) : undefined;
+  if (chatId) {
+    void ctx.memoryService.remember(userId, 'telegram_chat_id', chatId).catch((error) => {
+      console.warn('[Telegram] Failed to persist telegram_chat_id:', error);
+    });
+  }
+
+  return true;
+}
+
+function runBackgroundProcessing(
+  ctx: EnzoContext,
+  userId: string,
+  messageText: string,
+  conversationId: string,
+  explicitAgentId: string | undefined,
+  requestId: string,
+  responsePrefix?: string
+): void {
+  processMessageInBackground(
+    ctx,
+    userId,
+    messageText,
+    conversationId,
+    explicitAgentId,
+    requestId,
+    responsePrefix
+  ).catch((err) => {
+    console.error('[Telegram] Fatal error in background processing:', err, {
+      requestId,
+      userId,
+      conversationId,
+    });
+    void safeReply(
+      ctx,
+      `❌ Error interno al procesar el mensaje.\n\n_id: ${requestId}_\nSi persiste, revisa los logs del servidor.`
+    );
+  });
+}
+
+async function downloadTelegramFileBuffer(ctx: EnzoContext, fileId: string): Promise<Buffer> {
+  const fileUrl = await ctx.telegram.getFileLink(fileId);
+  const response = await fetch(fileUrl.toString());
+  if (!response.ok) {
+    throw new Error(`Telegram file download failed with status ${response.status}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
   bot.on('text', async (ctx) => {
     const userId = String(ctx.from?.id || '');
     const messageText = ctx.message?.text || '';
-    const chatId = ctx.chat?.id != null ? String(ctx.chat.id) : undefined;
-
-    // Get allowed users dynamically
-    const allowedUsers = getAllowedUsers();
-
-    // Security check
-    if (!allowedUsers.has(userId)) {
-      console.warn(`[Telegram] Unauthorized access attempt from user ${userId}`);
-      await ctx.reply('No tienes acceso a Enzo.');
-      return;
-    }
+    const canContinue = await allowAndPersistChat(ctx, userId);
+    if (!canContinue) return;
 
     if (await tryHandleAgentCommandText(ctx, messageText)) {
       return;
-    }
-
-    if (chatId) {
-      void ctx.memoryService.remember(userId, 'telegram_chat_id', chatId).catch((error) => {
-        console.warn('[Telegram] Failed to persist telegram_chat_id:', error);
-      });
     }
 
     const entities = ctx.message.entities;
@@ -260,31 +330,99 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
       return;
     }
 
-    const conversationId = getCurrentConversationId(userId);
-    const requestId = randomUUID();
-
-    let explicitAgentId: string | undefined;
-    try {
-      explicitAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
-    } catch (error) {
-      console.warn('[Telegram] Failed to load conversation active agent:', error);
-    }
-
-    // Fire and forget - process in background to avoid Telegraf timeout
-    processMessageInBackground(ctx, userId, messageText, conversationId, explicitAgentId, requestId).catch(
-      (err) => {
-        console.error('[Telegram] Fatal error in background processing:', err, {
-          requestId,
-          userId,
-          conversationId,
-        });
-        void safeReply(
-          ctx,
-          `❌ Error interno al procesar el mensaje.\n\n_id: ${requestId}_\nSi persiste, revisa los logs del servidor.`
-        );
-      }
-    );
+    const { conversationId, requestId, explicitAgentId } = await preloadMessageContext(ctx, userId);
+    runBackgroundProcessing(ctx, userId, messageText, conversationId, explicitAgentId, requestId);
 
     // Handler returns immediately - Telegraf doesn't timeout
+  });
+
+  bot.on('voice', async (ctx) => {
+    const userId = String(ctx.from?.id || '');
+    const canContinue = await allowAndPersistChat(ctx, userId);
+    if (!canContinue) return;
+
+    const transcriptionService = ctx.transcriptionService;
+    if (!transcriptionService) {
+      console.warn('[Telegram] transcriptionService is not configured.');
+      await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+      return;
+    }
+
+    try {
+      const fileId = ctx.message?.voice?.file_id;
+      if (!fileId) {
+        await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+        return;
+      }
+
+      const originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      const converter = new AudioConverter();
+      const convertedBuffer = await converter.oggToWav(originalBuffer);
+      const mimeType = convertedBuffer === originalBuffer ? 'audio/ogg' : 'audio/wav';
+      const transcription = await transcriptionService.transcribe(convertedBuffer, mimeType);
+      if (!transcription.success || !transcription.text) {
+        await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+        return;
+      }
+
+      const { conversationId, requestId, explicitAgentId } = await preloadMessageContext(ctx, userId);
+      runBackgroundProcessing(
+        ctx,
+        userId,
+        transcription.text,
+        conversationId,
+        explicitAgentId,
+        requestId,
+        buildTranscriptionPrefix(transcription.text)
+      );
+    } catch (error) {
+      console.error('[Telegram] Voice transcription failed:', error);
+      await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+    }
+  });
+
+  bot.on('audio', async (ctx) => {
+    const userId = String(ctx.from?.id || '');
+    const canContinue = await allowAndPersistChat(ctx, userId);
+    if (!canContinue) return;
+
+    const transcriptionService = ctx.transcriptionService;
+    if (!transcriptionService) {
+      console.warn('[Telegram] transcriptionService is not configured.');
+      await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+      return;
+    }
+
+    try {
+      const fileId = ctx.message?.audio?.file_id;
+      if (!fileId) {
+        await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+        return;
+      }
+
+      const originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      const converter = new AudioConverter();
+      const convertedBuffer = await converter.oggToWav(originalBuffer);
+      const mimeType = ctx.message?.audio?.mime_type || (convertedBuffer === originalBuffer ? 'audio/ogg' : 'audio/wav');
+      const transcription = await transcriptionService.transcribe(convertedBuffer, mimeType);
+      if (!transcription.success || !transcription.text) {
+        await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+        return;
+      }
+
+      const { conversationId, requestId, explicitAgentId } = await preloadMessageContext(ctx, userId);
+      runBackgroundProcessing(
+        ctx,
+        userId,
+        transcription.text,
+        conversationId,
+        explicitAgentId,
+        requestId,
+        buildTranscriptionPrefix(transcription.text)
+      );
+    } catch (error) {
+      console.error('[Telegram] Audio transcription failed:', error);
+      await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
+    }
   });
 }

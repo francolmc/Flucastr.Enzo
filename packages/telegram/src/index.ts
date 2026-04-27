@@ -30,6 +30,7 @@ import {
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
+  WhisperTranscriptionService,
 } from '@enzo/core';
 import { createDefaultToolRegistry, getEchoEngine } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -125,6 +126,7 @@ async function main() {
     const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
     const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
     echoEngine.start();
+    const transcriptionService = new WhisperTranscriptionService(configService);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -173,7 +175,7 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService, { configService });
+      const nextBot = createBot(orchestrator, memoryService, { configService, transcriptionService });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
       const maxAttempts = 20;
