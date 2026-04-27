@@ -37,6 +37,19 @@ import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMessageHandler } from './handlers/message.js';
 
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function isGetUpdatesConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const maybe = error as { response?: { error_code?: number; description?: string } };
+  return (
+    maybe.response?.error_code === 409 ||
+    String(maybe.response?.description || '').includes('terminated by other getUpdates request')
+  );
+}
+
 async function main() {
   try {
     const enzoSecret = ensureLocalSecret();
@@ -142,7 +155,27 @@ async function main() {
       const nextBot = createBot(orchestrator, memoryService, { configService });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
-      await nextBot.launch();
+      const maxAttempts = 8;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await nextBot.launch();
+          break;
+        } catch (error) {
+          if (!isGetUpdatesConflict(error) || attempt === maxAttempts) {
+            throw error;
+          }
+          const waitMs = 1500 * attempt;
+          console.warn(
+            `[Telegram] getUpdates conflict on launch (${attempt}/${maxAttempts}). Retrying in ${waitMs}ms...`
+          );
+          try {
+            nextBot.stop('launch_conflict_retry');
+          } catch {
+            // ignore - bot may not be fully started yet
+          }
+          await delay(waitMs);
+        }
+      }
       bot = nextBot;
       currentSignature = buildSignature();
       console.log(`[Telegram] Bot active (${reason})`);
