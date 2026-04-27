@@ -1,5 +1,6 @@
 import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { LoadedSkill, SkillStep } from '../skills/SkillLoader.js';
+import { foldDiacritics } from '../utils/foldDiacritics.js';
 
 export interface RelevantSkill {
   id: string
@@ -99,6 +100,17 @@ export class SkillResolver {
   }
 
   private calculateRelevance(message: string, skill: LoadedSkill): number {
+    const haystack = foldDiacritics(message.toLowerCase())
+    const triggers = skill.metadata.triggers
+    if (triggers?.length) {
+      for (const trigger of triggers) {
+        if (!trigger) continue
+        const needle = foldDiacritics(trigger.toLowerCase()).trim()
+        if (needle.length === 0) continue
+        if (haystack.includes(needle)) return 1.0
+      }
+    }
+
     const normalizedMessage = this.normalizeText(message)
     const normalizedName = this.normalizeText(skill.metadata.name)
     const normalizedDescription = this.normalizeText(skill.metadata.description)

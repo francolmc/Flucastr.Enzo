@@ -2,6 +2,7 @@ import { Message, Tool, LLMProvider } from '../providers/types.js';
 import type { Subtask, DecompositionResult } from './Decomposer.js';
 import type { AssistantProfile, UserProfile } from '../config/ConfigService.js';
 import type { ToolExecutionContext } from '../tools/types.js';
+import type { RelevantSkill } from './SkillResolver.js';
 
 export enum ComplexityLevel {
   SIMPLE = 'SIMPLE',
@@ -99,6 +100,8 @@ export interface AmplifierInput {
     steps: Subtask[];
     originalMessage: string;
   };
+  /** When set (e.g. by AmplifierLoop), THINK skips re-resolving skills against `message`. */
+  resolvedSkills?: RelevantSkill[];
 }
 
 export interface AmplifierResult {

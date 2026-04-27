@@ -1,10 +1,9 @@
 import { AvailableCapabilities, DELEGATION_AGENT_IDS, ResolvedAction } from './types.js';
 import { IntentAnalyzer } from './IntentAnalyzer.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { foldDiacritics } from '../utils/foldDiacritics.js';
 
-function foldDiacritics(input: string): string {
-  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
+export { foldDiacritics };
 
 export interface TriggerMatch {
   toolName: string;

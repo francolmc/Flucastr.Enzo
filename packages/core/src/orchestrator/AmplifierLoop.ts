@@ -760,12 +760,14 @@ Do NOT search for more information. Use what is provided.`;
 
         while (subtaskIteration < subtaskMaxIterations && !subtaskDone) {
           subtaskIteration++;
+          const skillQueryMessage = (subtask.description ?? subtask.input ?? '').trim();
           const subtaskResolvedSkills = forcedTool
             ? []
             : this.skillRegistry
-            ? await this.skillResolver.resolveRelevantSkills(subtaskInput.message, this.skillRegistry)
+            ? await this.skillResolver.resolveRelevantSkills(skillQueryMessage, this.skillRegistry)
             : preResolvedSkills;
           rememberInjectedSkills(subtaskResolvedSkills);
+          subtaskInput.resolvedSkills = subtaskResolvedSkills;
 
           const subThinkStart = Date.now();
           const thinkStep = await runThinkPhase(this.phaseDeps(), {
@@ -969,7 +971,7 @@ Do NOT search for more information. Use what is provided.`;
       // THINK: modelo base analiza qué necesita
       const thinkStart = Date.now();
       const thinkStep = await runThinkPhase(this.phaseDeps(), {
-        input,
+        input: { ...input, resolvedSkills: preResolvedSkills },
         context: currentContext,
         iteration,
         modelsUsed,

@@ -43,9 +43,10 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
 
   const previousActSteps = previousSteps.filter((s) => s.type === 'act');
   const previousObservations = previousSteps.filter((s) => s.type === 'observe' && s.output);
+  const preResolvedSkills = input.resolvedSkills ?? resolvedSkills;
   const skillsToInjectForThink: RelevantSkill[] =
     !skipSkills && skillRegistry
-      ? resolvedSkills ?? (await skillResolver.resolveRelevantSkills(input.message, skillRegistry))
+      ? preResolvedSkills ?? (await skillResolver.resolveRelevantSkills(input.message, skillRegistry))
       : [];
 
   const multiStepSkills = skillsToInjectForThink.filter((skill) => {
