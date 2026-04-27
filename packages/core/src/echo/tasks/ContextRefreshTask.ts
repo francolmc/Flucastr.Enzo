@@ -1,5 +1,5 @@
 import type { EchoTask } from '../EchoEngine.js';
-import { ECHO_NOTIFICATION_PRIORITY, type NotificationGateway } from '../NotificationGateway.js';
+import type { NotificationGateway } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
 
 const CONTEXT_REFRESH_SCHEDULE = 'interval:120min';
@@ -12,7 +12,7 @@ interface MemoryReader {
 
 export interface ContextRefreshTaskOptions {
   memoryService: MemoryReader;
-  notificationGateway: NotificationGateway;
+  notificationGateway: Pick<NotificationGateway, 'notify'>;
   resolveUserId: () => Promise<string | undefined>;
   now?: () => Date;
 }
@@ -70,16 +70,15 @@ export function createContextRefreshTask(options: ContextRefreshTaskOptions): Ec
         notificationMessage = 'Tenes capturas recientes sin procesar. Queres que las ordene?';
       }
 
-      const notified = await options.notificationGateway.notify({
-        userId,
-        message: notificationMessage,
-        priority: ECHO_NOTIFICATION_PRIORITY.NORMAL,
+      await options.notificationGateway.notify(userId, notificationMessage, {
+        priority: 'NORMAL',
+        deduplicationKey: `context-refresh-${nowProvider().toISOString().slice(0, 13)}-${notificationMessage}`,
       });
 
       return {
-        success: notified,
-        notified,
-        message: notified ? 'Context refresh notification sent' : 'Context refresh notification failed',
+        success: true,
+        notified: true,
+        message: 'Context refresh notification processed',
       };
     },
   };

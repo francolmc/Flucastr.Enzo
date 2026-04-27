@@ -1,13 +1,12 @@
 import https from 'node:https';
 import {
   EchoEngine,
-  ECHO_NOTIFICATION_PRIORITY,
+  NotificationGateway,
   createMorningBriefingTask,
   createContextRefreshTask,
   createNightSummaryTask,
   type ConfigService,
   type MemoryService,
-  type NotificationGateway,
 } from '@enzo/core';
 
 let sharedEchoEngine: EchoEngine | null = null;
@@ -15,6 +14,11 @@ let sharedEchoEngine: EchoEngine | null = null;
 interface EchoEngineBindings {
   memoryService?: MemoryService;
   configService?: ConfigService;
+  sendTelegramMessage?: (
+    chatId: string,
+    message: string,
+    disableNotification: boolean
+  ) => Promise<boolean>;
 }
 
 function notifyTelegram(chatId: string, text: string, disableNotification: boolean): Promise<boolean> {
@@ -80,19 +84,33 @@ async function resolveEchoUserId(memoryService: MemoryService, configService: Co
   return latestUserId ?? allowedUsers[0];
 }
 
-class TelegramNotificationGateway implements NotificationGateway {
-  async notify(params: { userId: string; message: string; priority: 'URGENT' | 'NORMAL' }): Promise<boolean> {
-    const disableNotification = params.priority !== ECHO_NOTIFICATION_PRIORITY.URGENT;
-    return notifyTelegram(params.userId, params.message, disableNotification);
-  }
+async function resolveTelegramChatId(memoryService: MemoryService, userId: string): Promise<string | undefined> {
+  const memories = await memoryService.recall(userId, 'telegram_chat_id');
+  return memories[0]?.value?.trim() || undefined;
+}
+
+function createNotificationGateway(
+  memoryService: MemoryService,
+  telegramSender?: (chatId: string, message: string, disableNotification: boolean) => Promise<boolean>
+): NotificationGateway {
+  return new NotificationGateway({
+    resolveChatId: async (userId) => resolveTelegramChatId(memoryService, userId),
+    sendTelegram: async (chatId, message, disableNotification) => {
+      if (telegramSender) {
+        return telegramSender(chatId, message, disableNotification);
+      }
+      return notifyTelegram(chatId, message, disableNotification);
+    },
+    logger: console,
+  });
 }
 
 export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
   if (!sharedEchoEngine) {
     sharedEchoEngine = new EchoEngine();
-    const { memoryService, configService } = bindings;
+    const { memoryService, configService, sendTelegramMessage } = bindings;
     if (memoryService && configService) {
-      const notificationGateway = new TelegramNotificationGateway();
+      const notificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
       sharedEchoEngine.registerTask(
         createMorningBriefingTask({ memoryService, notificationGateway, resolveUserId })

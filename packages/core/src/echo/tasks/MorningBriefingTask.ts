@@ -1,5 +1,5 @@
 import type { EchoTask } from '../EchoEngine.js';
-import { ECHO_NOTIFICATION_PRIORITY, type NotificationGateway } from '../NotificationGateway.js';
+import type { NotificationGateway } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
 
 const MORNING_BRIEFING_SCHEDULE = '0 7 * * *';
@@ -10,7 +10,7 @@ interface MemoryReader {
 
 export interface MorningBriefingTaskOptions {
   memoryService: MemoryReader;
-  notificationGateway: NotificationGateway;
+  notificationGateway: Pick<NotificationGateway, 'notify'>;
   resolveUserId: () => Promise<string | undefined>;
   now?: () => Date;
   locale?: string;
@@ -83,16 +83,15 @@ export function createMorningBriefingTask(options: MorningBriefingTaskOptions): 
         memories,
       });
 
-      const notified = await options.notificationGateway.notify({
-        userId,
-        message,
-        priority: ECHO_NOTIFICATION_PRIORITY.URGENT,
+      await options.notificationGateway.notify(userId, message, {
+        priority: 'URGENT',
+        deduplicationKey: `morning-briefing-${nowProvider().toISOString().slice(0, 10)}`,
       });
 
       return {
-        success: notified,
-        notified,
-        message: notified ? 'Morning briefing sent' : 'Morning briefing skipped (unable to notify)',
+        success: true,
+        notified: true,
+        message: 'Morning briefing notification processed',
       };
     },
   };

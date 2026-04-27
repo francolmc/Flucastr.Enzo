@@ -1,5 +1,4 @@
 import { createContextRefreshTask } from './ContextRefreshTask.js';
-import { ECHO_NOTIFICATION_PRIORITY } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
 
 function assert(cond: boolean, message: string): void {
@@ -30,10 +29,9 @@ async function runTests(): Promise<void> {
   const staleTask = createContextRefreshTask({
     memoryService: { recall: async () => staleProjectMemories },
     notificationGateway: {
-      notify: async (notification) => {
-        sentMessage = notification.message;
-        sentPriority = notification.priority;
-        return true;
+      notify: async (_userId, message, options) => {
+        sentMessage = message;
+        sentPriority = options.priority;
       },
     },
     resolveUserId: async () => 'franco',
@@ -42,7 +40,7 @@ async function runTests(): Promise<void> {
   const staleResult = await staleTask.action();
   assert(staleResult.success, 'expected stale project scenario to succeed');
   assert(staleResult.notified === true, 'expected stale project scenario to notify');
-  assert(sentPriority === ECHO_NOTIFICATION_PRIORITY.NORMAL, 'expected normal priority');
+  assert(sentPriority === 'NORMAL', 'expected normal priority');
   assert(sentMessage.includes('3 dias sin actividad'), 'expected stale project message');
   console.log('✓ Pass\n');
 
@@ -63,7 +61,6 @@ async function runTests(): Promise<void> {
     notificationGateway: {
       notify: async () => {
         notifyCalls += 1;
-        return true;
       },
     },
     resolveUserId: async () => 'franco',

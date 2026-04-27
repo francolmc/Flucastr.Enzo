@@ -2,7 +2,6 @@ import {
   buildMorningBriefingMessage,
   createMorningBriefingTask,
 } from './MorningBriefingTask.js';
-import { ECHO_NOTIFICATION_PRIORITY } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
 
 function assert(cond: boolean, message: string): void {
@@ -36,15 +35,16 @@ async function runTests(): Promise<void> {
   console.log('Test: task sends urgent notification with generated briefing');
   let notifiedPriority: string | undefined;
   let notifiedMessage = '';
+  let notifiedDedupKey = '';
   const task = createMorningBriefingTask({
     memoryService: {
       recall: async () => memories,
     },
     notificationGateway: {
-      notify: async (notification) => {
-        notifiedPriority = notification.priority;
-        notifiedMessage = notification.message;
-        return true;
+      notify: async (_userId, message, options) => {
+        notifiedPriority = options.priority;
+        notifiedMessage = message;
+        notifiedDedupKey = options.deduplicationKey || '';
       },
     },
     resolveUserId: async () => 'franco',
@@ -53,8 +53,9 @@ async function runTests(): Promise<void> {
   });
   const result = await task.action();
   assert(result.success, 'expected task to succeed');
-  assert(notifiedPriority === ECHO_NOTIFICATION_PRIORITY.URGENT, 'expected urgent priority');
+  assert(notifiedPriority === 'URGENT', 'expected urgent priority');
   assert(notifiedMessage.includes('Buenos dias Franco'), 'expected generated briefing to be sent');
+  assert(notifiedDedupKey.includes('morning-briefing-2026-04-27'), 'expected dedup key by date');
   console.log('✓ Pass\n');
 
   console.log('MorningBriefingTask tests passed.');

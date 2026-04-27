@@ -102,8 +102,28 @@ async function main() {
       console.log('[Telegram] AnthropicProvider initialized');
     }
 
+    let bot: Telegraf<EnzoContext> | null = null;
+    const sendTelegramMessage = async (
+      chatId: string,
+      message: string,
+      disableNotification: boolean
+    ): Promise<boolean> => {
+      if (!bot) {
+        return false;
+      }
+      try {
+        await bot.telegram.sendMessage(chatId, message, {
+          disable_notification: disableNotification,
+        });
+        return true;
+      } catch (error) {
+        console.error('[Telegram] Failed to send push notification:', error);
+        return false;
+      }
+    };
+
     const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
-    const echoEngine = getEchoEngine({ memoryService, configService });
+    const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
     echoEngine.start();
     const orchestrator = new Orchestrator(
       ollamaProvider,
@@ -113,7 +133,6 @@ async function main() {
     );
     console.log('[Telegram] Orchestrator initialized');
 
-    let bot: Telegraf<EnzoContext> | null = null;
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
     let currentSignature = '';

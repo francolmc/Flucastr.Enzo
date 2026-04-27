@@ -231,6 +231,7 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
   bot.on('text', async (ctx) => {
     const userId = String(ctx.from?.id || '');
     const messageText = ctx.message?.text || '';
+    const chatId = ctx.chat?.id != null ? String(ctx.chat.id) : undefined;
 
     // Get allowed users dynamically
     const allowedUsers = getAllowedUsers();
@@ -244,6 +245,12 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
 
     if (await tryHandleAgentCommandText(ctx, messageText)) {
       return;
+    }
+
+    if (chatId) {
+      void ctx.memoryService.remember(userId, 'telegram_chat_id', chatId).catch((error) => {
+        console.warn('[Telegram] Failed to persist telegram_chat_id:', error);
+      });
     }
 
     const entities = ctx.message.entities;

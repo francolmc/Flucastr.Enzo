@@ -5,10 +5,11 @@ export {
   type EchoEngineStatus,
 } from './EchoEngine.js';
 export {
-  ECHO_NOTIFICATION_PRIORITY,
-  type EchoNotificationPriority,
-  type EchoNotification,
-  type NotificationGateway,
+  NotificationGateway,
+  type NotificationPriority,
+  type NotificationChannel,
+  type NotificationOptions,
+  type NotificationGatewayDependencies,
 } from './NotificationGateway.js';
 export {
   createMorningBriefingTask,
