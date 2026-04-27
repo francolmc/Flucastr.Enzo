@@ -80,15 +80,33 @@ export function scheduleEnzoSupervisorRestart(options: {
 
   const root = (state.root || cwd).trim();
   const logPath = join(root, '.enzo-restart.log');
+  const qRoot = shQuote(root);
+  const qLogPath = shQuote(logPath);
   const restartScript = [
-    `LOG=${shQuote(logPath)}`,
+    `LOG=${qLogPath}`,
     'echo "" >> "$LOG"',
     'echo "[$(date -Iseconds)] restart scheduler started" >> "$LOG"',
-    `sleep 2`,
+    'echo "[$(date -Iseconds)] stopping old supervisor and residual processes" >> "$LOG"',
+    'sleep 2',
     `kill -TERM ${state.pid} >/dev/null 2>&1 || true`,
     'echo "[$(date -Iseconds)] old supervisor signal sent" >> "$LOG"',
-    'sleep 10',
-    `cd ${shQuote(root)}`,
+    // Hard-stop leftovers from the same repository before restart.
+    `pkill -TERM -f "${root}/packages/api/dist/index.js" >/dev/null 2>&1 || true`,
+    `pkill -TERM -f "${root}/packages/telegram/dist/index.js" >/dev/null 2>&1 || true`,
+    `pkill -TERM -f "${root}/packages/ui/.*vite" >/dev/null 2>&1 || true`,
+    'sleep 2',
+    `pkill -KILL -f "${root}/packages/api/dist/index.js" >/dev/null 2>&1 || true`,
+    `pkill -KILL -f "${root}/packages/telegram/dist/index.js" >/dev/null 2>&1 || true`,
+    `pkill -KILL -f "${root}/packages/ui/.*vite" >/dev/null 2>&1 || true`,
+    // Wait until no conflicting processes remain.
+    'for i in 1 2 3 4 5 6 7 8 9 10; do',
+    `  if ! pgrep -f "${root}/packages/api/dist/index.js" >/dev/null 2>&1 && ! pgrep -f "${root}/packages/telegram/dist/index.js" >/dev/null 2>&1; then`,
+    '    break',
+    '  fi',
+    '  echo "[$(date -Iseconds)] waiting residual processes to exit..." >> "$LOG"',
+    '  sleep 2',
+    'done',
+    `cd ${qRoot}`,
     'echo "[$(date -Iseconds)] launching new supervisor" >> "$LOG"',
     'ENZO_SKIP_SUPERVISOR_GUARD=1 node packages/cli/dist/index.js start >> "$LOG" 2>&1',
   ].join('; ');
