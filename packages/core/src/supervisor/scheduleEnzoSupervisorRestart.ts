@@ -87,7 +87,7 @@ export function scheduleEnzoSupervisorRestart(options: {
     `sleep 2`,
     `kill -TERM ${state.pid} >/dev/null 2>&1 || true`,
     'echo "[$(date -Iseconds)] old supervisor signal sent" >> "$LOG"',
-    'sleep 4',
+    'sleep 10',
     `cd ${shQuote(root)}`,
     'echo "[$(date -Iseconds)] launching new supervisor" >> "$LOG"',
     'ENZO_SKIP_SUPERVISOR_GUARD=1 node packages/cli/dist/index.js start >> "$LOG" 2>&1',

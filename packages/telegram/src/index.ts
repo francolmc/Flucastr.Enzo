@@ -155,16 +155,16 @@ async function main() {
       const nextBot = createBot(orchestrator, memoryService, { configService });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
-      const maxAttempts = 8;
+      const maxAttempts = 20;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-          await nextBot.launch();
+          await nextBot.launch({ dropPendingUpdates: true });
           break;
         } catch (error) {
           if (!isGetUpdatesConflict(error) || attempt === maxAttempts) {
             throw error;
           }
-          const waitMs = 1500 * attempt;
+          const waitMs = Math.min(2000 * attempt, 15000);
           console.warn(
             `[Telegram] getUpdates conflict on launch (${attempt}/${maxAttempts}). Retrying in ${waitMs}ms...`
           );
