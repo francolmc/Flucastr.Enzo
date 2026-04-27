@@ -31,6 +31,7 @@ import {
   EncryptionService,
   ensureLocalSecret,
   WhisperTranscriptionService,
+  EdgeTTSService,
 } from '@enzo/core';
 import { createDefaultToolRegistry, getEchoEngine } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -127,6 +128,7 @@ async function main() {
     const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
     echoEngine.start();
     const transcriptionService = new WhisperTranscriptionService(configService);
+    const ttsService = new EdgeTTSService({ configService });
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -175,7 +177,7 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService, { configService, transcriptionService });
+      const nextBot = createBot(orchestrator, memoryService, { configService, transcriptionService, ttsService });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
       const maxAttempts = 20;

@@ -5,6 +5,7 @@ import type {
   MemoryService,
   ConfigService,
   TranscriptionService,
+  TTSService,
 } from '@enzo/core';
 
 export interface EnzoContext extends Context {
@@ -12,12 +13,13 @@ export interface EnzoContext extends Context {
   memoryService: MemoryService;
   configService?: ConfigService;
   transcriptionService?: TranscriptionService;
+  ttsService?: TTSService;
 }
 
 export function createBot(
   orchestrator: Orchestrator,
   memoryService: MemoryService,
-  options?: { configService?: ConfigService; transcriptionService?: TranscriptionService }
+  options?: { configService?: ConfigService; transcriptionService?: TranscriptionService; ttsService?: TTSService }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
 
@@ -55,6 +57,7 @@ export function createBot(
     ctx.memoryService = memoryService;
     ctx.configService = options?.configService;
     ctx.transcriptionService = options?.transcriptionService;
+    ctx.ttsService = options?.ttsService;
     return next();
   });
 

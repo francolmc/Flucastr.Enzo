@@ -18,7 +18,7 @@ function parseDurationSeconds(value: unknown): number | undefined {
   return undefined;
 }
 
-function parseOllamaResponse(payload: unknown): TranscriptionResult | null {
+function parseWhisperAsrJsonResponse(payload: unknown): TranscriptionResult | null {
   if (!payload || typeof payload !== 'object') return null;
   const data = payload as Record<string, unknown>;
   const textCandidate = data.text ?? data.transcript ?? data.response;
@@ -77,13 +77,13 @@ export class WhisperTranscriptionService implements TranscriptionService {
 
   async transcribe(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult> {
     try {
-      const ollamaResult = await this.tryOllama(audioBuffer, mimeType);
-      if (ollamaResult.success) {
-        return ollamaResult;
+      const asrResult = await this.tryWhisperAsr(audioBuffer, mimeType);
+      if (asrResult.success) {
+        return asrResult;
       }
 
-      if (ollamaResult.error?.includes('No transcription model available')) {
-        return ollamaResult;
+      if (asrResult.error?.includes('No transcription model available')) {
+        return asrResult;
       }
 
       const openAiResult = await this.tryOpenAi(audioBuffer, mimeType);
@@ -91,10 +91,10 @@ export class WhisperTranscriptionService implements TranscriptionService {
         return openAiResult;
       }
 
-      if (ollamaResult.error) {
+      if (asrResult.error) {
         return {
           success: false,
-          error: openAiResult.error || ollamaResult.error,
+          error: openAiResult.error || asrResult.error,
         };
       }
 
@@ -107,44 +107,51 @@ export class WhisperTranscriptionService implements TranscriptionService {
     }
   }
 
-  private async tryOllama(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult> {
-    const system = this.configService.getSystemConfig();
-    const baseUrl = normalizeBaseUrl(system.ollamaBaseUrl || 'http://localhost:11434');
-    const endpoint = `${baseUrl}/api/transcribe`;
+  private async tryWhisperAsr(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult> {
+    const baseUrl = normalizeBaseUrl(this.configService.getWhisperUrl());
+    const language = this.configService.getWhisperLanguage().trim() || 'es';
+    const params = new URLSearchParams({
+      encode: 'true',
+      task: 'transcribe',
+      output: 'json',
+      language,
+    });
+    const endpoint = `${baseUrl}/asr?${params.toString()}`;
 
     try {
+      const form = new FormData();
+      const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType || 'application/octet-stream' });
+      form.append('audio_file', blob, getOpenAiFilename(mimeType));
+
       const response = await this.fetchFn(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'whisper',
-          audio: audioBuffer.toString('base64'),
-          format: mimeType,
-        }),
+        body: form,
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        if (response.status === 404 || /model.+whisper.+not found/i.test(errorText)) {
+        if (response.status === 404) {
           console.warn(
-            '[WhisperTranscriptionService] Ollama whisper model unavailable. Falling back to OpenAI.'
+            '[WhisperTranscriptionService] Whisper ASR endpoint unavailable (404). Falling back to OpenAI if configured.'
           );
-          return { success: false, error: 'Ollama whisper model unavailable' };
+        } else {
+          console.warn(
+            `[WhisperTranscriptionService] Whisper ASR request failed: ${response.status} ${errorText?.slice(0, 200)}`
+          );
         }
-
-        return { success: false, error: `Ollama transcription failed: ${response.status}` };
+        return { success: false, error: `Whisper ASR transcription failed: ${response.status}` };
       }
 
       const payload = await response.json();
-      const parsed = parseOllamaResponse(payload);
+      const parsed = parseWhisperAsrJsonResponse(payload);
       if (!parsed) {
-        return { success: false, error: 'Ollama transcription returned no text' };
+        return { success: false, error: 'Whisper ASR returned no text' };
       }
       return parsed;
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? `Ollama transcription error: ${error.message}` : 'Ollama transcription error',
+        error: error instanceof Error ? `Whisper ASR error: ${error.message}` : 'Whisper ASR error',
       };
     }
   }

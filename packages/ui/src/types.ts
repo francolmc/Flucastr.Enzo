@@ -54,6 +54,11 @@ export interface SystemConfigView {
   hasTelegramBotToken: boolean;
   hasTavilyApiKey: boolean;
   secretStoragePath: string;
+  whisperUrl: string;
+  whisperLanguage: string;
+  ttsVoiceEs: string;
+  ttsVoiceEn: string;
+  voiceTriggers: string[];
 }
 
 export interface SystemConfigUpdatePayload {
@@ -74,6 +79,11 @@ export interface SystemConfigUpdatePayload {
   telegramAgentAutoroute?: boolean;
   telegramBotToken?: string;
   tavilyApiKey?: string;
+  whisperUrl?: string;
+  whisperLanguage?: string;
+  ttsVoiceEs?: string;
+  ttsVoiceEn?: string;
+  voiceTriggers?: string[];
 }
 
 export interface AssistantProfile {

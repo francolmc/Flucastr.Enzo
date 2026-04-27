@@ -4,10 +4,21 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
-function createConfigServiceMock(openAiApiKey: string | null, ollamaBaseUrl = 'http://localhost:11434'): any {
+function createConfigServiceMock(
+  openAiApiKey: string | null,
+  options: { whisperUrl?: string; whisperLanguage?: string } = {}
+): any {
+  const whisperUrl = options.whisperUrl ?? 'http://localhost:9000';
+  const whisperLanguage = options.whisperLanguage ?? 'es';
   return {
+    getWhisperUrl() {
+      return whisperUrl;
+    },
+    getWhisperLanguage() {
+      return whisperLanguage;
+    },
     getSystemConfig() {
-      return { ollamaBaseUrl };
+      return { ollamaBaseUrl: 'http://localhost:11434', whisperUrl, whisperLanguage };
     },
     getProviderApiKey(provider: string) {
       if (provider !== 'openai') return null;
@@ -22,8 +33,16 @@ async function runTests(): Promise<void> {
     const service = new WhisperTranscriptionService(
       createConfigServiceMock(null),
       {
-        fetchFn: async (url: RequestInfo | URL) => {
-          if (String(url).includes('/api/transcribe')) {
+        fetchFn: async (url: RequestInfo | URL, init?: RequestInit) => {
+          const raw = String(url);
+          if (raw.includes('/asr')) {
+            assert(raw.includes('encode=true'), 'Expected encode=true in query');
+            assert(raw.includes('task=transcribe'), 'Expected task=transcribe in query');
+            assert(raw.includes('output=json'), 'Expected output=json in query');
+            assert(raw.includes('language=es'), 'Expected language=es in query');
+            if (init?.body instanceof FormData) {
+              assert((init.body as globalThis.FormData).has('audio_file'), 'Expected audio_file in form');
+            }
             return new Response(JSON.stringify({ text: 'hola mundo', language: 'es', duration: 3.4 }), {
               status: 200,
               headers: { 'Content-Type': 'application/json' },
@@ -40,7 +59,7 @@ async function runTests(): Promise<void> {
     assert(result.language === 'es', 'Expected language=es');
   }
 
-  console.log('Test: Ollama no disponible intenta fallback OpenAI');
+  console.log('Test: Whisper ASR no disponible intenta fallback OpenAI');
   {
     const calledUrls: string[] = [];
     const service = new WhisperTranscriptionService(
@@ -49,8 +68,8 @@ async function runTests(): Promise<void> {
         fetchFn: async (url: RequestInfo | URL) => {
           const rawUrl = String(url);
           calledUrls.push(rawUrl);
-          if (rawUrl.includes('/api/transcribe')) {
-            return new Response('model whisper not found', { status: 404 });
+          if (rawUrl.includes('/asr')) {
+            return new Response('not found', { status: 404 });
           }
           if (rawUrl.includes('api.openai.com')) {
             return new Response(JSON.stringify({ text: 'from openai' }), {
@@ -66,8 +85,8 @@ async function runTests(): Promise<void> {
     const result = await service.transcribe(Buffer.from('audio'), 'audio/wav');
     assert(result.success === true, 'Expected success=true from OpenAI fallback');
     assert(result.text === 'from openai', 'Expected OpenAI transcribed text');
-    assert(calledUrls.some((url) => url.includes('/api/transcribe')), 'Expected Ollama to be attempted');
-    assert(calledUrls.some((url) => url.includes('api.openai.com')), 'Expected OpenAI fallback to be attempted');
+    assert(calledUrls.some((u) => u.includes('/asr')), 'Expected Whisper ASR to be attempted');
+    assert(calledUrls.some((u) => u.includes('api.openai.com')), 'Expected OpenAI fallback to be attempted');
   }
 
   console.log('Test: Ningún modelo disponible retorna error sin lanzar');
@@ -75,7 +94,7 @@ async function runTests(): Promise<void> {
     const service = new WhisperTranscriptionService(
       createConfigServiceMock(null),
       {
-        fetchFn: async () => new Response('model whisper not found', { status: 404 }),
+        fetchFn: async () => new Response('not found', { status: 404 }),
       }
     );
 

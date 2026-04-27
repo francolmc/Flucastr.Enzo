@@ -6,6 +6,8 @@ import {
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
   AudioConverter,
+  getVoiceTriggers,
+  requestsVoiceResponse,
 } from '@enzo/core';
 import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
@@ -15,6 +17,7 @@ import { randomUUID } from 'crypto';
 
 const MAX_MESSAGE_LENGTH = 4096;
 const inputChunker = new InputChunker();
+const TTS_FALLBACK_NOTE = '_(No pude generar audio, pero acá va la respuesta)_';
 
 /** Best-effort user-visible error; logs if Telegram rejects the send (e.g. rate limit). */
 async function safeReply(ctx: EnzoContext, text: string): Promise<void> {
@@ -23,6 +26,34 @@ async function safeReply(ctx: EnzoContext, text: string): Promise<void> {
   } catch (err) {
     console.error('[Telegram] safeReply failed:', err);
   }
+}
+
+async function sendTextResponse(ctx: EnzoContext, content: string, metadata: string): Promise<void> {
+  if (content.length + metadata.length + 10 > MAX_MESSAGE_LENGTH) {
+    const chunks: string[] = [];
+    let remaining = content;
+
+    while (remaining.length > MAX_MESSAGE_LENGTH - 50) {
+      chunks.push(remaining.substring(0, MAX_MESSAGE_LENGTH - 50));
+      remaining = remaining.substring(MAX_MESSAGE_LENGTH - 50);
+    }
+
+    if (remaining.length > 0) {
+      chunks.push(remaining);
+    }
+
+    for (let i = 0; i < chunks.length - 1; i++) {
+      await ctx.reply(chunks[i]);
+    }
+
+    const lastChunk = chunks[chunks.length - 1] || '';
+    const finalMessage = `${lastChunk}\n\n${metadata}`;
+    await ctx.reply(finalMessage);
+    return;
+  }
+
+  const finalMessage = `${content}\n\n${metadata}`;
+  await ctx.reply(finalMessage);
 }
 
 function getAllowedUsers(): Set<string> {
@@ -178,37 +209,39 @@ async function processMessageInBackground(
       ? `${responsePrefix}\n${translatedContent}`
       : translatedContent;
 
+    const shouldSendVoice = ctx.configService
+      ? requestsVoiceResponse(messageText, getVoiceTriggers(ctx.configService))
+      : requestsVoiceResponse(messageText);
+
     // Prepare response with metadata
     const metadata = `_⚡ ${result.modelUsed} · ${result.durationMs}ms_`;
 
-    // Handle message splitting if necessary
-    if (prefixedContent.length + metadata.length + 10 > MAX_MESSAGE_LENGTH) {
-      // Content is too long, split it
-      const chunks: string[] = [];
-      let remaining = prefixedContent;
+    if (shouldSendVoice) {
+      const chatId = ctx.chat?.id;
+      const ttsService = ctx.ttsService;
+      let sentVoice = false;
 
-      while (remaining.length > MAX_MESSAGE_LENGTH - 50) {
-        chunks.push(remaining.substring(0, MAX_MESSAGE_LENGTH - 50));
-        remaining = remaining.substring(MAX_MESSAGE_LENGTH - 50);
+      if (chatId != null && ttsService) {
+        const ttsResult = await ttsService.synthesize(translatedContent, langContext.userLanguage);
+        if (ttsResult.success && ttsResult.audioBuffer) {
+          try {
+            await ctx.telegram.sendVoice(chatId, { source: ttsResult.audioBuffer });
+            sentVoice = true;
+          } catch (error) {
+            console.warn('[Telegram] Failed to send TTS voice message:', error);
+          }
+        } else if (ttsResult.error) {
+          console.warn('[Telegram] TTS synthesis failed:', ttsResult.error);
+        }
       }
 
-      if (remaining.length > 0) {
-        chunks.push(remaining);
+      if (!sentVoice) {
+        await sendTextResponse(ctx, `${TTS_FALLBACK_NOTE}\n\n${prefixedContent}`, metadata);
+      } else {
+        await sendTextResponse(ctx, prefixedContent, metadata);
       }
-
-      // Send all chunks except the last
-      for (let i = 0; i < chunks.length - 1; i++) {
-        await ctx.reply(chunks[i]);
-      }
-
-      // Send last chunk with metadata
-      const lastChunk = chunks[chunks.length - 1] || '';
-      const finalMessage = `${lastChunk}\n\n${metadata}`;
-      await ctx.reply(finalMessage);
     } else {
-      // Message fits in one, send with metadata
-      const finalMessage = `${prefixedContent}\n\n${metadata}`;
-      await ctx.reply(finalMessage);
+      await sendTextResponse(ctx, prefixedContent, metadata);
     }
 
     // Extract and save memories in background — no await, no blocking

@@ -7,6 +7,16 @@ import './ConfigPage.css';
 
 const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
 
+/** In sync with VOICE_RESPONSE_TRIGGERS in @enzo/core (defaults for the voice UI). */
+const DEFAULT_VOICE_TRIGGERS = [
+  'respondeme por voz',
+  'en audio',
+  'mándame un audio',
+  'mandame un audio',
+  'responde en audio',
+  'en voz',
+] as const;
+
 function ConfigPage() {
   const {
     config,
@@ -51,6 +61,20 @@ function ConfigPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingSystem, setIsSavingSystem] = useState(false);
+  const [isSavingVoice, setIsSavingVoice] = useState(false);
+  const [voiceForm, setVoiceForm] = useState<{
+    whisperUrl: string;
+    whisperLanguage: string;
+    ttsVoiceEs: string;
+    ttsVoiceEn: string;
+    voiceTriggers: string[];
+  }>({
+    whisperUrl: 'http://localhost:9000',
+    whisperLanguage: 'es',
+    ttsVoiceEs: 'es-CL-CatalinaNeural',
+    ttsVoiceEn: 'en-US-AriaNeural',
+    voiceTriggers: [...DEFAULT_VOICE_TRIGGERS],
+  });
   const [systemForm, setSystemForm] = useState({
     ollamaBaseUrl: '',
     anthropicModel: '',
@@ -121,6 +145,22 @@ function ConfigPage() {
       telegramBotToken: '',
       tavilyApiKey: '',
     }));
+  }, [systemConfig]);
+
+  useEffect(() => {
+    if (!systemConfig) {
+      return;
+    }
+    setVoiceForm({
+      whisperUrl: systemConfig.whisperUrl || 'http://localhost:9000',
+      whisperLanguage: systemConfig.whisperLanguage || 'es',
+      ttsVoiceEs: systemConfig.ttsVoiceEs || 'es-CL-CatalinaNeural',
+      ttsVoiceEn: systemConfig.ttsVoiceEn || 'en-US-AriaNeural',
+      voiceTriggers:
+        systemConfig.voiceTriggers?.length > 0
+          ? [...systemConfig.voiceTriggers]
+          : [...DEFAULT_VOICE_TRIGGERS],
+    });
   }, [systemConfig]);
 
   const handleSaveProfiles = async (e: React.FormEvent) => {
@@ -270,6 +310,26 @@ function ConfigPage() {
       alert('Error al guardar configuración de sistema');
     } finally {
       setIsSavingSystem(false);
+    }
+  };
+
+  const handleSaveVoiceConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingVoice(true);
+    try {
+      await updateSystemConfig({
+        whisperUrl: voiceForm.whisperUrl,
+        whisperLanguage: voiceForm.whisperLanguage,
+        ttsVoiceEs: voiceForm.ttsVoiceEs,
+        ttsVoiceEn: voiceForm.ttsVoiceEn,
+        voiceTriggers: voiceForm.voiceTriggers.map((s) => s.trim()).filter((s) => s.length > 0),
+      });
+      alert('Configuración de voz guardada');
+    } catch (error) {
+      console.error('Error saving voice config:', error);
+      alert('Error al guardar configuración de voz');
+    } finally {
+      setIsSavingVoice(false);
     }
   };
 
@@ -643,7 +703,111 @@ function ConfigPage() {
 
       <section className="config-section">
         <div className="config-section-header">
-          <span className="badge">Paso 4 · Configurar</span>
+          <span className="badge">Paso 4 · Voz</span>
+          <h2>Whisper, TTS y respuestas en audio (Telegram)</h2>
+        </div>
+        <form className="agent-form surface-card" onSubmit={handleSaveVoiceConfig}>
+          <p className="config-card-description">
+            Transcripción con el servicio ASR (p. ej. <code>onerahmet/openai-whisper-asr-webservice</code>) y
+            Edge TTS. Los cambios se guardan en <code>config.json</code> y aplican en la siguiente operación
+            sin reiniciar.
+          </p>
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="voiceWhisperUrl">URL de Whisper (ASR)</label>
+              <input
+                id="voiceWhisperUrl"
+                type="text"
+                value={voiceForm.whisperUrl}
+                onChange={(e) => setVoiceForm({ ...voiceForm, whisperUrl: e.target.value })}
+                placeholder="http://localhost:9000"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="voiceWhisperLanguage">Idioma de transcripción (query language)</label>
+              <input
+                id="voiceWhisperLanguage"
+                type="text"
+                value={voiceForm.whisperLanguage}
+                onChange={(e) => setVoiceForm({ ...voiceForm, whisperLanguage: e.target.value })}
+                placeholder="es"
+              />
+            </div>
+          </div>
+          <div className="form-group-row">
+            <div className="form-group">
+              <label htmlFor="voiceTtsEs">Voz TTS (español)</label>
+              <input
+                id="voiceTtsEs"
+                type="text"
+                value={voiceForm.ttsVoiceEs}
+                onChange={(e) => setVoiceForm({ ...voiceForm, ttsVoiceEs: e.target.value })}
+                placeholder="es-CL-CatalinaNeural"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="voiceTtsEn">Voz TTS (inglés)</label>
+              <input
+                id="voiceTtsEn"
+                type="text"
+                value={voiceForm.ttsVoiceEn}
+                onChange={(e) => setVoiceForm({ ...voiceForm, ttsVoiceEn: e.target.value })}
+                placeholder="en-US-AriaNeural"
+              />
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Triggers de respuesta por voz</label>
+            <p className="config-card-description">
+              Si el mensaje de texto del usuario contiene una de estas frases, se responde también en audio.
+            </p>
+            {voiceForm.voiceTriggers.map((phrase, index) => (
+              <div key={index} className="form-group-row" style={{ marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={phrase}
+                  onChange={(e) => {
+                    const next = [...voiceForm.voiceTriggers];
+                    next[index] = e.target.value;
+                    setVoiceForm({ ...voiceForm, voiceTriggers: next });
+                  }}
+                  placeholder="Frase disparadora"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoiceForm({
+                      ...voiceForm,
+                      voiceTriggers: voiceForm.voiceTriggers.filter((_, i) => i !== index),
+                    });
+                  }}
+                >
+                  Quitar
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="new-agent-btn"
+              onClick={() =>
+                setVoiceForm({ ...voiceForm, voiceTriggers: [...voiceForm.voiceTriggers, ''] })
+              }
+            >
+              + Agregar frase
+            </button>
+          </div>
+          <div className="form-actions">
+            <button type="submit" disabled={isSavingVoice}>
+              {isSavingVoice ? 'Guardando...' : 'Guardar voz'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 5 · Configurar</span>
           <h2>Agentes personalizados</h2>
         </div>
 

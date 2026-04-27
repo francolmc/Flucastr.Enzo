@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EncryptionService } from '../security/EncryptionService.js';
+import { VOICE_RESPONSE_TRIGGERS } from '../voice/VoiceTrigger.js';
 
 export interface ProviderConfig {
   name: string;
@@ -63,6 +64,14 @@ export interface StoredSystemConfig {
   enzoNativeToolCalling: boolean;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
+  /** Standalone Whisper ASR (e.g. onerahmet/openai-whisper-asr-webservice). */
+  whisperUrl: string;
+  /** Language code passed to the ASR service (e.g. es, en). */
+  whisperLanguage: string;
+  ttsVoiceEs: string;
+  ttsVoiceEn: string;
+  /** Substrings that request a TTS response (must stay non-empty; empty saves reset to defaults). */
+  voiceTriggers: string[];
 }
 
 export interface SystemConfigView {
@@ -84,6 +93,11 @@ export interface SystemConfigView {
   hasTelegramBotToken: boolean;
   hasTavilyApiKey: boolean;
   secretStoragePath: string;
+  whisperUrl: string;
+  whisperLanguage: string;
+  ttsVoiceEs: string;
+  ttsVoiceEn: string;
+  voiceTriggers: string[];
 }
 
 export interface SystemConfigUpdate {
@@ -108,6 +122,11 @@ export interface SystemConfigUpdate {
   enzoVerifyBeforeSynthesis?: boolean;
   enzoSkillsFallbackAllWhenNoneEnabled?: boolean;
   enzoNativeToolCalling?: boolean;
+  whisperUrl?: string;
+  whisperLanguage?: string;
+  ttsVoiceEs?: string;
+  ttsVoiceEn?: string;
+  voiceTriggers?: string[];
 }
 
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
@@ -141,6 +160,16 @@ function normalizeFallbackAllWhenNone(value: unknown, defaultValue: boolean): bo
   if (value === true || value === false) return value;
   if (typeof value === 'string') return value.toLowerCase() !== 'false';
   return defaultValue;
+}
+
+function normalizeVoiceTriggersList(value: unknown, fallback: readonly string[]): string[] {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+  const out = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((s) => s.length > 0);
+  return out.length > 0 ? out : [...fallback];
 }
 
 function getDefaultConfig(): ModelsConfig {
@@ -189,6 +218,11 @@ function getDefaultConfig(): ModelsConfig {
       enzoVerifyBeforeSynthesis: booleanFromEnvKey('ENZO_VERIFY_BEFORE_SYNTHESIS', false),
       enzoSkillsFallbackAllWhenNoneEnabled: booleanFromEnvDefaultTrue('ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED'),
       enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
+      whisperUrl: process.env.WHISPER_URL || 'http://localhost:9000',
+      whisperLanguage: process.env.WHISPER_LANGUAGE || 'es',
+      ttsVoiceEs: 'es-CL-CatalinaNeural',
+      ttsVoiceEn: 'en-US-AriaNeural',
+      voiceTriggers: [...VOICE_RESPONSE_TRIGGERS],
     },
     assistantProfile: {
       name: 'Enzo',
@@ -259,6 +293,20 @@ export class ConfigService {
       system.enzoNativeToolCalling,
       defaults.system.enzoNativeToolCalling
     );
+
+    system.voiceTriggers = normalizeVoiceTriggersList(system.voiceTriggers, VOICE_RESPONSE_TRIGGERS);
+    if (!system.whisperUrl || typeof system.whisperUrl !== 'string') {
+      system.whisperUrl = defaults.system.whisperUrl;
+    }
+    if (!system.whisperLanguage || typeof system.whisperLanguage !== 'string') {
+      system.whisperLanguage = defaults.system.whisperLanguage;
+    }
+    if (!system.ttsVoiceEs || typeof system.ttsVoiceEs !== 'string') {
+      system.ttsVoiceEs = defaults.system.ttsVoiceEs;
+    }
+    if (!system.ttsVoiceEn || typeof system.ttsVoiceEn !== 'string') {
+      system.ttsVoiceEn = defaults.system.ttsVoiceEn;
+    }
 
     if (loaded?.providers) {
       for (const [key, provider] of Object.entries(loaded.providers)) {
@@ -434,6 +482,8 @@ export class ConfigService {
       ? 'true'
       : 'false';
     process.env.ENZO_NATIVE_TOOL_CALLING = system.enzoNativeToolCalling ? 'true' : 'false';
+    process.env.WHISPER_URL = system.whisperUrl;
+    process.env.WHISPER_LANGUAGE = system.whisperLanguage;
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -609,7 +659,22 @@ export class ConfigService {
       hasTelegramBotToken: !!system.telegramBotTokenEncrypted,
       hasTavilyApiKey: !!system.tavilyApiKeyEncrypted,
       secretStoragePath: `${process.env.HOME || process.env.USERPROFILE || '~'}/.enzo/secret.key`,
+      whisperUrl: system.whisperUrl,
+      whisperLanguage: system.whisperLanguage,
+      ttsVoiceEs: system.ttsVoiceEs,
+      ttsVoiceEn: system.ttsVoiceEn,
+      voiceTriggers: [...system.voiceTriggers],
     };
+  }
+
+  getWhisperUrl(): string {
+    this.syncConfigFromDisk();
+    return this.config.system.whisperUrl || 'http://localhost:9000';
+  }
+
+  getWhisperLanguage(): string {
+    this.syncConfigFromDisk();
+    return this.config.system.whisperLanguage || 'es';
   }
 
   setSystemConfig(update: SystemConfigUpdate): void {
@@ -664,7 +729,26 @@ export class ConfigService {
       ...(update.enzoNativeToolCalling !== undefined
         ? { enzoNativeToolCalling: update.enzoNativeToolCalling }
         : {}),
+      ...(update.whisperUrl !== undefined && typeof update.whisperUrl === 'string'
+        ? { whisperUrl: update.whisperUrl.trim() || current.whisperUrl }
+        : {}),
+      ...(update.whisperLanguage !== undefined && typeof update.whisperLanguage === 'string'
+        ? { whisperLanguage: update.whisperLanguage.trim() || current.whisperLanguage }
+        : {}),
+      ...(update.ttsVoiceEs !== undefined && typeof update.ttsVoiceEs === 'string'
+        ? { ttsVoiceEs: update.ttsVoiceEs.trim() || current.ttsVoiceEs }
+        : {}),
+      ...(update.ttsVoiceEn !== undefined && typeof update.ttsVoiceEn === 'string'
+        ? { ttsVoiceEn: update.ttsVoiceEn.trim() || current.ttsVoiceEn }
+        : {}),
     };
+
+    if (update.voiceTriggers !== undefined) {
+      this.config.system.voiceTriggers = normalizeVoiceTriggersList(
+        update.voiceTriggers,
+        VOICE_RESPONSE_TRIGGERS
+      );
+    }
 
     if (typeof update.telegramBotToken === 'string' && update.telegramBotToken.trim().length > 0) {
       this.config.system.telegramBotTokenEncrypted = this.encryptionService.encrypt(update.telegramBotToken.trim());
