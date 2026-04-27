@@ -2,8 +2,24 @@ import chalk from 'chalk';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { clearEnzoSupervisorState, writeEnzoSupervisorState } from '@enzo/core';
+import {
+  clearEnzoSupervisorState,
+  ENZO_SUPERVISOR_STATE_FILENAME,
+  writeEnzoSupervisorState,
+} from '@enzo/core';
 import { configExists, createConfigService } from '../utils/config.js';
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function start(): Promise<void> {
   try {
@@ -24,8 +40,24 @@ export async function start(): Promise<void> {
 
     const processes: any[] = [];
     const repoRoot = process.cwd();
+    const supervisorStatePath = path.resolve(repoRoot, ENZO_SUPERVISOR_STATE_FILENAME);
     const apiDistPath = path.resolve(repoRoot, 'packages/api/dist/index.js');
     const telegramDistPath = path.resolve(repoRoot, 'packages/telegram/dist/index.js');
+
+    try {
+      if (fs.existsSync(supervisorStatePath)) {
+        const raw = fs.readFileSync(supervisorStatePath, 'utf-8');
+        const state = JSON.parse(raw) as { pid?: number };
+        if (state.pid && isProcessAlive(state.pid)) {
+          console.log(chalk.yellow('⚠️  Enzo ya está corriendo (supervisor activo).'));
+          console.log(chalk.gray(`PID: ${state.pid}`));
+          console.log(chalk.gray('Si quieres reiniciar, usa `/update` o detén la sesión actual con Ctrl+C.\n'));
+          return;
+        }
+      }
+    } catch {
+      // Ignore malformed state file and continue startup attempt.
+    }
 
     if (!fs.existsSync(apiDistPath)) {
       console.log(chalk.red('❌ API no compilada.\n'));
@@ -42,7 +74,7 @@ export async function start(): Promise<void> {
       {
         cwd: process.cwd(),
         stdio: 'inherit',
-        shell: true,
+        shell: false,
         env: {
           ...process.env,
           VITE_UI_PORT: uiPort,
@@ -57,7 +89,7 @@ export async function start(): Promise<void> {
     const apiProcess = spawn('pnpm', ['-F', '@enzo/api', 'start'], {
       cwd: process.cwd(),
       stdio: 'inherit',
-      shell: true,
+      shell: false,
     });
     processes.push(apiProcess);
 
@@ -74,7 +106,7 @@ export async function start(): Promise<void> {
       const telegramProcess = spawn('pnpm', ['-F', '@enzo/telegram', 'start'], {
         cwd: process.cwd(),
         stdio: 'inherit',
-        shell: true,
+        shell: false,
       });
       processes.push(telegramProcess);
     }
