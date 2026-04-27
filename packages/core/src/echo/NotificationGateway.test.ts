@@ -108,6 +108,49 @@ async function runTests(): Promise<void> {
   assert(infoLogs.length === 1, 'expected fallback to log channel');
   console.log('✓ Pass\n');
 
+  console.log('Test: getRecentNotifications lists successful sends newest first');
+  const histGateway = new NotificationGateway({
+    now: () => new Date('2026-04-27T14:00:00.000Z'),
+    resolveChatId: async () => 'chat-h',
+    sendTelegram: async () => true,
+    logger: console,
+  });
+  await histGateway.notify('u-hist', 'first', { priority: 'URGENT' });
+  await histGateway.notify('u-hist', 'second', { priority: 'URGENT' });
+  const recent = histGateway.getRecentNotifications('u-hist', 10);
+  assert(recent.length === 2, 'expected two history entries');
+  assert(recent[0]?.message === 'second', 'expected newest first');
+  assert(recent[0]?.channel === 'telegram', 'expected telegram channel');
+  assert(histGateway.getRecentNotifications('u-hist', 1)[0]?.message === 'second', 'limit should keep newest');
+  assert(histGateway.getRecentNotifications('unknown-user').length === 0, 'unknown user returns empty history');
+  console.log('✓ Pass\n');
+
+  console.log('Test: LOW priority records log channel in history');
+  const lowHistGateway = new NotificationGateway({
+    now: () => new Date('2026-04-27T14:00:00.000Z'),
+    resolveChatId: async () => 'chat-low',
+    sendTelegram: async () => true,
+    logger: console,
+  });
+  await lowHistGateway.notify('u-low', 'lowmsg', { priority: 'LOW' });
+  const lowRecent = lowHistGateway.getRecentNotifications('u-low');
+  assert(lowRecent.length === 1 && lowRecent[0]?.channel === 'log', 'expected LOW to appear as log in history');
+  console.log('✓ Pass\n');
+
+  console.log('Test: deduplicated second notify does not append history');
+  let dedupHistNow = new Date('2026-04-27T15:00:00.000Z').getTime();
+  const dedupHistGateway = new NotificationGateway({
+    now: () => new Date(dedupHistNow),
+    resolveChatId: async () => 'chat-dh',
+    sendTelegram: async () => true,
+    logger: console,
+  });
+  await dedupHistGateway.notify('u-dh', 'once', { priority: 'URGENT', deduplicationKey: 'k-same' });
+  dedupHistNow += 60 * 1000;
+  await dedupHistGateway.notify('u-dh', 'twice', { priority: 'URGENT', deduplicationKey: 'k-same' });
+  assert(dedupHistGateway.getRecentNotifications('u-dh').length === 1, 'dedup skip should not add second history row');
+  console.log('✓ Pass\n');
+
   console.log('NotificationGateway tests passed.');
 }
 

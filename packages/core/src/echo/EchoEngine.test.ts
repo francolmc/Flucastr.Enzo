@@ -40,6 +40,8 @@ async function runTests(): Promise<void> {
       statusAfterRegister.tasks.some((task) => task.id === 'status-task'),
       'expected task to be listed in status'
     );
+    const statusTask = statusAfterRegister.tasks.find((task) => task.id === 'status-task');
+    assert(statusTask?.schedule === 'interval:1min', 'expected status to include effective schedule');
     console.log('✓ Pass\n');
 
     console.log('Test: runNow executes and returns EchoResult');

@@ -16,7 +16,13 @@ import {
   EncryptionService,
   ensureLocalSecret,
 } from "@enzo/core";
-import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway, createAgentRouter } from "@enzo/bootstrap";
+import {
+  createDefaultToolRegistry,
+  getEchoEngine,
+  getEchoNotificationGateway,
+  createNotificationGateway,
+  createAgentRouter,
+} from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -25,6 +31,7 @@ import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
 import { createEchoRouter } from "./routes/echo.js";
+import { createProjectsRouter } from "./routes/projects.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -96,6 +103,7 @@ const orchestrator = new Orchestrator(
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
 const echoEngine = getEchoEngine({ memoryService, configService });
+const echoNotificationGateway = getEchoNotificationGateway();
 echoEngine.start();
 
 // Initialize skills on startup; watch filesystem for SKILL.md changes
@@ -174,12 +182,13 @@ app.get("/health", (req, res) => {
 
 app.use(createChatRouter(orchestrator, memoryService, configService));
 app.use(createMemoryRouter(memoryService));
+app.use(createProjectsRouter(memoryService));
 app.use(createAgentsRouter(memoryService));
 app.use(createStatsRouter(memoryService));
 app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter(skillRegistry));
 app.use(createMCPRouter(mcpRegistry));
-app.use(createEchoRouter(echoEngine));
+app.use(createEchoRouter(echoEngine, echoNotificationGateway));
 
 app.use(errorHandler);
 

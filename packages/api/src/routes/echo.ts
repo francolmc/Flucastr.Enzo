@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { EchoEngine } from '@enzo/core';
+import { EchoEngine, type NotificationGateway } from '@enzo/core';
 
-export function createEchoRouter(echoEngine: EchoEngine): Router {
+export function createEchoRouter(
+  echoEngine: EchoEngine,
+  notificationGateway?: NotificationGateway
+): Router {
   const router = Router();
 
   router.get('/api/echo/status', (req: Request, res: Response) => {
@@ -10,6 +13,19 @@ export function createEchoRouter(echoEngine: EchoEngine): Router {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: errorMsg });
+    }
+  });
+
+  router.get('/api/echo/notifications/:userId', (req: Request, res: Response) => {
+    try {
+      const { userId } = req.params;
+      if (!notificationGateway) {
+        res.json([]);
+        return;
+      }
+      res.json(notificationGateway.getRecentNotifications(userId));
+    } catch {
+      res.json([]);
     }
   });
 

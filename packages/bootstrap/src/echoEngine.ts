@@ -10,6 +10,7 @@ import {
 } from '@enzo/core';
 
 let sharedEchoEngine: EchoEngine | null = null;
+let echoNotificationGateway: NotificationGateway | null = null;
 
 interface EchoEngineBindings {
   memoryService?: MemoryService;
@@ -105,12 +106,17 @@ export function createNotificationGateway(
   });
 }
 
+export function getEchoNotificationGateway(): NotificationGateway | undefined {
+  return echoNotificationGateway ?? undefined;
+}
+
 export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
   if (!sharedEchoEngine) {
     sharedEchoEngine = new EchoEngine();
     const { memoryService, configService, sendTelegramMessage } = bindings;
     if (memoryService && configService) {
       const notificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
+      echoNotificationGateway = notificationGateway;
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
       sharedEchoEngine.registerTask(
         createMorningBriefingTask({ memoryService, notificationGateway, resolveUserId })

@@ -10,6 +10,7 @@ export {
   type NotificationChannel,
   type NotificationOptions,
   type NotificationGatewayDependencies,
+  type SentNotificationRecord,
 } from './NotificationGateway.js';
 export {
   createMorningBriefingTask,

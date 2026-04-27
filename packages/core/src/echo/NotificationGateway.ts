@@ -2,6 +2,7 @@ const DEDUP_WINDOW_MS = 4 * 60 * 60 * 1000;
 const SILENCE_START_HOUR = 23;
 const SILENCE_END_HOUR = 7;
 const NORMAL_LIMIT_PER_HOUR = 3;
+const MAX_HISTORY_PER_USER = 50;
 
 export type NotificationPriority = 'URGENT' | 'NORMAL' | 'LOW';
 export type NotificationChannel = 'telegram' | 'log';
@@ -10,6 +11,13 @@ export interface NotificationOptions {
   priority: NotificationPriority;
   channel?: NotificationChannel;
   deduplicationKey?: string;
+}
+
+export interface SentNotificationRecord {
+  message: string;
+  priority: NotificationPriority;
+  sentAt: Date;
+  channel: NotificationChannel;
 }
 
 export interface NotificationGatewayDependencies {
@@ -38,12 +46,47 @@ export class NotificationGateway {
   private readonly logger: Pick<Console, 'info' | 'warn'>;
   private readonly deduplicationState = new Map<string, number>();
   private readonly normalRateState = new Map<string, { hour: string; count: number }>();
+  private readonly notificationHistory = new Map<string, SentNotificationRecord[]>();
 
   constructor(deps: NotificationGatewayDependencies) {
     this.nowProvider = deps.now ?? (() => new Date());
     this.resolveChatId = deps.resolveChatId;
     this.sendTelegram = deps.sendTelegram;
     this.logger = deps.logger ?? console;
+  }
+
+  getRecentNotifications(userId: string, limit = 10): SentNotificationRecord[] {
+    const list = this.notificationHistory.get(userId);
+    if (!list?.length) {
+      return [];
+    }
+    const slice = list.slice(-limit);
+    return slice.reverse().map((r) => ({
+      message: r.message,
+      priority: r.priority,
+      sentAt: new Date(r.sentAt.getTime()),
+      channel: r.channel,
+    }));
+  }
+
+  private recordSent(
+    userId: string,
+    message: string,
+    priority: NotificationPriority,
+    sentAt: Date,
+    channel: NotificationChannel
+  ): void {
+    const list = this.notificationHistory.get(userId) ?? [];
+    list.push({
+      message,
+      priority,
+      sentAt: new Date(sentAt.getTime()),
+      channel,
+    });
+    while (list.length > MAX_HISTORY_PER_USER) {
+      list.shift();
+    }
+    this.notificationHistory.set(userId, list);
   }
 
   async notify(userId: string, message: string, options: NotificationOptions): Promise<void> {
@@ -81,7 +124,10 @@ export class NotificationGateway {
     }
 
     const disableNotification = options.priority !== 'URGENT';
-    await this.sendTelegram(chatId, message, disableNotification);
+    const ok = await this.sendTelegram(chatId, message, disableNotification);
+    if (ok) {
+      this.recordSent(userId, message, options.priority, now, 'telegram');
+    }
   }
 
   private shouldSkipByDeduplication(deduplicationKey: string | undefined, nowMs: number): boolean {
@@ -131,5 +177,6 @@ export class NotificationGateway {
     this.logger.info(
       `[Echo][${reason}] user=${userId} priority=${priority} at=${now.toISOString()} message=${message}`
     );
+    this.recordSent(userId, message, priority, now, 'log');
   }
 }

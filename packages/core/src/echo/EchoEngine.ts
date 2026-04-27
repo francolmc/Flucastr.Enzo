@@ -27,6 +27,7 @@ export interface EchoEngineStatus {
     id: string;
     name: string;
     enabled: boolean;
+    schedule: string;
     lastRun?: Date;
     nextRun?: Date;
     lastResult?: EchoResult;
@@ -165,10 +166,11 @@ export class EchoEngine {
   getStatus(): EchoEngineStatus {
     return {
       running: this.running,
-      tasks: Array.from(this.tasks.values()).map(({ task, lastResult }) => ({
+      tasks: Array.from(this.tasks.values()).map(({ task, lastResult, activeSchedule }) => ({
         id: task.id,
         name: task.name,
         enabled: task.enabled,
+        schedule: activeSchedule,
         lastRun: task.lastRun,
         nextRun: task.nextRun,
         lastResult,

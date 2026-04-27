@@ -60,3 +60,21 @@ export function normalizeMemoryKey(raw: string): MemoryKey {
     (Object.values(MEMORY_KEYS).includes(lower as MemoryKey) ? (lower as MemoryKey) : 'other')
   );
 }
+
+const CANONICAL_MEMORY_KEY_SET = new Set<string>(Object.values(MEMORY_KEYS));
+
+/** Accepts only known API keys or aliases; rejects unknown strings (unlike normalizeMemoryKey, which maps them to `other`). */
+export function parseMemoryKeyFromRequest(raw: string): MemoryKey | null {
+  const lower = raw.toLowerCase().trim();
+  if (lower.length === 0) {
+    return null;
+  }
+  const fromAlias = MEMORY_KEY_ALIASES[lower];
+  if (fromAlias) {
+    return fromAlias;
+  }
+  if (CANONICAL_MEMORY_KEY_SET.has(lower)) {
+    return lower as MemoryKey;
+  }
+  return null;
+}

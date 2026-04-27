@@ -6,6 +6,7 @@ export {
   MEMORY_KEYS,
   MEMORY_KEY_ALIASES,
   normalizeMemoryKey,
+  parseMemoryKeyFromRequest,
 } from './MemoryKeys.js';
 export type { MemoryKey } from './MemoryKeys.js';
 export type { Memory, UsageStat, MessageRecord, ConversationRecord, AgentRecord } from './types.js';
