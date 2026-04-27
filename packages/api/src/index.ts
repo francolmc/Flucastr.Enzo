@@ -5,8 +5,19 @@ import fsSync from "fs";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
-import { Orchestrator, OllamaProvider, AnthropicProvider, MemoryService, SkillRegistry, MCPRegistry, ConfigService, EncryptionService, ensureLocalSecret } from "@enzo/core";
-import { createDefaultToolRegistry, getEchoEngine } from "@enzo/bootstrap";
+import {
+  AgentRouter,
+  Orchestrator,
+  OllamaProvider,
+  AnthropicProvider,
+  MemoryService,
+  SkillRegistry,
+  MCPRegistry,
+  ConfigService,
+  EncryptionService,
+  ensureLocalSecret,
+} from "@enzo/core";
+import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -73,6 +84,8 @@ const anthropicProvider = anthropicApiKey
   : undefined;
 
 const memoryService = new MemoryService(dbPath);
+const agentNotificationGateway = createNotificationGateway(memoryService);
+const agentRouter = new AgentRouter({ notificationGateway: agentNotificationGateway });
 
 const skillRegistry = new SkillRegistry(undefined, memoryService);
 const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
@@ -80,7 +93,7 @@ const orchestrator = new Orchestrator(
   ollamaProvider,
   anthropicProvider,
   memoryService,
-  { skillRegistry, configService, toolRegistry }
+  { skillRegistry, configService, toolRegistry, agentRouter }
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
 const echoEngine = getEchoEngine({ memoryService, configService });

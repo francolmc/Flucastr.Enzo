@@ -89,7 +89,7 @@ async function resolveTelegramChatId(memoryService: MemoryService, userId: strin
   return memories[0]?.value?.trim() || undefined;
 }
 
-function createNotificationGateway(
+export function createNotificationGateway(
   memoryService: MemoryService,
   telegramSender?: (chatId: string, message: string, disableNotification: boolean) => Promise<boolean>
 ): NotificationGateway {

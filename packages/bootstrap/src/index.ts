@@ -1,2 +1,2 @@
 export { createDefaultToolRegistry } from './createDefaultToolRegistry.js';
-export { getEchoEngine } from './echoEngine.js';
+export { getEchoEngine, createNotificationGateway } from './echoEngine.js';

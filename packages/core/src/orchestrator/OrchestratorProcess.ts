@@ -24,6 +24,8 @@ export type OrchestratorProcessBindings = {
   buildUserProfileBlock(userId: string, profile: UserProfile): string;
   sanitizeMemoryBlock(memoryBlock: string, assistantName: string): string;
   getMemoryExtractor(): { buildMemoryBlock(userId: string): Promise<string> };
+  /** Key/value memories for delegation (Amplifier userMemories). */
+  recallUserMemories(userId: string): Promise<Array<{ key: string; value: string }>>;
   getConfigService(): ConfigService | undefined;
   getToolRegistry(): { getToolDefinitions(): Tool[] };
   getMcpRegistry(): { getMCPToolsForOrchestrator(): Tool[] };
@@ -109,6 +111,8 @@ export async function executeOrchestratorProcess(
     ...input.toolExecutionContext,
   };
 
+  const userMemories = await b.recallUserMemories(input.userId);
+
   let amplifierResult: AmplifierResult;
   const runtimeAmplifierLoop = b.createAmplifierLoop(runtimeProvider);
   try {
@@ -120,6 +124,7 @@ export async function executeOrchestratorProcess(
       userId: input.userId,
       history: historyWithMemory,
       memoryBlock,
+      userMemories,
       availableTools: tools,
       availableSkills: skills,
       availableAgents: agents,
@@ -145,6 +150,7 @@ export async function executeOrchestratorProcess(
         userId: input.userId,
         history: historyWithMemory,
         memoryBlock,
+        userMemories,
         availableTools: tools,
         availableSkills: skills,
         availableAgents: agents,

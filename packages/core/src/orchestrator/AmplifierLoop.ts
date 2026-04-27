@@ -38,7 +38,7 @@ import { runSimpleModerateFastPath } from './amplifier/AmplifierSimplePath.js';
 import { runThinkPhase } from './amplifier/AmplifierThinkPhase.js';
 import { runActPhase, type AmplifierLoopPhaseDeps } from './amplifier/AmplifierActPhase.js';
 import { runObservePhase } from './amplifier/AmplifierObservePhase.js';
-import type { AgentRouter } from './AgentRouter.js';
+import type { AgentRouterContract, DelegationRequest, DelegationResult } from './AgentRouter.js';
 import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
@@ -54,7 +54,7 @@ export type AmplifierLoopOptions = {
   /** When true (or env ENZO_VERIFY_BEFORE_SYNTHESIS=true), run a short verification pass before final synthesis. */
   verifyBeforeSynthesize?: boolean;
   /** When set, THINK may emit `delegate` and the loop will run specialized agents. */
-  agentRouter?: AgentRouter;
+  agentRouter?: AgentRouterContract;
 };
 
 export class AmplifierLoop {
@@ -72,7 +72,7 @@ export class AmplifierLoop {
   private skillRegistry?: SkillRegistry;
   private mcpRegistry?: MCPRegistry;
   private verifyBeforeSynthesize: boolean;
-  private agentRouter?: AgentRouter;
+  private agentRouter?: AgentRouterContract;
 
   constructor(
     baseProvider: LLMProvider,
@@ -110,6 +110,17 @@ export class AmplifierLoop {
     ]);
   }
 
+  private static formatDelegationObserve(agent: string, result: DelegationResult): string {
+    if (result.success) {
+      let text = `Agent ${agent} completed: ${result.output}`;
+      if (result.filesCreated?.length) {
+        text += `\n\nFiles: ${result.filesCreated.join(', ')}`;
+      }
+      return text;
+    }
+    return `Agent ${agent} failed: ${result.error?.trim() || 'Unknown error'}`;
+  }
+
   /**
    * After THINK+resolve yield `delegate`, run the external agent and build trace + observe steps.
    */
@@ -117,16 +128,9 @@ export class AmplifierLoop {
     d: { agent: string; task: string; reason: string },
     iteration: number,
     requestId: string | undefined,
-    contextForDelegate: string
+    input: Pick<AmplifierInput, 'userId' | 'userMemories' | 'message'>,
+    options: { conversationSummary: string; previousStepResults?: string }
   ): Promise<{ actTrace: Step; observe: Step }> {
-    const routerStart = Date.now();
-    const delegateText = await (this.agentRouter?.delegate(
-      d.agent,
-      d.task,
-      contextForDelegate
-    ) ?? Promise.resolve(DELEGATION_NOT_CONFIGURED));
-    const routerMs = Date.now() - routerStart;
-    const observeOutput = `Agent ${d.agent} completed the task: ${delegateText}`;
     const actTrace: Step = {
       iteration,
       type: 'act',
@@ -139,16 +143,52 @@ export class AmplifierLoop {
       status: 'ok',
       modelUsed: this.baseProvider.model,
     };
-    const observe: Step = {
-      iteration,
-      type: 'observe',
-      requestId,
-      output: observeOutput,
-      durationMs: routerMs,
-      status: 'ok',
-      modelUsed: this.baseProvider.model,
+
+    const routerStart = Date.now();
+    if (!this.agentRouter) {
+      const routerMs = Date.now() - routerStart;
+      const observeOutput = `Agent ${d.agent} completed the task: ${DELEGATION_NOT_CONFIGURED}`;
+      return {
+        actTrace,
+        observe: {
+          iteration,
+          type: 'observe',
+          requestId,
+          output: observeOutput,
+          durationMs: routerMs,
+          status: 'ok',
+          modelUsed: this.baseProvider.model,
+        },
+      };
+    }
+
+    const delegationRequest: DelegationRequest = {
+      agent: d.agent,
+      task: d.task,
+      reason: d.reason,
+      context: {
+        userId: input.userId,
+        memories: input.userMemories ?? [],
+        conversationSummary: options.conversationSummary,
+        previousStepResults: options.previousStepResults,
+      },
     };
-    return { actTrace, observe };
+
+    const result = await this.agentRouter.delegate(delegationRequest);
+    const routerMs = Date.now() - routerStart;
+    const observeOutput = AmplifierLoop.formatDelegationObserve(d.agent, result);
+    return {
+      actTrace,
+      observe: {
+        iteration,
+        type: 'observe',
+        requestId,
+        output: observeOutput,
+        durationMs: routerMs,
+        status: result.success ? 'ok' : 'error',
+        modelUsed: this.baseProvider.model,
+      },
+    };
   }
 
   private async requestToolInputCorrection(
@@ -748,9 +788,14 @@ Do NOT search for more information. Use what is provided.`;
           );
           if (actResult.kind === 'delegate') {
             recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, true);
-            const subDelegateCtx = [accumulatedContext, this.contextSynthesizer.compress(steps)]
+            const subStepSummary = this.contextSynthesizer.compress(steps);
+            const conversationSummary = [
+              `Subtask [${subtask.id}] (tool: ${subtask.tool}): ${subtaskInput.message}`,
+              `Compressed step trace:\n${subStepSummary}`,
+            ]
               .filter((s) => s && s.trim().length > 0)
               .join('\n\n');
+            const previousStepResults = accumulatedContext.trim() ? accumulatedContext : undefined;
             const { actTrace, observe: observeStep } = await this.processDelegationInLoop(
               {
                 agent: actResult.agent,
@@ -759,7 +804,8 @@ Do NOT search for more information. Use what is provided.`;
               },
               subtaskIteration,
               requestId,
-              subDelegateCtx
+              input,
+              { conversationSummary, previousStepResults }
             );
             recordStageMetric(
               stageMetrics,
@@ -1034,7 +1080,12 @@ Do NOT search for more information. Use what is provided.`;
       );
       if (actResult.kind === 'delegate') {
         recordStageMetric(stageMetrics, 'act', Date.now() - actStart, true);
-        const delegateCtx = [currentContext, this.contextSynthesizer.compress(steps)]
+        const stepSummary = this.contextSynthesizer.compress(steps);
+        const conversationSummary = [
+          `User message: ${input.message}`,
+          currentContext && `Context prior to this iteration:\n${currentContext}`,
+          `Compressed step trace:\n${stepSummary}`,
+        ]
           .filter((s) => s && s.trim().length > 0)
           .join('\n\n');
         const { actTrace, observe: observeStep } = await this.processDelegationInLoop(
@@ -1045,7 +1096,8 @@ Do NOT search for more information. Use what is provided.`;
           },
           iteration,
           requestId,
-          delegateCtx
+          input,
+          { conversationSummary, previousStepResults: undefined }
         );
         recordStageMetric(
           stageMetrics,

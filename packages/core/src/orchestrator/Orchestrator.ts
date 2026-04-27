@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { executeOrchestratorProcess, type OrchestratorProcessBindings } from './OrchestratorProcess.js';
+import type { AgentRouterContract } from '../agents/AgentRouter.js';
 
 export class Orchestrator {
   private classifier: Classifier;
@@ -39,12 +40,19 @@ export class Orchestrator {
   private agentConfig: Map<string, any>;
   private availableSkills: Skill[];
   private availableAgents: AgentConfig[];
+  private agentRouter?: AgentRouterContract;
 
   constructor(
     ollamaProvider: OllamaProvider,
     anthropicProvider?: AnthropicProvider,
     memoryService?: MemoryService,
-    options?: { toolRegistry?: ToolRegistry; agentConfig?: Map<string, any>; skillRegistry?: SkillRegistry; configService?: ConfigService },
+    options?: {
+      toolRegistry?: ToolRegistry;
+      agentConfig?: Map<string, any>;
+      skillRegistry?: SkillRegistry;
+      configService?: ConfigService;
+      agentRouter?: AgentRouterContract;
+    }
   ) {
     this.baseProvider = ollamaProvider;
     this.ollamaProvider = ollamaProvider;
@@ -54,6 +62,7 @@ export class Orchestrator {
     this.availableAgents = [];
     this.skillRegistry = options?.skillRegistry;
     this.configService = options?.configService;
+    this.agentRouter = options?.agentRouter;
 
     // Initialize memory service if not provided
     if (!memoryService) {
@@ -157,6 +166,10 @@ export class Orchestrator {
       buildUserProfileBlock: (u, p) => this.buildUserProfileBlock(u, p),
       sanitizeMemoryBlock: (m, n) => this.sanitizeMemoryBlock(m, n),
       getMemoryExtractor: () => this.memoryExtractor,
+      recallUserMemories: async (userId) => {
+        const rows = await this.memoryService.recall(userId);
+        return rows.map((m) => ({ key: m.key, value: m.value }));
+      },
       getConfigService: () => this.configService,
       getToolRegistry: () => this.toolRegistry,
       getMcpRegistry: () => this.mcpRegistry,
@@ -333,6 +346,7 @@ ${providerList}`;
       mcpRegistry: this.mcpRegistry,
       /** Off while we validate portability; set `true` (omit) to re-enable COMPLEX organize path */
       fileOrganization: false,
+      agentRouter: this.agentRouter,
     });
   }
 

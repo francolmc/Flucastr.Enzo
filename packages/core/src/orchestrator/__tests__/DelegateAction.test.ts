@@ -5,7 +5,7 @@ import type { AvailableCapabilities, ResolvedAction } from '../types.js';
 import { AVAILABLE_TOOLS, ComplexityLevel } from '../types.js';
 import { CompletionRequest, CompletionResponse, LLMProvider } from '../../providers/types.js';
 import { createDefaultAmplifierLoopLog } from '../amplifier/AmplifierLoopLog.js';
-import type { AgentRouter } from '../AgentRouter.js';
+import type { AgentRouterContract, DelegationRequest, DelegationResult } from '../AgentRouter.js';
 
 const delegateThinkJson = JSON.stringify({
   action: 'delegate',
@@ -85,11 +85,11 @@ async function testActPhase() {
 async function testAmplifierLoopIntegration() {
   const delegateQueue = [delegateThinkJson, '{"action":"none"}', 'final reply for user'];
   const provider = new QueueProvider(delegateQueue);
-  const routerCalls: { agent: string; task: string; context: string }[] = [];
-  const router: AgentRouter = {
-    async delegate(agent: string, task: string, context: string) {
-      routerCalls.push({ agent, task, context });
-      return 'DELEGATE_RESULT';
+  const routerCalls: DelegationRequest[] = [];
+  const router: AgentRouterContract = {
+    async delegate(request: DelegationRequest): Promise<DelegationResult> {
+      routerCalls.push(request);
+      return { success: true, agent: request.agent, output: 'DELEGATE_RESULT' };
     },
   };
   const loop = new AmplifierLoop(provider, [], {
@@ -111,11 +111,12 @@ async function testAmplifierLoopIntegration() {
   assert(routerCalls.length === 1, 'loop: router should be called once');
   assert(routerCalls[0]!.agent === 'claude_code', 'loop: wrong agent to router');
   assert(routerCalls[0]!.task.includes('100-line'), 'loop: wrong task to router');
+  assert(routerCalls[0]!.context.userId === 'u1', 'loop: userId in delegation context');
   const observe = result.stepsUsed.filter((s) => s.type === 'observe');
   const injected = observe.find((s) => s.output?.includes('DELEGATE_RESULT'));
   assert(!!injected, 'loop: should inject observe with delegate result');
   assert(
-    Boolean(injected!.output?.includes('Agent claude_code completed the task:')),
+    Boolean(injected!.output?.includes('Agent claude_code completed: DELEGATE_RESULT')),
     'loop: expected observe text prefix'
   );
   const thinkSteps = result.stepsUsed.filter((s) => s.type === 'think');

@@ -83,6 +83,8 @@ export interface AmplifierInput {
   assistantProfile?: AssistantProfile;
   userProfile?: UserProfile;
   memoryBlock?: string;
+  /** Structured user memories (from recall) for delegation and prompts. */
+  userMemories?: Array<{ key: string; value: string }>;
   onProgress?: (step: Step) => void;
   /** Optional OS/paths for prompts (fast path). Defaults preserve prior macOS-oriented behavior. */
   runtimeHints?: {

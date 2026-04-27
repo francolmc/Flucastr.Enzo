@@ -1,9 +1,11 @@
 /**
- * Routes delegated subtasks to specialized agents. Implement in Paso 5.2; inject via {@link AmplifierLoopOptions.agentRouter}.
+ * @deprecated Import from `../agents/AgentRouter.js` — re-exported here for path stability.
+ * Routes delegated subtasks to specialized agents. Inject via {@link AmplifierLoopOptions.agentRouter}.
  */
-export interface AgentRouter {
-  delegate(agent: string, task: string, context: string): Promise<string>;
-}
-
-export const DELEGATION_NOT_CONFIGURED =
-  'Delegation is not configured (no agent router). Ask an operator to enable AgentRouter.';
+export {
+  type DelegationRequest,
+  type DelegationResult,
+  type AgentRouterContract,
+  AgentRouter,
+  DELEGATION_NOT_CONFIGURED,
+} from '../agents/AgentRouter.js';

@@ -22,6 +22,7 @@ function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath
 }
 
 import {
+  AgentRouter,
   OllamaProvider,
   AnthropicProvider,
   MemoryService,
@@ -33,7 +34,7 @@ import {
   WhisperTranscriptionService,
   EdgeTTSService,
 } from '@enzo/core';
-import { createDefaultToolRegistry, getEchoEngine } from '@enzo/bootstrap';
+import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
@@ -129,11 +130,13 @@ async function main() {
     echoEngine.start();
     const transcriptionService = new WhisperTranscriptionService(configService);
     const ttsService = new EdgeTTSService({ configService });
+    const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
+    const agentRouter = new AgentRouter({ notificationGateway: agentNotificationGateway });
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
       memoryService,
-      { skillRegistry, configService, toolRegistry }
+      { skillRegistry, configService, toolRegistry, agentRouter }
     );
     console.log('[Telegram] Orchestrator initialized');
 
