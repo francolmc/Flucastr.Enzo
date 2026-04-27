@@ -109,6 +109,11 @@ Para un `/update` robusto en Telegram, instala Enzo como servicio de usuario (re
 ./scripts/install-systemd-user.sh
 ```
 
+Este instalador:
+- crea `~/.config/systemd/user/enzo.service`
+- genera `scripts/run-enzo-systemd.sh`
+- autodetecta `fnm`/`node`/`pnpm` para evitar problemas de PATH en `systemd --user`
+
 Comandos utiles:
 
 ```bash
