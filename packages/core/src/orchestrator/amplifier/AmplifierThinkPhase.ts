@@ -107,6 +107,12 @@ ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is 
 AVAILABLE TOOLS:
 ${toolsList}
 
+PROACTIVE SEARCH RULE:
+Before answering any question about facts, people, companies, prices, events,
+or anything that could have changed, use web_search.
+Do not answer from memory when web_search is available.
+If you are unsure whether to search — search.
+
 CRITICAL: To use a tool, respond ONLY with this EXACT JSON format:
 {"action":"tool","tool":"TOOL_NAME","input":{"param":"value"}}
 
