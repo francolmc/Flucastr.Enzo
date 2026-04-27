@@ -1,7 +1,6 @@
 import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import { ENZO_SUPERVISOR_STATE_FILENAME, type EnzoSupervisorState } from './supervisorState.js';
 
 function isProcessAlive(pid: number): boolean {
@@ -22,6 +21,10 @@ export interface ScheduleEnzoSupervisorRestartResult {
   kind: ScheduleEnzoRestartKind;
   /** User-facing line(s) for Telegram or logs. */
   userMessage: string;
+}
+
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -76,9 +79,20 @@ export function scheduleEnzoSupervisorRestart(options: {
   }
 
   const root = (state.root || cwd).trim();
-  const here = dirname(fileURLToPath(import.meta.url));
-  const worker = join(here, 'restartAfterUpdateWorker.js');
-  const child = spawn(process.execPath, [worker, String(state.pid), root], {
+  const logPath = join(root, '.enzo-restart.log');
+  const restartScript = [
+    `LOG=${shQuote(logPath)}`,
+    'echo "" >> "$LOG"',
+    'echo "[$(date -Iseconds)] restart scheduler started" >> "$LOG"',
+    `sleep 2`,
+    `kill -TERM ${state.pid} >/dev/null 2>&1 || true`,
+    'echo "[$(date -Iseconds)] old supervisor signal sent" >> "$LOG"',
+    'sleep 4',
+    `cd ${shQuote(root)}`,
+    'echo "[$(date -Iseconds)] launching new supervisor" >> "$LOG"',
+    'ENZO_SKIP_SUPERVISOR_GUARD=1 node packages/cli/dist/index.js start >> "$LOG" 2>&1',
+  ].join('; ');
+  const child = spawn('/bin/sh', ['-c', restartScript], {
     detached: true,
     stdio: 'ignore',
   });
