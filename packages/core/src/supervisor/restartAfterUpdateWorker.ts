@@ -3,7 +3,8 @@
  * Invoked with: `node restartAfterUpdateWorker.js <pid> <repoRoot>`
  */
 import { spawn } from 'child_process';
-import { resolveEnzoScriptPath } from './supervisorState.js';
+import { openSync } from 'fs';
+import { join } from 'path';
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -24,12 +25,13 @@ async function main(): Promise<void> {
   }
   await delay(4000);
 
-  const enzo = resolveEnzoScriptPath(root);
-  const child = spawn(enzo, ['start'], {
+  const logPath = join(root, '.enzo-restart.log');
+  const fd = openSync(logPath, 'a');
+  const child = spawn(process.execPath, ['packages/cli/dist/index.js', 'start'], {
     cwd: root,
-    shell: true,
+    shell: false,
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', fd, fd],
   });
   child.unref();
   setTimeout(() => process.exit(0), 200);
