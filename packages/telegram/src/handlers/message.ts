@@ -13,6 +13,7 @@ import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';
 import { getCurrentConversationId } from './conversationState.js';
+import { downloadUrlToBuffer } from '../downloadTelegramFile.js';
 import { randomUUID } from 'crypto';
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -337,12 +338,7 @@ function runBackgroundProcessing(
 
 async function downloadTelegramFileBuffer(ctx: EnzoContext, fileId: string): Promise<Buffer> {
   const fileUrl = await ctx.telegram.getFileLink(fileId);
-  const response = await fetch(fileUrl.toString());
-  if (!response.ok) {
-    throw new Error(`Telegram file download failed with status ${response.status}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  return downloadUrlToBuffer(fileUrl.toString());
 }
 
 export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
@@ -388,7 +384,17 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
         return;
       }
 
-      const originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      let originalBuffer: Buffer;
+      try {
+        originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      } catch (downloadErr) {
+        console.error('[Telegram] Failed to download voice file from Telegram (not Whisper):', downloadErr);
+        await safeReply(
+          ctx,
+          'No pude descargar el audio desde los servidores de Telegram (red lenta, firewall o bloqueo saliente a Telegram). Reintentá en un minuto o escribí el mensaje de texto.'
+        );
+        return;
+      }
       const converter = new AudioConverter();
       const convertedBuffer = await converter.oggToWav(originalBuffer);
       const mimeType = convertedBuffer === originalBuffer ? 'audio/ogg' : 'audio/wav';
@@ -409,7 +415,7 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
         buildTranscriptionPrefix(transcription.text)
       );
     } catch (error) {
-      console.error('[Telegram] Voice transcription failed:', error);
+      console.error('[Telegram] Voice message handling failed (after download):', error);
       await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
     }
   });
@@ -433,7 +439,17 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
         return;
       }
 
-      const originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      let originalBuffer: Buffer;
+      try {
+        originalBuffer = await downloadTelegramFileBuffer(ctx, fileId);
+      } catch (downloadErr) {
+        console.error('[Telegram] Failed to download audio file from Telegram (not Whisper):', downloadErr);
+        await safeReply(
+          ctx,
+          'No pude descargar el audio desde los servidores de Telegram (red lenta, firewall o bloqueo saliente a Telegram). Reintentá en un minuto o escribí el mensaje de texto.'
+        );
+        return;
+      }
       const converter = new AudioConverter();
       const convertedBuffer = await converter.oggToWav(originalBuffer);
       const mimeType = ctx.message?.audio?.mime_type || (convertedBuffer === originalBuffer ? 'audio/ogg' : 'audio/wav');
@@ -454,7 +470,7 @@ export function registerMessageHandler(bot: Telegraf<EnzoContext>): void {
         buildTranscriptionPrefix(transcription.text)
       );
     } catch (error) {
-      console.error('[Telegram] Audio transcription failed:', error);
+      console.error('[Telegram] Audio message handling failed (after download):', error);
       await safeReply(ctx, 'No pude procesar el audio. ¿Podés escribirlo o reenviar el audio?');
     }
   });
