@@ -44,19 +44,22 @@ export async function start(): Promise<void> {
     const apiDistPath = path.resolve(repoRoot, 'packages/api/dist/index.js');
     const telegramDistPath = path.resolve(repoRoot, 'packages/telegram/dist/index.js');
 
-    try {
-      if (fs.existsSync(supervisorStatePath)) {
-        const raw = fs.readFileSync(supervisorStatePath, 'utf-8');
-        const state = JSON.parse(raw) as { pid?: number };
-        if (state.pid && isProcessAlive(state.pid)) {
-          console.log(chalk.yellow('⚠️  Enzo ya está corriendo (supervisor activo).'));
-          console.log(chalk.gray(`PID: ${state.pid}`));
-          console.log(chalk.gray('Si quieres reiniciar, usa `/update` o detén la sesión actual con Ctrl+C.\n'));
-          return;
+    const skipSupervisorGuard = process.env.ENZO_SKIP_SUPERVISOR_GUARD === '1';
+    if (!skipSupervisorGuard) {
+      try {
+        if (fs.existsSync(supervisorStatePath)) {
+          const raw = fs.readFileSync(supervisorStatePath, 'utf-8');
+          const state = JSON.parse(raw) as { pid?: number };
+          if (state.pid && isProcessAlive(state.pid)) {
+            console.log(chalk.yellow('⚠️  Enzo ya está corriendo (supervisor activo).'));
+            console.log(chalk.gray(`PID: ${state.pid}`));
+            console.log(chalk.gray('Si quieres reiniciar, usa `/update` o detén la sesión actual con Ctrl+C.\n'));
+            return;
+          }
         }
+      } catch {
+        // Ignore malformed state file and continue startup attempt.
       }
-    } catch {
-      // Ignore malformed state file and continue startup attempt.
     }
 
     if (!fs.existsSync(apiDistPath)) {
