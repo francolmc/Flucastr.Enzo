@@ -156,6 +156,8 @@ export interface OrchestratorResponse {
 export interface ClassificationResult {
   level: ComplexityLevel;
   reason: string;
+  /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
+  suggestedTool?: 'web_search';
 }
 
 export interface OrchestratorInput {

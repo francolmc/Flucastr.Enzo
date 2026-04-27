@@ -32,6 +32,15 @@ export class Classifier {
     if (impliesMultiToolWorkflow(normalizedMessage)) {
       return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow' };
     }
+    // After chained/multitool: temporal words in the same message must not preempt COMPLEX.
+    if (this.isLikelyFactualQuery(normalizedMessage)) {
+      console.log('[Classifier] Fast-path factual query → MODERATE');
+      return {
+        level: ComplexityLevel.MODERATE,
+        reason: 'Real-world factual query that requires web search for accurate answer',
+        suggestedTool: 'web_search',
+      };
+    }
     if (this.isLikelySingleToolTask(normalizedMessage)) {
       return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent' };
     }
@@ -46,15 +55,16 @@ LEVELS — apply in order, first match wins:
 
 SIMPLE — direct conversation, no tools needed:
 - Greetings: "hello", "hi", "good morning", "how are you"
-- Knowledge questions answerable from memory: "what is X", "how does Y work", "what time is it"
 - Casual conversation, confirmations, thank you, follow-ups
-- Math: "2+2", "what is 15% of 200"
-- Anything answerable without external data or file access
+- Conceptual or math without external or verifiable data: "how does Y work" (in general), "2+2", "what is 15% of 200" — not real-world facts that may be wrong if outdated (those are MODERATE, web search)
+- Anything answerable without tools, file access, or up-to-date web facts
 - Planning / coaching / lists: "help me manage my day", "daily routine tips", "how should I organize my tasks" when the user did NOT give a concrete absolute folder path to operate on
 - Spanish: "gestión del día a día", "gestionar tareas personales", "necesito organizar mi tiempo" without a path like /home/... or /Users/...
 
 MODERATE — needs exactly ONE tool:
 - Web search: "search for...", "look up...", "what does the web say about...", "busca..."
+- Real-world facts that may be outdated or require verification: current prices, exchange rates, weather, news, recent events, status of a person/company/project, sports results, release dates, any question about "now", "today", "currently", "latest", "recent"
+- Factual questions where being wrong would mislead the user: "who is the CEO of X", "what is the population of Y", "how much does Z cost", "what happened with W"
 - File operations: "read file...", "show contents of...", "list folder...", "create file..."
 - Single command execution
 - Personal statements to remember: "my name is...", "I am a...", "I live in...", "soy..."
@@ -87,7 +97,9 @@ CRITICAL RULES:
 
 Examples:
 "hola" → {"level":"SIMPLE","reason":"greeting"}
-"what is the Atacama Desert?" → {"level":"SIMPLE","reason":"knowledge question"}
+"hola cómo estás?" → {"level":"SIMPLE","reason":"greeting"}
+"cuánto es 15% de 200?" → {"level":"SIMPLE","reason":"math calculation"}
+"what is the Atacama Desert?" → {"level":"MODERATE","reason":"factual question requiring web search"}
 "search for AI news" → {"level":"MODERATE","reason":"single web search"}
 "list my Downloads folder" → {"level":"MODERATE","reason":"single file operation"}
 "remember that my name is Franco" → {"level":"MODERATE","reason":"single remember action"}
@@ -185,6 +197,72 @@ ONLY JSON. NOTHING ELSE.`;
     return /(qu[eé] tengo pendiente|qu[eé] hay de|record[aá]s|qu[eé] dijimos de|qu[eé] capturaste|mis tareas|pendientes de)/i.test(
       normalized
     );
+  }
+
+  private isLikelyFactualQuery(message: string): boolean {
+    const lower = message.toLowerCase();
+
+    const temporalIndicators = [
+      'ahora',
+      'hoy',
+      'actualmente',
+      'último',
+      'últimos',
+      'última',
+      'últimas',
+      'reciente',
+      'recientemente',
+      'now',
+      'today',
+      'currently',
+      'latest',
+      'recent',
+      'recently',
+      'this year',
+      'este año',
+      'esta semana',
+      'this week',
+    ];
+
+    const factualIndicators = [
+      'precio',
+      'costo',
+      'cuánto cuesta',
+      'cuánto vale',
+      'price',
+      'cost',
+      'how much',
+      'quién es',
+      'quien es',
+      'who is',
+      'cuántos habitantes',
+      'población',
+      'population',
+      'resultado',
+      'resultado de',
+      'score',
+      'ganó',
+      'perdió',
+      'noticias',
+      'news',
+      'qué pasó',
+      'what happened',
+      'clima',
+      'temperatura',
+      'weather',
+      'tipo de cambio',
+      'dólar',
+      'exchange rate',
+      'ceo de',
+      'ceo of',
+      'presidente de',
+      'president of',
+    ];
+
+    const hasTemporalIndicator = temporalIndicators.some((t) => lower.includes(t));
+    const hasFactualIndicator = factualIndicators.some((t) => lower.includes(t));
+
+    return hasTemporalIndicator || hasFactualIndicator;
   }
 
   private isLikelyChainedTask(message: string): boolean {
