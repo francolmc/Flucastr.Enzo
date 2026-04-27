@@ -48,6 +48,10 @@ export class SkillLoader {
     this.ensureSkillsDirectory();
   }
 
+  getSkillsDir(): string {
+    return this.skillsDir;
+  }
+
   private ensureSkillsDirectory(): void {
     if (!fs.existsSync(this.skillsDir)) {
       fs.mkdirSync(this.skillsDir, { recursive: true });

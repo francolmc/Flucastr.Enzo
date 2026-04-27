@@ -85,6 +85,7 @@ async function main() {
 
     const skillRegistry = new SkillRegistry(undefined, memoryService);
     await skillRegistry.reload();
+    skillRegistry.startWatching();
     console.log('[Telegram] SkillRegistry initialized and loaded');
 
     const ollamaBaseUrl =
@@ -227,6 +228,7 @@ async function main() {
 
     const shutdown = (signal: string) => {
       console.log(`[Telegram] ${signal} received, stopping bot...`);
+      skillRegistry.stopWatching();
       echoEngine.stop();
       if (configPoller) {
         clearInterval(configPoller);

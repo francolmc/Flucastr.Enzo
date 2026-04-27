@@ -98,10 +98,15 @@ const mcpRegistry = orchestrator.getMCPRegistry();
 const echoEngine = getEchoEngine({ memoryService, configService });
 echoEngine.start();
 
-// Initialize skills on startup
-skillRegistry.reload().catch((err: any) => {
-  console.warn('[API] Failed to load skills on startup:', err);
-});
+// Initialize skills on startup; watch filesystem for SKILL.md changes
+skillRegistry
+  .reload()
+  .then(() => {
+    skillRegistry.startWatching();
+  })
+  .catch((err: any) => {
+    console.warn('[API] Failed to load skills on startup:', err);
+  });
 
 // Copy example skills to user skills directory if they don't exist
 (async () => {
@@ -184,6 +189,7 @@ const server = app.listen(PORT, HOST, () => {
 
 const shutdown = (signal: string): void => {
   console.log(`[API] ${signal} received, stopping services...`);
+  skillRegistry.stopWatching();
   echoEngine.stop();
   server.close(() => {
     process.exit(0);

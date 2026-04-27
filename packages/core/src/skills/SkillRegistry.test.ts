@@ -1,4 +1,6 @@
+import fs from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { SkillRegistry } from './SkillRegistry.js';
 import type { MemoryService } from '../memory/MemoryService.js';
 
@@ -30,6 +32,23 @@ async function runTests(): Promise<void> {
     .getAll()
     .find((s) => s.metadata.triggers?.includes('enzo_test_trigger_alpha'));
   assert(!!byTrigger && byTrigger.id === 'test-skill', 'expected trigger to resolve to test-skill');
+  console.log('✓ Passed\n');
+
+  console.log('Test: startWatching when skills directory exists');
+  registry.startWatching();
+  registry.stopWatching();
+  console.log('✓ Passed\n');
+
+  console.log('Test: startWatching when skills directory does not exist (graceful)');
+  const emptySkillsRoot = fs.mkdtempSync(join(tmpdir(), 'enzo-skill-watch-'));
+  const missingDirRegistry = new SkillRegistry(emptySkillsRoot, memoryMock);
+  fs.rmSync(emptySkillsRoot, { recursive: true, force: true });
+  missingDirRegistry.startWatching();
+  console.log('✓ Passed\n');
+
+  console.log('Test: stopWatching when no watcher is active');
+  const fresh = new SkillRegistry(skillsDir, memoryMock);
+  fresh.stopWatching();
   console.log('✓ Passed\n');
 
   console.log('SkillRegistry tests passed.');
