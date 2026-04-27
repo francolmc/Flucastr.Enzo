@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: uiPort,
       strictPort: true,
+      allowedHosts: ['enzo.nsideas.cl'],
       proxy: {
         '/api': {
           target: apiTarget,
