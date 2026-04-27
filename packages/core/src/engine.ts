@@ -21,6 +21,12 @@ export { initStageMetrics, recordStageMetric } from './orchestrator/amplifier/Am
 export * from './orchestrator/types.js';
 export { MemoryService } from './memory/MemoryService.js';
 export { MemoryExtractor } from './memory/MemoryExtractor.js';
+export {
+  RecallTool,
+  type RecallInput,
+  type RecallOutput,
+  type RecallItem,
+} from './memory/RecallTool.js';
 export type { Message, LLMProvider, Tool } from './providers/types.js';
 export { CircuitOpenError } from './providers/circuitBreaker.js';
 export {

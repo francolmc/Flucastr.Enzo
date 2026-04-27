@@ -18,6 +18,10 @@ export class Classifier {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
       return { level: ComplexityLevel.SIMPLE, reason: 'trivial message' };
     }
+    if (this.isLikelyRecallQuery(normalizedMessage.toLowerCase())) {
+      console.log('[Classifier] Fast-path recall query → MODERATE');
+      return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool' };
+    }
     if (this.isLikelyAbstractLifePlanningWithoutPaths(normalizedMessage)) {
       console.log('[Classifier] Fast-path life/task planning (no paths) → SIMPLE');
       return { level: ComplexityLevel.SIMPLE, reason: 'abstract task or daily planning without concrete file paths' };
@@ -60,6 +64,7 @@ MODERATE — needs exactly ONE tool:
 - Queries about CURRENT system state (RAM, disk, processes, OS version, CPU usage)
   These REQUIRE execute_command — never classify as SIMPLE (model doesn't know real system state)
 - Call an HTTP/API endpoint when the user provides a URL → execute_command with curl
+- Questions about what the user has pending, captured, or said before are MODERATE — they need RecallTool, not web search.
 
 COMPLEX — when there are 2 or more chained actions, OR when reorganizing/moving multiple files:
 - "search X and then create a file with the result"
@@ -91,6 +96,8 @@ Examples:
 "¿qué versión de macOS tengo?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
 "¿cuánto espacio libre hay en disco?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
 "consulta https://api.github.com/users/octocat" → {"level":"MODERATE","reason":"single curl API call"}
+"¿qué tengo pendiente de Dash?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
+"¿recordás lo que dijimos del PR?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
 "search what is the Atacama Desert and then create a file with a summary" → {"level":"COMPLEX","reason":"chained: search then write file"}
 "read file X and save a summary to file Y" → {"level":"COMPLEX","reason":"chained: read then write"}
 "move those folders to IntroProgra" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv multiple items"}
@@ -168,7 +175,16 @@ ONLY JSON. NOTHING ELSE.`;
     const normalized = message.toLowerCase();
     const hasChainWords = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
     if (hasChainWords) return false;
+    if (this.isLikelyRecallQuery(normalized)) {
+      return true;
+    }
     return /\b(read|lee|list|ls|search|busca|remember|recuerda|curl|consulta|version|ram|disk|disco)\b/i.test(normalized);
+  }
+
+  private isLikelyRecallQuery(normalized: string): boolean {
+    return /(qu[eé] tengo pendiente|qu[eé] hay de|record[aá]s|qu[eé] dijimos de|qu[eé] capturaste|mis tareas|pendientes de)/i.test(
+      normalized
+    );
   }
 
   private isLikelyChainedTask(message: string): boolean {

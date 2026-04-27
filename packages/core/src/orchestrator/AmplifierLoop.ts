@@ -219,6 +219,7 @@ No markdown. No prose.`;
         log: this.log,
         requestToolInputCorrection: this.requestToolInputCorrection.bind(this),
         verifyBeforeSynthesize: this.verifyBeforeSynthesize,
+        capabilityResolver: this.capabilityResolver,
       });
     }
 

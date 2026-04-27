@@ -2,11 +2,47 @@ import { AvailableCapabilities, ResolvedAction, StepAction } from './types.js';
 import { IntentAnalyzer } from './IntentAnalyzer.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 
+function foldDiacritics(input: string): string {
+  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+export interface TriggerMatch {
+  toolName: string;
+  matched: string;
+}
+
 export class CapabilityResolver {
   private intentAnalyzer: IntentAnalyzer | null = null;
 
   setIntentAnalyzer(analyzer: IntentAnalyzer): void {
     this.intentAnalyzer = analyzer;
+  }
+
+  /**
+   * Match the user's raw message against any tool's `triggers` phrases.
+   * Comparison is case-insensitive and diacritic-insensitive. Returns the first hit or `null`.
+   */
+  resolveByTrigger(
+    userMessage: string,
+    executableTools: ReadonlyArray<{ name: string; triggers?: readonly string[] }>
+  ): TriggerMatch | null {
+    if (!userMessage) return null;
+    const haystack = foldDiacritics(userMessage.toLowerCase());
+
+    for (const tool of executableTools) {
+      const triggers = tool.triggers;
+      if (!triggers || triggers.length === 0) continue;
+      for (const phrase of triggers) {
+        if (!phrase) continue;
+        const needle = foldDiacritics(phrase.toLowerCase()).trim();
+        if (needle.length === 0) continue;
+        if (haystack.includes(needle)) {
+          return { toolName: tool.name, matched: phrase };
+        }
+      }
+    }
+
+    return null;
   }
 
   async resolve(thought: string, available: AvailableCapabilities): Promise<ResolvedAction> {

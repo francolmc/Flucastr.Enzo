@@ -234,4 +234,18 @@ export const AVAILABLE_TOOLS = [
       required: ['key', 'value', 'userId'],
     },
   },
+  {
+    name: 'recall',
+    description: 'Search the user\'s saved memories using a natural-language query. Use when the user asks what they have pending, captured, or said before.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Natural-language search query' },
+        project: { type: 'string', description: 'Optional project filter (substring match on memory value)' },
+        key: { type: 'string', description: 'Optional memory key filter (e.g., "projects", "other")' },
+        userId: { type: 'string', description: 'User id owner of the memories' },
+      },
+      required: ['query', 'userId'],
+    },
+  },
 ];

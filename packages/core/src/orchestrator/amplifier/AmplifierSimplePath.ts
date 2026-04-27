@@ -32,6 +32,7 @@ import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
+import type { CapabilityResolver } from '../CapabilityResolver.js';
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
   classifiedLevel: ComplexityLevel;
@@ -56,6 +57,7 @@ export type SimpleModeratePathContext = {
     errorDetail: string
   ) => Promise<{ toolName: string; toolInput: any } | null>;
   verifyBeforeSynthesize?: boolean;
+  capabilityResolver?: CapabilityResolver;
 };
 
 function formatFastPathDateLine(input: AmplifierInput): string {
@@ -99,6 +101,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     log,
     requestToolInputCorrection,
     verifyBeforeSynthesize = false,
+    capabilityResolver,
   } = ctx;
 
   const isModerate = classifiedLevel === ComplexityLevel.MODERATE;
@@ -188,27 +191,44 @@ If responding with plain text (no tool), write in this language.`;
 
   const messages: Message[] = [...input.history, { role: 'user', content: input.message }];
 
-  let firstResponse;
-  const fastThinkStart = Date.now();
-  try {
-    firstResponse = await withTimeout(
-      baseProvider.complete({
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.3,
-        maxTokens: 384,
-      }),
-      180_000,
-      'SIMPLE first call'
-    );
-  } catch (err) {
-    log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
-    recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
-    throw err;
-  }
-  recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+  const triggerMatch = capabilityResolver
+    ? capabilityResolver.resolveByTrigger(input.message, executableTools)
+    : null;
 
-  const rawContent = (firstResponse.content ?? '').trim();
-  log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
+  let rawContent: string;
+  if (triggerMatch) {
+    log.info(
+      `[AmplifierLoop] Trigger matched "${triggerMatch.matched}" → tool "${triggerMatch.toolName}" (skipping LLM tool selection)`
+    );
+    rawContent = JSON.stringify({
+      action: 'tool',
+      tool: triggerMatch.toolName,
+      input: { query: input.originalMessage ?? input.message },
+    });
+    recordStageMetric(stageMetrics, 'think', 0, true);
+  } else {
+    let firstResponse;
+    const fastThinkStart = Date.now();
+    try {
+      firstResponse = await withTimeout(
+        baseProvider.complete({
+          messages: [{ role: 'system', content: systemPrompt }, ...messages],
+          temperature: 0.3,
+          maxTokens: 384,
+        }),
+        180_000,
+        'SIMPLE first call'
+      );
+    } catch (err) {
+      log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
+      recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
+      throw err;
+    }
+    recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+
+    rawContent = (firstResponse.content ?? '').trim();
+    log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
+  }
 
   let finalContent = rawContent;
 

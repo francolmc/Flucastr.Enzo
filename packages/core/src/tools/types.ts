@@ -28,6 +28,11 @@ export interface ExecutableTool extends Tool {
    * Example: `ejecutar_comando` → `execute_command`.
    */
   actionAliases?: readonly string[];
+  /**
+   * Trigger phrases (case-insensitive, diacritic-insensitive) on the user's raw message that
+   * should route directly to this tool, bypassing the LLM tool selection step.
+   */
+  triggers?: readonly string[];
   /** Mutates `input` before validation and `execute` (e.g. inject `userId` for remember). */
   injectExecutionContext?(input: Record<string, unknown>, ctx: ToolExecutionContext): void;
   /** When set, successful act-phase output uses this instead of `JSON.stringify(data)`. */

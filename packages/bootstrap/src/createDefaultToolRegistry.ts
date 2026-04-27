@@ -5,6 +5,7 @@ import {
   ExecuteCommandTool,
   ReadFileTool,
   RememberTool,
+  RecallTool,
   WriteFileTool,
   resolveWorkspaceRoot,
 } from '@enzo/core';
@@ -27,6 +28,7 @@ export function createDefaultToolRegistry(
   registry.register(new ExecuteCommandTool({ cwd: resolvedWorkspace }));
   registry.register(new ReadFileTool(workspacePath));
   registry.register(new RememberTool(memoryService));
+  registry.register(new RecallTool(memoryService));
   registry.register(new WriteFileTool(workspacePath));
   return registry;
 }
