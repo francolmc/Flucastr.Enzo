@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
 import { Orchestrator, OllamaProvider, AnthropicProvider, MemoryService, SkillRegistry, MCPRegistry, ConfigService, EncryptionService, ensureLocalSecret } from "@enzo/core";
-import { createDefaultToolRegistry } from "@enzo/bootstrap";
+import { createDefaultToolRegistry, getEchoEngine } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -14,6 +14,7 @@ import { createStatsRouter } from "./routes/stats.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
+import { createEchoRouter } from "./routes/echo.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +83,8 @@ const orchestrator = new Orchestrator(
   { skillRegistry, configService, toolRegistry }
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
+const echoEngine = getEchoEngine();
+echoEngine.start();
 
 // Initialize skills on startup
 skillRegistry.reload().catch((err: any) => {
@@ -159,9 +162,21 @@ app.use(createStatsRouter(memoryService));
 app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter(skillRegistry));
 app.use(createMCPRouter(mcpRegistry));
+app.use(createEchoRouter(echoEngine));
 
 app.use(errorHandler);
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`🚀 Enzo API corriendo en http://${HOST}:${PORT}`);
 });
+
+const shutdown = (signal: string): void => {
+  console.log(`[API] ${signal} received, stopping services...`);
+  echoEngine.stop();
+  server.close(() => {
+    process.exit(0);
+  });
+};
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

@@ -19,6 +19,7 @@ export { ModelSelector } from './orchestrator/ModelSelector.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './orchestrator/OrchestratorCapabilities.js';
 export { initStageMetrics, recordStageMetric } from './orchestrator/amplifier/AmplifierLoopMetrics.js';
 export * from './orchestrator/types.js';
+export * from './echo/index.js';
 export { MemoryService } from './memory/MemoryService.js';
 export { MemoryExtractor } from './memory/MemoryExtractor.js';
 export {

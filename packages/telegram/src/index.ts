@@ -31,7 +31,7 @@ import {
   EncryptionService,
   ensureLocalSecret,
 } from '@enzo/core';
-import { createDefaultToolRegistry } from '@enzo/bootstrap';
+import { createDefaultToolRegistry, getEchoEngine } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
@@ -103,6 +103,8 @@ async function main() {
     }
 
     const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
+    const echoEngine = getEchoEngine();
+    echoEngine.start();
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -200,6 +202,7 @@ async function main() {
 
     const shutdown = (signal: string) => {
       console.log(`[Telegram] ${signal} received, stopping bot...`);
+      echoEngine.stop();
       if (configPoller) {
         clearInterval(configPoller);
         configPoller = null;

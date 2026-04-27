@@ -11,6 +11,7 @@ export function initializeCore(config: EnzoConfig): void {
 }
 
 export * from './orchestrator/index.js';
+export * from './echo/index.js';
 export * from './memory/index.js';
 export * from './tools/index.js';
 export * from './providers/index.js';

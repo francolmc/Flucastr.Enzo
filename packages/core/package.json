@@ -22,11 +22,12 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "pnpm run build && node dist/tools/__tests__/ToolRegistry.test.js && node dist/tools/__tests__/WorkspacePathPolicy.test.js && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/CapabilityResolverTriggers.test.js && node dist/orchestrator/__tests__/TaskRoutingHints.test.js && node dist/orchestrator/__tests__/DecomposerEmptySteps.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js && node dist/orchestrator/__tests__/CoreFlowAudit.test.js && node dist/orchestrator/__tests__/RegressionDatasetGate.test.js && node dist/providers/__tests__/RetryPolicy.test.js && node dist/input/InputChunker.test.js && node dist/memory/MemoryExtractor.test.js && node dist/memory/RecallTool.test.js && node dist/memory/Database.test.js && node dist/skills/SkillRegistry.test.js"
+    "test": "pnpm run build && node dist/tools/__tests__/ToolRegistry.test.js && node dist/tools/__tests__/WorkspacePathPolicy.test.js && node dist/orchestrator/__tests__/IntentAnalyzer.test.js && node dist/orchestrator/__tests__/CapabilityResolver.test.js && node dist/orchestrator/__tests__/CapabilityResolverTriggers.test.js && node dist/orchestrator/__tests__/TaskRoutingHints.test.js && node dist/orchestrator/__tests__/DecomposerEmptySteps.test.js && node dist/orchestrator/__tests__/ModelAgnosticRegression.test.js && node dist/orchestrator/__tests__/CoreFlowAudit.test.js && node dist/orchestrator/__tests__/RegressionDatasetGate.test.js && node dist/providers/__tests__/RetryPolicy.test.js && node dist/input/InputChunker.test.js && node dist/memory/MemoryExtractor.test.js && node dist/memory/RecallTool.test.js && node dist/memory/Database.test.js && node dist/echo/EchoEngine.test.js && node dist/skills/SkillRegistry.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "js-yaml": "^4.1.0",
+    "node-cron": "^4.2.1",
     "uuid": "^9.0.1",
     "zod": "^3.22.4"
   },
