@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { clearEnzoSupervisorState, writeEnzoSupervisorState } from '@enzo/core';
 import { configExists, createConfigService } from '../utils/config.js';
 
 export async function start(): Promise<void> {
@@ -88,10 +89,13 @@ export async function start(): Promise<void> {
     console.log('\n');
     console.log(chalk.yellow('Presiona Ctrl+C para detener.\n'));
 
+    writeEnzoSupervisorState(repoRoot, process.pid);
+
     // Handle graceful shutdown
     process.on('SIGINT', () => {
       console.log('\n');
       console.log(chalk.yellow('Deteniendo servicios...'));
+      clearEnzoSupervisorState(repoRoot);
       processes.forEach((proc) => {
         if (proc && proc.pid) {
           proc.kill('SIGTERM');
@@ -105,6 +109,7 @@ export async function start(): Promise<void> {
     process.on('SIGTERM', () => {
       console.log('\n');
       console.log(chalk.yellow('Deteniendo servicios...'));
+      clearEnzoSupervisorState(repoRoot);
       processes.forEach((proc) => {
         if (proc && proc.pid) {
           proc.kill('SIGTERM');

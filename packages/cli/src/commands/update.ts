@@ -1,3 +1,4 @@
+import { scheduleEnzoSupervisorRestart } from '@enzo/core';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
@@ -21,6 +22,13 @@ export async function update(): Promise<void> {
 
     console.log(chalk.blue('• Verificando estado final...'));
     await runCommand('pnpm', ['exec', 'enzo', 'status']);
+
+    const restart = scheduleEnzoSupervisorRestart({ cwd: process.cwd() });
+    if (restart.kind === 'skipped') {
+      console.log(chalk.yellow('• Reinicio: ') + restart.userMessage);
+    } else {
+      console.log(chalk.cyan('• ') + restart.userMessage);
+    }
 
     console.log('\n');
     console.log(chalk.green('✅ Enzo actualizado correctamente.\n'));

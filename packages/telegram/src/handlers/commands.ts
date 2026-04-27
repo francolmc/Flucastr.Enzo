@@ -1,3 +1,4 @@
+import { scheduleEnzoSupervisorRestart } from '@enzo/core';
 import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
 import { startTyping } from '../typing.js';
@@ -167,7 +168,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         '- `/clear` - limpiar historial de conversación',
         '- `/memory` - ver memorias guardadas',
         '- `/agent` o `/agents` - listar o configurar agente por conversación',
-        '- `/update` - actualizar Enzo (solo admin)',
+        '- `/update` - actualizar y reiniciar el stack (solo admin; requiere `enzo start` o ENZO_UPDATE_RESTART_CMD)',
         '',
         'Ejemplos de agente:',
         '- `/agent` o `/agents`',
@@ -280,6 +281,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
   bot.command('update', async (ctx) => {
     const userId = String(ctx.from?.id || '');
     const typingSession = startTyping(ctx);
+    let lockHeld = false;
 
     try {
       if (!isOwner(userId)) {
@@ -293,6 +295,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
       }
 
       updateInProgress = true;
+      lockHeld = true;
       await ctx.reply('🔄 Iniciando actualización de Enzo...');
 
       const repoCheck = await runCommandCapture('git', ['rev-parse', '--is-inside-work-tree']);
@@ -319,17 +322,29 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
       ]);
       await runStep(ctx, 'Instalando dependencias (`pnpm install`)...', 'pnpm', ['install']);
       await runStep(ctx, 'Compilando paquetes (`pnpm build`)...', 'pnpm', ['build']);
+      await runStep(ctx, 'Verificando configuración (`pnpm exec enzo status`)...', 'pnpm', [
+        'exec',
+        'enzo',
+        'status',
+      ]);
+
+      const restart = scheduleEnzoSupervisorRestart({ cwd: process.cwd() });
+      const restartLine =
+        restart.kind === 'skipped'
+          ? `⚠️ ${restart.userMessage}`
+          : `🔄 ${restart.userMessage}`;
 
       await ctx.reply(
-        '✅ Actualización completada.\n\n' +
-          'Si quieres asegurar un estado limpio de runtime, reinicia servicios desde CLI.'
+        `✅ Código actualizado, dependencias y build listos.\n\n${restartLine}`
       );
     } catch (error) {
       console.error('[Telegram] Error running /update:', error);
       const detail = error instanceof Error ? error.message : String(error);
       await ctx.reply(`❌ Falló la actualización:\n${detail}`);
     } finally {
-      updateInProgress = false;
+      if (lockHeld) {
+        updateInProgress = false;
+      }
       typingSession.stop();
     }
   });

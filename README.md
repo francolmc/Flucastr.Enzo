@@ -70,6 +70,10 @@ flowchart TD
 - Integracion con servidores MCP
 - Onboarding por CLI
 
+## Requisitos
+
+Requiere Node.js 22.5.0 o superior (usa `node:sqlite` nativo). Recomendado `pnpm` 9+.
+
 ## Quickstart
 
 ```bash

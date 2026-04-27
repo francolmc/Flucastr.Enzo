@@ -1,3 +1,4 @@
+import os from 'os';
 import type { Message, LLMProvider } from '../../providers/types.js';
 import {
   ComplexityLevel,
@@ -68,7 +69,7 @@ function formatFastPathDateLine(input: AmplifierInput): string {
 }
 
 function resolveHomeDir(input: AmplifierInput): string {
-  return input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco';
+  return input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir();
 }
 
 function resolveOsLabel(input: AmplifierInput): string {

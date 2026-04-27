@@ -5,6 +5,10 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
     "dev": "concurrently \"pnpm -F @enzo/api dev\" \"pnpm -F @enzo/ui dev\" \"pnpm -F @enzo/telegram dev\"",
     "build": "pnpm -F @enzo/core build && pnpm -F @enzo/bootstrap build && pnpm -F @enzo/api build && pnpm -F @enzo/ui build && pnpm -F @enzo/telegram build && pnpm -F @enzo/cli build",

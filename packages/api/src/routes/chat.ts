@@ -35,6 +35,18 @@ async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function resolveUserLanguageFromRequest(req: Request): string {
+  const fromBody = req.body?.lang;
+  if (typeof fromBody === 'string' && fromBody.trim().length > 0) {
+    return fromBody.trim().split(/[-_]/)[0]!.toLowerCase();
+  }
+  const accept = req.headers['accept-language'];
+  if (typeof accept === 'string' && accept.trim().length > 0) {
+    return accept.split(',')[0]!.split('-')[0]!.toLowerCase();
+  }
+  return 'es';
+}
+
 function buildRuntimeHintsFromConfig(configService?: ConfigService) {
   const profile = configService?.getUserProfile();
   const systemTz = configService?.getSystemConfig()?.tz?.trim();
@@ -83,6 +95,7 @@ export function createChatRouter(
   router.post('/api/chat', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const userLanguage = resolveUserLanguageFromRequest(req);
       const requestId = req.header('x-request-id') || randomUUID();
 
       let finalConversationId = conversationId;
@@ -99,6 +112,7 @@ export function createChatRouter(
           source: 'web',
           agentId,
           requestId,
+          userLanguage,
           runtimeHints: buildRuntimeHintsFromConfig(configService),
           toolExecutionContext: { source: 'web', conversationId: finalConversationId },
         });
@@ -131,6 +145,7 @@ export function createChatRouter(
   router.post('/api/chat/stream', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const userLanguage = resolveUserLanguageFromRequest(req);
       const requestId = req.header('x-request-id') || randomUUID();
       const startTime = Date.now();
 
@@ -172,6 +187,7 @@ export function createChatRouter(
           source: 'web',
           agentId,
           requestId,
+          userLanguage,
           runtimeHints: buildRuntimeHintsFromConfig(configService),
           toolExecutionContext: { source: 'web', conversationId: finalConversationId },
           onProgress: (step: Step) => {

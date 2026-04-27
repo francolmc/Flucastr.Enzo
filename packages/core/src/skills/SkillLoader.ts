@@ -19,6 +19,8 @@ export interface SkillMetadata {
   version?: string;
   author?: string;
   enabled?: boolean;
+  /** Optional short phrases for intent tests / discovery (not required for scoring). */
+  triggers?: string[];
   steps?: SkillStep[];
 }
 

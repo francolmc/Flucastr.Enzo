@@ -50,6 +50,17 @@ export interface StoredSystemConfig {
   telegramAgentOwnerUserId: string;
   /** When true, Telegram may auto-pick an agent from message text. Default off: use `/agent` only. */
   telegramAgentAutoroute?: boolean;
+  /** Min confidence (0–0.95) to persist a fact from memory extraction. Synced to `ENZO_MEMORY_CONFIDENCE_THRESHOLD`. */
+  enzoMemoryConfidenceThreshold: number;
+  /** Short verification pass before final synthesis. Synced to `ENZO_VERIFY_BEFORE_SYNTHESIS`. */
+  enzoVerifyBeforeSynthesis: boolean;
+  /**
+   * When no skill is enabled, still consider all loaded skills for relevance. Synced to `ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED`.
+   * Default true (disabled only if env is the string `false`).
+   */
+  enzoSkillsFallbackAllWhenNoneEnabled: boolean;
+  /** Prefer native tool-calling in the think phase. Synced to `ENZO_NATIVE_TOOL_CALLING`. */
+  enzoNativeToolCalling: boolean;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
 }
@@ -93,10 +104,44 @@ export interface SystemConfigUpdate {
   telegramAgentAutoroute?: boolean;
   telegramBotToken?: string;
   tavilyApiKey?: string;
+  enzoMemoryConfidenceThreshold?: number;
+  enzoVerifyBeforeSynthesis?: boolean;
+  enzoSkillsFallbackAllWhenNoneEnabled?: boolean;
+  enzoNativeToolCalling?: boolean;
 }
 
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
 const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
+
+function defaultMemoryConfidenceThresholdFromEnv(): number {
+  const n = Number(process.env.ENZO_MEMORY_CONFIDENCE_THRESHOLD);
+  if (!Number.isFinite(n)) return 0.55;
+  return Math.min(0.95, Math.max(0, n));
+}
+
+function booleanFromEnvKey(envKey: string, defaultValue: boolean): boolean {
+  const raw = process.env[envKey];
+  if (raw === undefined || raw === '') return defaultValue;
+  return raw.toLowerCase() === 'true';
+}
+
+function booleanFromEnvDefaultTrue(envKey: string): boolean {
+  const raw = process.env[envKey];
+  if (raw === undefined || raw === '') return true;
+  return raw.toLowerCase() !== 'false';
+}
+
+function normalizeStoredBoolean(value: unknown, defaultValue: boolean): boolean {
+  if (value === true || value === false) return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return defaultValue;
+}
+
+function normalizeFallbackAllWhenNone(value: unknown, defaultValue: boolean): boolean {
+  if (value === true || value === false) return value;
+  if (typeof value === 'string') return value.toLowerCase() !== 'false';
+  return defaultValue;
+}
 
 function getDefaultConfig(): ModelsConfig {
   return {
@@ -140,6 +185,10 @@ function getDefaultConfig(): ModelsConfig {
       telegramAllowedUsers: process.env.TELEGRAM_ALLOWED_USERS || '',
       telegramAgentOwnerUserId: process.env.TELEGRAM_AGENT_OWNER_USER_ID || '',
       telegramAgentAutoroute: (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true',
+      enzoMemoryConfidenceThreshold: defaultMemoryConfidenceThresholdFromEnv(),
+      enzoVerifyBeforeSynthesis: booleanFromEnvKey('ENZO_VERIFY_BEFORE_SYNTHESIS', false),
+      enzoSkillsFallbackAllWhenNoneEnabled: booleanFromEnvDefaultTrue('ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED'),
+      enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
     },
     assistantProfile: {
       name: 'Enzo',
@@ -191,6 +240,24 @@ export class ConfigService {
     system.enzoSkillsFallbackRelevanceThreshold = Math.max(
       0,
       Math.min(1, system.enzoSkillsFallbackRelevanceThreshold)
+    );
+
+    if (!Number.isFinite(system.enzoMemoryConfidenceThreshold)) {
+      system.enzoMemoryConfidenceThreshold = defaults.system.enzoMemoryConfidenceThreshold;
+    }
+    system.enzoMemoryConfidenceThreshold = Math.max(0, Math.min(0.95, system.enzoMemoryConfidenceThreshold));
+
+    system.enzoVerifyBeforeSynthesis = normalizeStoredBoolean(
+      system.enzoVerifyBeforeSynthesis,
+      defaults.system.enzoVerifyBeforeSynthesis
+    );
+    system.enzoSkillsFallbackAllWhenNoneEnabled = normalizeFallbackAllWhenNone(
+      system.enzoSkillsFallbackAllWhenNoneEnabled,
+      defaults.system.enzoSkillsFallbackAllWhenNoneEnabled
+    );
+    system.enzoNativeToolCalling = normalizeStoredBoolean(
+      system.enzoNativeToolCalling,
+      defaults.system.enzoNativeToolCalling
     );
 
     if (loaded?.providers) {
@@ -361,6 +428,12 @@ export class ConfigService {
     process.env.TELEGRAM_ALLOWED_USERS = system.telegramAllowedUsers;
     process.env.TELEGRAM_AGENT_OWNER_USER_ID = system.telegramAgentOwnerUserId;
     process.env.TELEGRAM_AGENT_AUTOROUTE = system.telegramAgentAutoroute ? 'true' : 'false';
+    process.env.ENZO_MEMORY_CONFIDENCE_THRESHOLD = String(system.enzoMemoryConfidenceThreshold);
+    process.env.ENZO_VERIFY_BEFORE_SYNTHESIS = system.enzoVerifyBeforeSynthesis ? 'true' : 'false';
+    process.env.ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED = system.enzoSkillsFallbackAllWhenNoneEnabled
+      ? 'true'
+      : 'false';
+    process.env.ENZO_NATIVE_TOOL_CALLING = system.enzoNativeToolCalling ? 'true' : 'false';
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -574,6 +647,22 @@ export class ConfigService {
         : {}),
       ...(update.telegramAgentAutoroute !== undefined
         ? { telegramAgentAutoroute: update.telegramAgentAutoroute }
+        : {}),
+      ...(update.enzoMemoryConfidenceThreshold !== undefined
+        ? {
+            enzoMemoryConfidenceThreshold: Number.isFinite(update.enzoMemoryConfidenceThreshold)
+              ? Math.max(0, Math.min(0.95, update.enzoMemoryConfidenceThreshold))
+              : current.enzoMemoryConfidenceThreshold,
+          }
+        : {}),
+      ...(update.enzoVerifyBeforeSynthesis !== undefined
+        ? { enzoVerifyBeforeSynthesis: update.enzoVerifyBeforeSynthesis }
+        : {}),
+      ...(update.enzoSkillsFallbackAllWhenNoneEnabled !== undefined
+        ? { enzoSkillsFallbackAllWhenNoneEnabled: update.enzoSkillsFallbackAllWhenNoneEnabled }
+        : {}),
+      ...(update.enzoNativeToolCalling !== undefined
+        ? { enzoNativeToolCalling: update.enzoNativeToolCalling }
         : {}),
     };
 
