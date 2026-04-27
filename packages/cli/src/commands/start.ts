@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -19,6 +19,31 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function killByPattern(signal: 'TERM' | 'KILL', pattern: string): void {
+  spawnSync('pkill', [`-${signal}`, '-f', pattern], {
+    stdio: 'ignore',
+  });
+}
+
+async function cleanupResidualServices(repoRoot: string): Promise<void> {
+  const apiPattern = `${repoRoot}/packages/api/dist/index.js`;
+  const telegramPattern = `${repoRoot}/packages/telegram/dist/index.js`;
+  const uiPattern = `${repoRoot}/packages/ui/.*vite`;
+
+  // First ask processes to exit gracefully.
+  killByPattern('TERM', apiPattern);
+  killByPattern('TERM', telegramPattern);
+  killByPattern('TERM', uiPattern);
+  await delay(1200);
+
+  // Hard-kill leftovers to avoid port/getUpdates conflicts on restart.
+  killByPattern('KILL', apiPattern);
+  killByPattern('KILL', telegramPattern);
+  killByPattern('KILL', uiPattern);
 }
 
 export async function start(): Promise<void> {
@@ -43,6 +68,8 @@ export async function start(): Promise<void> {
     const supervisorStatePath = path.resolve(repoRoot, ENZO_SUPERVISOR_STATE_FILENAME);
     const apiDistPath = path.resolve(repoRoot, 'packages/api/dist/index.js');
     const telegramDistPath = path.resolve(repoRoot, 'packages/telegram/dist/index.js');
+
+    await cleanupResidualServices(repoRoot);
 
     const skipSupervisorGuard = process.env.ENZO_SKIP_SUPERVISOR_GUARD === '1';
     if (!skipSupervisorGuard) {
