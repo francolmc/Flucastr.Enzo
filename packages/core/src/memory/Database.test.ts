@@ -58,8 +58,8 @@ async function runTests(): Promise<void> {
   cleanupAfterLegacy(tmpDir, baseRemember);
   clearDbSingleton();
   const ms = new MemoryService(dbRemember);
-  await ms.remember('u-test-1', 'ping', 'pong');
-  const rows = await ms.recall('u-test-1', 'ping');
+  await ms.remember('u-test-1', 'other', 'pong');
+  const rows = await ms.recall('u-test-1', 'other');
   assert(rows.length === 1 && rows[0]!.value === 'pong', 'expected remember/recall to persist');
   DatabaseManager.getInstance().close();
   clearDbSingleton();

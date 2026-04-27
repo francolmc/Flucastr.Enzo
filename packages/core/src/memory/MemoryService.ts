@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseManager } from './Database.js';
+import { normalizeMemoryKey } from './MemoryKeys.js';
 import { Message } from '../providers/types.js';
 import { Memory, UsageStat, MessageRecord, ConversationRecord, AgentRecord, AssistantMessageMetadata } from './types.js';
 import { MCPServerConfig } from '../mcp/types.js';
@@ -152,19 +153,20 @@ export class MemoryService {
 
   // Memoria semántica
   async remember(userId: string, key: string, value: string): Promise<void> {
-    console.log(`[Memory] Guardando: ${userId} → ${key}: ${value}`);
+    const canonicalKey = normalizeMemoryKey(key);
+    console.log(`[Memory] Guardando: ${userId} → ${canonicalKey}: ${value}`);
     const now = Date.now();
 
     const existing = await this.getAsync(
       `SELECT id FROM memories WHERE userId = ? AND key = ?`,
-      [userId, key]
+      [userId, canonicalKey]
     );
 
     if (existing) {
       console.log(`[Memory] Actualizando memoria existente con id: ${existing.id}`);
       await this.runAsync(
         `UPDATE memories SET value = ?, updatedAt = ? WHERE userId = ? AND key = ?`,
-        [value, now, userId, key]
+        [value, now, userId, canonicalKey]
       );
       console.log(`[Memory] Memoria actualizada`);
     } else {
@@ -173,7 +175,7 @@ export class MemoryService {
       await this.runAsync(
         `INSERT INTO memories (id, userId, key, value, createdAt, updatedAt)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, userId, key, value, now, now]
+        [id, userId, canonicalKey, value, now, now]
       );
       console.log(`[Memory] Memoria insertada`);
     }
@@ -181,10 +183,11 @@ export class MemoryService {
 
   async recall(userId: string, key?: string): Promise<Memory[]> {
     if (key) {
+      const canonicalKey = normalizeMemoryKey(key);
       return this.allAsync(
         `SELECT id, userId, key, value, createdAt, updatedAt FROM memories
          WHERE userId = ? AND key = ?`,
-        [userId, key]
+        [userId, canonicalKey]
       );
     } else {
       return this.allAsync(
@@ -468,9 +471,10 @@ export class MemoryService {
   }
 
   async deleteMemory(userId: string, key: string): Promise<void> {
+    const canonicalKey = normalizeMemoryKey(key);
     await this.runAsync(
       `DELETE FROM memories WHERE userId = ? AND key = ?`,
-      [userId, key]
+      [userId, canonicalKey]
     );
   }
 

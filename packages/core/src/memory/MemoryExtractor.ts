@@ -1,5 +1,6 @@
 import { LLMProvider } from '../providers/types.js';
 import { MemoryService } from './MemoryService.js';
+import { normalizeMemoryKey } from './MemoryKeys.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 
 export interface ExtractedFact {
@@ -37,7 +38,7 @@ export class MemoryExtractor {
       console.log(`[MemoryExtractor] Saving ${facts.length} fact(s) for user ${userId}`);
 
       for (const fact of facts) {
-        const normalizedKey = this.normalizeKey(fact.key);
+        const normalizedKey = normalizeMemoryKey(fact.key);
         const confidence = typeof fact.confidence === 'number' ? fact.confidence : 0.7;
         if (confidence < this.getConfidenceThreshold()) {
           console.log(`[MemoryExtractor] Skipping low-confidence fact "${normalizedKey}" (${confidence.toFixed(2)})`);
@@ -58,40 +59,6 @@ export class MemoryExtractor {
     const parsed = Number(process.env.ENZO_MEMORY_CONFIDENCE_THRESHOLD ?? 0.55);
     if (!Number.isFinite(parsed)) return 0.55;
     return Math.min(0.95, Math.max(0, parsed));
-  }
-
-  private normalizeKey(key: string): string {
-    const keyMap: Record<string, string> = {
-      'nombre':          'name',
-      'my_name':         'name',
-      'user_name':       'name',
-      'username':        'name',
-      'full_name':       'name',
-      'ciudad':          'city',
-      'location':        'city',
-      'ubicacion':       'city',
-      'ubicación':       'city',
-      'lugar':           'city',
-      'lugar_actual':    'city',
-      'residence':       'city',
-      'ocupacion':       'profession',
-      'ocupación':       'profession',
-      'job':             'profession',
-      'occupation':      'profession',
-      'trabajo':         'profession',
-      'role':            'profession',
-      'career':          'profession',
-      'work':            'profession',
-      'proyecto':        'project',
-      'current_project': 'project',
-      'projects':        'project',
-      'edad':            'age',
-      'idioma':          'language',
-      'lang':            'language',
-    };
-
-    const normalized = key.toLowerCase().trim();
-    return keyMap[normalized] ?? normalized;
   }
 
   /**
@@ -130,28 +97,20 @@ Always answer as if YOU know the user personally.`;
     userMessage: string,
     assistantResponse: string
   ): Promise<ExtractedFact[]> {
-    const systemPrompt = `Analyze this conversation and extract facts about the user worth remembering.
+    const systemPrompt = `Extract facts about the user from this conversation.
+Respond ONLY with JSON: {"facts": [{"key": "...", "value": "..."}]}
 
-Extract ONLY concrete, durable facts:
-- Name, age, location, profession
-- Personal preferences ("likes", "prefers", "dislikes")  
-- Projects they are working on
-- Family, pets, routines
-- Any recurring personal context
+ALLOWED KEYS (use exactly these, nothing else):
+name, city, profession, projects, preferences, routines, family, other
 
-Respond ONLY with JSON:
-{"facts": [{"key": "name", "value": "Franco", "confidence": 0.93}, {"key": "city", "value": "Copiapó", "confidence": 0.88}]}
-
-If nothing worth remembering was mentioned, respond: {"facts": []}
-
-RULES:
-- keys must be short and in English (name, city, profession, pet, project, etc.)
-- values must be concise
-- confidence must be a number between 0 and 1
-- Never extract temporary or task-specific information
-- Never extract file paths or search queries
+Rules:
+- Use only the allowed keys above
+- If unsure which key fits, use "other"
+- Only extract concrete, durable facts
+- If nothing to extract, return {"facts": []}
 - Extract facts ONLY from what the USER said
-- Never extract assistant identity, assistant preferences, or assistant claims`;
+- Never extract assistant identity, assistant preferences, or assistant claims
+- Never extract temporary or task-specific information, file paths, or search queries`;
 
     const conversation = `User: ${userMessage}\nAssistant: ${assistantResponse}`;
 

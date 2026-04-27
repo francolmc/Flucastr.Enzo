@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
+import { migrateMemoryKeysIfNeeded } from './migrations/normalizeMemoryKeys.js';
 
 interface DbWrapper {
   run(sql: string, params: any[]): void;
@@ -162,6 +163,7 @@ export class DatabaseManager {
     db.exec('CREATE INDEX IF NOT EXISTS idx_usage_stats_user_created ON usage_stats(userId, createdAt DESC);');
     db.exec('CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(userId, createdAt DESC);');
 
+    migrateMemoryKeysIfNeeded(db);
   }
 
   private buildSiblingLegacyJsonPath(sqlitePath: string): string | null {
