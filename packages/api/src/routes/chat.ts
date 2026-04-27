@@ -1,5 +1,15 @@
 import { Router, Request, Response } from 'express';
-import { Orchestrator, Step, MemoryService, ConversationRecord, type ConfigService } from '@enzo/core';
+import {
+  Orchestrator,
+  Step,
+  MemoryService,
+  ConversationRecord,
+  InputChunker,
+  buildChunkCaptureConfirmation,
+  getMemoryExtractionMessages,
+  type ChunkResult,
+  type ConfigService,
+} from '@enzo/core';
 import { validateChatRequest } from '../middleware/validate.js';
 import { randomUUID } from 'crypto';
 
@@ -73,14 +83,26 @@ function buildRuntimeHintsFromConfig(configService?: ConfigService) {
   return hints;
 }
 
+const inputChunker = new InputChunker();
+
 function extractMemoryInBackground(
   orchestrator: Orchestrator,
   userId: string,
   userMessage: string,
-  assistantResponse: string
+  assistantResponse: string,
+  chunkResult?: ChunkResult
 ): void {
   const memoryExtractor = orchestrator.getMemoryExtractor();
-  memoryExtractor.extractAndSave(userId, userMessage, assistantResponse).catch((error) => {
+  const extraction = async () => {
+    const messages = chunkResult
+      ? getMemoryExtractionMessages(userMessage, chunkResult)
+      : [userMessage];
+    await Promise.all(
+      messages.map((chunkedMessage) => memoryExtractor.extractAndSave(userId, chunkedMessage, assistantResponse))
+    );
+  };
+
+  extraction().catch((error) => {
     console.error('[Chat] Memory extraction error:', error);
   });
 }
@@ -95,6 +117,7 @@ export function createChatRouter(
   router.post('/api/chat', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const chunkResult = inputChunker.chunk(message);
       const userLanguage = resolveUserLanguageFromRequest(req);
       const requestId = req.header('x-request-id') || randomUUID();
 
@@ -118,10 +141,11 @@ export function createChatRouter(
         });
       });
 
-      extractMemoryInBackground(orchestrator, userId, message, response.content);
+      const responseContent = chunkResult.isLong ? buildChunkCaptureConfirmation(chunkResult) : response.content;
+      extractMemoryInBackground(orchestrator, userId, message, response.content, chunkResult);
 
       res.json({
-        content: response.content,
+        content: responseContent,
         conversationId: finalConversationId,
         complexityUsed: response.complexityUsed,
         providerUsed: response.providerUsed,
@@ -145,6 +169,7 @@ export function createChatRouter(
   router.post('/api/chat/stream', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
+      const chunkResult = inputChunker.chunk(message);
       const userLanguage = resolveUserLanguageFromRequest(req);
       const requestId = req.header('x-request-id') || randomUUID();
       const startTime = Date.now();
@@ -209,9 +234,10 @@ export function createChatRouter(
         });
       });
 
-      extractMemoryInBackground(orchestrator, userId, message, response.content);
+      const responseContent = chunkResult.isLong ? buildChunkCaptureConfirmation(chunkResult) : response.content;
+      extractMemoryInBackground(orchestrator, userId, message, response.content, chunkResult);
 
-      contentBuffer = response.content;
+      contentBuffer = responseContent;
 
       // Send content in chunks (simulating streaming if not natively supported)
       const chunkSize = 50;

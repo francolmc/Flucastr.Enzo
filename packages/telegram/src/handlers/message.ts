@@ -1,6 +1,11 @@
 import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
 import type { Step } from '@enzo/core';
+import {
+  InputChunker,
+  buildChunkCaptureConfirmation,
+  getMemoryExtractionMessages,
+} from '@enzo/core';
 import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';
@@ -8,6 +13,7 @@ import { getCurrentConversationId } from './conversationState.js';
 import { randomUUID } from 'crypto';
 
 const MAX_MESSAGE_LENGTH = 4096;
+const inputChunker = new InputChunker();
 
 /** Best-effort user-visible error; logs if Telegram rejects the send (e.g. rate limit). */
 async function safeReply(ctx: EnzoContext, text: string): Promise<void> {
@@ -93,6 +99,7 @@ async function processMessageInBackground(
     // Step 1: Detect language; optionally translate input to English (see TELEGRAM_TRANSLATE_INPUT in LanguageMiddleware)
     const langContext = await languageMiddleware.processInput(messageText, userId);
     const workingMessage = langContext.translatedInput;
+    const chunkResult = inputChunker.chunk(workingMessage);
     console.log(`[Telegram] Language: ${langContext.userLanguage}, translated: ${langContext.wasTranslated}`);
 
     const resolvedAgentId = explicitAgentId;
@@ -157,7 +164,9 @@ async function processMessageInBackground(
     });
 
     // Step 5: Translate response back to user's language
-    const baseContent = result.content || 'No se pudo procesar tu mensaje.';
+    const baseContent = chunkResult.isLong
+      ? buildChunkCaptureConfirmation(chunkResult)
+      : result.content || 'No se pudo procesar tu mensaje.';
     const translatedContent = await languageMiddleware.processOutput(
       baseContent,
       langContext.userLanguage
@@ -198,11 +207,15 @@ async function processMessageInBackground(
 
     // Extract and save memories in background — no await, no blocking
     const memoryExtractor = ctx.orchestrator.getMemoryExtractor();
-    memoryExtractor.extractAndSave(
-      userId,
-      messageText,
-      result.content
-    ).catch(err => {
+    const extractMemory = async () => {
+      const messages = getMemoryExtractionMessages(messageText, chunkResult);
+      await Promise.all(
+        messages.map((chunkedMessage) =>
+          memoryExtractor.extractAndSave(userId, chunkedMessage, result.content)
+        )
+      );
+    };
+    extractMemory().catch(err => {
       console.error('[Telegram] Memory extraction error:', err);
     });
   } catch (error) {

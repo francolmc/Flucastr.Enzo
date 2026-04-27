@@ -16,6 +16,8 @@ export * from './tools/index.js';
 export * from './providers/index.js';
 export * from './skills/index.js';
 export * from './mcp/index.js';
+export * from './input/InputChunker.js';
+export * from './input/ChunkCapture.js';
 export * from './config/ConfigService.js';
 export * from './security/EncryptionService.js';
 export * from './security/SecretFile.js';
