@@ -20,6 +20,10 @@ export type ActPhaseDeps = {
 /** Shared deps for THINK and ACT phases inside AmplifierLoop. */
 export type AmplifierLoopPhaseDeps = ThinkPhaseDeps & ActPhaseDeps;
 
+export type ActPhaseResult =
+  | { kind: 'executed'; step: Step }
+  | { kind: 'delegate'; agent: string; task: string; reason: string };
+
 export async function runActPhase(
   deps: ActPhaseDeps,
   resolvedAction: ResolvedAction,
@@ -29,10 +33,19 @@ export async function runActPhase(
   userId?: string,
   requestId?: string,
   toolSession?: Partial<ToolExecutionContext>
-): Promise<Step> {
+): Promise<ActPhaseResult> {
   const { baseProvider, executableTools, mcpRegistry, skillRegistry, log } = deps;
   const startTime = Date.now();
   let output = '';
+
+  if (resolvedAction.type === 'delegate') {
+    return {
+      kind: 'delegate',
+      agent: resolvedAction.target,
+      task: resolvedAction.input.task,
+      reason: resolvedAction.reason,
+    };
+  }
 
   try {
     if (resolvedAction.type === 'tool') {
@@ -54,16 +67,19 @@ export async function runActPhase(
         if (validationError) {
           output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
           return {
-            iteration,
-            type: 'act',
-            requestId,
-            action: resolvedAction.type,
-            target: resolvedAction.target,
-            input: JSON.stringify(resolvedAction.input),
-            output,
-            durationMs: Date.now() - startTime,
-            status: 'error',
-            modelUsed: baseProvider.model,
+            kind: 'executed',
+            step: {
+              iteration,
+              type: 'act',
+              requestId,
+              action: resolvedAction.type,
+              target: resolvedAction.target,
+              input: JSON.stringify(resolvedAction.input),
+              output,
+              durationMs: Date.now() - startTime,
+              status: 'error',
+              modelUsed: baseProvider.model,
+            },
           };
         }
         try {
@@ -89,16 +105,19 @@ export async function runActPhase(
         if (validationError) {
           output = `Error [TOOL_VALIDATION_ERROR]: ${validationError}`;
           return {
-            iteration,
-            type: 'act',
-            requestId,
-            action: resolvedAction.type,
-            target: resolvedAction.target,
-            input: JSON.stringify(resolvedAction.input),
-            output,
-            durationMs: Date.now() - startTime,
-            status: 'error',
-            modelUsed: baseProvider.model,
+            kind: 'executed',
+            step: {
+              iteration,
+              type: 'act',
+              requestId,
+              action: resolvedAction.type,
+              target: resolvedAction.target,
+              input: JSON.stringify(resolvedAction.input),
+              output,
+              durationMs: Date.now() - startTime,
+              status: 'error',
+              modelUsed: baseProvider.model,
+            },
           };
         }
 
@@ -147,15 +166,18 @@ export async function runActPhase(
   }
 
   return {
-    iteration,
-    type: 'act',
-    requestId,
-    action: resolvedAction.type,
-    target: resolvedAction.target,
-    input: JSON.stringify(resolvedAction.input),
-    output,
-    durationMs: Date.now() - startTime,
-    status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-    modelUsed: baseProvider.model,
+    kind: 'executed',
+    step: {
+      iteration,
+      type: 'act',
+      requestId,
+      action: resolvedAction.type,
+      target: resolvedAction.target,
+      input: JSON.stringify(resolvedAction.input),
+      output,
+      durationMs: Date.now() - startTime,
+      status: output.toLowerCase().includes('error') ? 'error' : 'ok',
+      modelUsed: baseProvider.model,
+    },
   };
 }

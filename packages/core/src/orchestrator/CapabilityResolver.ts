@@ -1,4 +1,4 @@
-import { AvailableCapabilities, ResolvedAction, StepAction } from './types.js';
+import { AvailableCapabilities, DELEGATION_AGENT_IDS, ResolvedAction } from './types.js';
 import { IntentAnalyzer } from './IntentAnalyzer.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 
@@ -59,6 +59,10 @@ export class CapabilityResolver {
    * `availableToolNames` must list every tool the host registered (plus MCP names when present).
    */
   private normalizeAction(parsed: any, availableToolNames: string[]): any {
+    if (parsed && typeof parsed.action === 'string' && String(parsed.action).trim() === 'delegate') {
+      return parsed;
+    }
+
     const nameSet = new Set(availableToolNames);
     const isAvailable = (n: string) => nameSet.has(n);
 
@@ -203,6 +207,28 @@ export class CapabilityResolver {
               reason: 'Agent delegation requested by model',
               input: parsed.input ?? {},
             };
+          }
+        } else if (parsed.action === 'delegate') {
+          const agent = typeof parsed.agent === 'string' ? parsed.agent.trim() : '';
+          const task = typeof parsed.task === 'string' ? parsed.task.trim() : '';
+          const modelReason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
+          if (!agent || !task || !modelReason) {
+            console.warn(
+              `[CapabilityResolver] delegate action requires non-empty "agent", "task", and "reason". Got: ${JSON.stringify(
+                { agent, taskLength: task.length, modelReason: modelReason ? 'ok' : 'missing' }
+              )}`
+            );
+          } else if ((DELEGATION_AGENT_IDS as readonly string[]).includes(agent)) {
+            return {
+              type: 'delegate',
+              target: agent,
+              reason: modelReason,
+              input: { task },
+            };
+          } else {
+            console.warn(
+              `[CapabilityResolver] delegate agent "${agent}" is not a supported delegation id: ${DELEGATION_AGENT_IDS.join(', ')}`
+            );
           }
         }
       } catch (e) {

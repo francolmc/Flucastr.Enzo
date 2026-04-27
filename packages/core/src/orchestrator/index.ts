@@ -4,6 +4,8 @@ export { ModelSelector } from './ModelSelector.js';
 export { Decomposer } from './Decomposer.js';
 export type { Subtask, DecompositionResult } from './Decomposer.js';
 export { AmplifierLoop, type AmplifierLoopOptions } from './AmplifierLoop.js';
+export type { AgentRouter } from './AgentRouter.js';
+export { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';

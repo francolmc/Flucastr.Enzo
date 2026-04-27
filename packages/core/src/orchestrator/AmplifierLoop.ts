@@ -1,5 +1,5 @@
 import { Message, LLMProvider } from '../providers/types.js';
-import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, ResolvedAction, InjectedSkillUsage } from './types.js';
+import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, InjectedSkillUsage } from './types.js';
 import { CapabilityResolver } from './CapabilityResolver.js';
 import { ContextSynthesizer } from './ContextSynthesizer.js';
 import { EscalationManager } from './EscalationManager.js';
@@ -38,6 +38,8 @@ import { runSimpleModerateFastPath } from './amplifier/AmplifierSimplePath.js';
 import { runThinkPhase } from './amplifier/AmplifierThinkPhase.js';
 import { runActPhase, type AmplifierLoopPhaseDeps } from './amplifier/AmplifierActPhase.js';
 import { runObservePhase } from './amplifier/AmplifierObservePhase.js';
+import type { AgentRouter } from './AgentRouter.js';
+import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
@@ -51,6 +53,8 @@ export type AmplifierLoopOptions = {
   fileOrganization?: boolean;
   /** When true (or env ENZO_VERIFY_BEFORE_SYNTHESIS=true), run a short verification pass before final synthesis. */
   verifyBeforeSynthesize?: boolean;
+  /** When set, THINK may emit `delegate` and the loop will run specialized agents. */
+  agentRouter?: AgentRouter;
 };
 
 export class AmplifierLoop {
@@ -68,6 +72,7 @@ export class AmplifierLoop {
   private skillRegistry?: SkillRegistry;
   private mcpRegistry?: MCPRegistry;
   private verifyBeforeSynthesize: boolean;
+  private agentRouter?: AgentRouter;
 
   constructor(
     baseProvider: LLMProvider,
@@ -82,6 +87,7 @@ export class AmplifierLoop {
     this.mcpRegistry = options?.mcpRegistry;
     this.verifyBeforeSynthesize =
       options?.verifyBeforeSynthesize ?? process.env.ENZO_VERIFY_BEFORE_SYNTHESIS === 'true';
+    this.agentRouter = options?.agentRouter;
     this.capabilityResolver = new CapabilityResolver();
     this.intentAnalyzer = new IntentAnalyzer(baseProvider);
     this.capabilityResolver.setIntentAnalyzer(this.intentAnalyzer);
@@ -102,6 +108,47 @@ export class AmplifierLoop {
         setTimeout(() => reject(new Error(`LLM timeout after ${ms}ms (${label})`)), ms)
       ),
     ]);
+  }
+
+  /**
+   * After THINK+resolve yield `delegate`, run the external agent and build trace + observe steps.
+   */
+  private async processDelegationInLoop(
+    d: { agent: string; task: string; reason: string },
+    iteration: number,
+    requestId: string | undefined,
+    contextForDelegate: string
+  ): Promise<{ actTrace: Step; observe: Step }> {
+    const routerStart = Date.now();
+    const delegateText = await (this.agentRouter?.delegate(
+      d.agent,
+      d.task,
+      contextForDelegate
+    ) ?? Promise.resolve(DELEGATION_NOT_CONFIGURED));
+    const routerMs = Date.now() - routerStart;
+    const observeOutput = `Agent ${d.agent} completed the task: ${delegateText}`;
+    const actTrace: Step = {
+      iteration,
+      type: 'act',
+      requestId,
+      action: 'delegate',
+      target: d.agent,
+      input: JSON.stringify({ task: d.task, reason: d.reason }),
+      output: 'Delegation request processed',
+      durationMs: 0,
+      status: 'ok',
+      modelUsed: this.baseProvider.model,
+    };
+    const observe: Step = {
+      iteration,
+      type: 'observe',
+      requestId,
+      output: observeOutput,
+      durationMs: routerMs,
+      status: 'ok',
+      modelUsed: this.baseProvider.model,
+    };
+    return { actTrace, observe };
   }
 
   private async requestToolInputCorrection(
@@ -689,7 +736,7 @@ Do NOT search for more information. Use what is provided.`;
           }
 
           const subActStart = Date.now();
-          const actStep = await runActPhase(
+          const actResult = await runActPhase(
             this.phaseDeps(),
             resolvedAction,
             subtaskIteration,
@@ -699,6 +746,35 @@ Do NOT search for more information. Use what is provided.`;
             requestId,
             input.toolExecutionContext
           );
+          if (actResult.kind === 'delegate') {
+            recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, true);
+            const subDelegateCtx = [accumulatedContext, this.contextSynthesizer.compress(steps)]
+              .filter((s) => s && s.trim().length > 0)
+              .join('\n\n');
+            const { actTrace, observe: observeStep } = await this.processDelegationInLoop(
+              {
+                agent: actResult.agent,
+                task: actResult.task,
+                reason: actResult.reason,
+              },
+              subtaskIteration,
+              requestId,
+              subDelegateCtx
+            );
+            recordStageMetric(
+              stageMetrics,
+              'observe',
+              observeStep.durationMs ?? 0,
+              !observeStep.output?.toLowerCase().includes('error')
+            );
+            steps.push(actTrace, observeStep);
+            input.onProgress?.(actTrace);
+            input.onProgress?.(observeStep);
+            subtaskResult = observeStep.output ?? '';
+            subtaskDone = true;
+            break;
+          }
+          const actStep = actResult.step;
           recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, !(actStep.output || '').toLowerCase().includes('error'));
           steps.push(actStep);
           input.onProgress?.(actStep);
@@ -946,7 +1022,7 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       const actStart = Date.now();
-      const actStep = await runActPhase(
+      const actResult = await runActPhase(
         this.phaseDeps(),
         resolvedAction,
         iteration,
@@ -956,6 +1032,41 @@ Do NOT search for more information. Use what is provided.`;
         requestId,
         input.toolExecutionContext
       );
+      if (actResult.kind === 'delegate') {
+        recordStageMetric(stageMetrics, 'act', Date.now() - actStart, true);
+        const delegateCtx = [currentContext, this.contextSynthesizer.compress(steps)]
+          .filter((s) => s && s.trim().length > 0)
+          .join('\n\n');
+        const { actTrace, observe: observeStep } = await this.processDelegationInLoop(
+          {
+            agent: actResult.agent,
+            task: actResult.task,
+            reason: actResult.reason,
+          },
+          iteration,
+          requestId,
+          delegateCtx
+        );
+        recordStageMetric(
+          stageMetrics,
+          'observe',
+          observeStep.durationMs ?? 0,
+          !observeStep.output?.toLowerCase().includes('error')
+        );
+        steps.push(actTrace, observeStep);
+        input.onProgress?.(actTrace);
+        input.onProgress?.(observeStep);
+        this.log.info(
+          `[AmplifierLoop] Iteration ${iteration} - Observe (delegate):`,
+          observeStep.output?.substring(0, 200)
+        );
+        currentContext = this.contextSynthesizer.compress(steps);
+        if (iteration >= this.maxIterations) {
+          hasEnoughInfo = true;
+        }
+        continue;
+      }
+      const actStep = actResult.step;
       recordStageMetric(stageMetrics, 'act', Date.now() - actStart, !(actStep.output || '').toLowerCase().includes('error'));
       steps.push(actStep);
       input.onProgress?.(actStep);

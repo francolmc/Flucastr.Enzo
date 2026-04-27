@@ -29,7 +29,20 @@ export interface AgentConfig {
   toneOverride?: string;
 }
 
-export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none';
+export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none' | 'delegate';
+
+/** Valid agent ids for the delegate action (THINK / CapabilityResolver / prompts must stay aligned). */
+export const DELEGATION_AGENT_IDS = ['claude_code', 'doc_agent'] as const;
+export type DelegationAgentId = (typeof DELEGATION_AGENT_IDS)[number];
+
+/**
+ * JSON actions the amplifer THINK phase may emit (parsed by CapabilityResolver).
+ * The loop may still use `action: "none"` for "enough information" in prompts.
+ */
+export type AmplifierAction =
+  | { action: 'tool'; tool: string; input: Record<string, unknown> }
+  | { action: 'delegate'; agent: string; task: string; reason: string }
+  | { action: 'respond'; content: string };
 
 export interface Step {
   iteration: number;
@@ -111,12 +124,20 @@ export interface AvailableCapabilities {
   powerfulProvider?: LLMProvider;
 }
 
-export interface ResolvedAction {
-  type: StepAction;
-  target: string;
-  reason: string;
-  input: any;
-}
+export type ResolvedAction =
+  | {
+      type: 'delegate';
+      /** Agent id to delegate to (e.g. claude_code, doc_agent). */
+      target: string;
+      reason: string;
+      input: { task: string };
+    }
+  | {
+      type: Exclude<StepAction, 'delegate'>;
+      target: string;
+      reason: string;
+      input: any;
+    };
 
 export interface EscalationInput {
   subtask: string;
