@@ -101,6 +101,27 @@ pnpm dev
 ./enzo update
 ```
 
+## Servicio systemd (user)
+
+Para un `/update` robusto en Telegram, instala Enzo como servicio de usuario (recomendado):
+
+```bash
+./scripts/install-systemd-user.sh
+```
+
+Comandos utiles:
+
+```bash
+systemctl --user status enzo
+journalctl --user -u enzo -f
+```
+
+Desinstalar:
+
+```bash
+./scripts/uninstall-systemd-user.sh
+```
+
 Comandos por paquete:
 
 ```bash
