@@ -29,21 +29,31 @@ function killByPattern(signal: 'TERM' | 'KILL', pattern: string): void {
   });
 }
 
+function killByPort(signal: 'TERM' | 'KILL', port: string): void {
+  spawnSync('/bin/sh', ['-c', `lsof -ti :${port} | xargs -r kill -${signal}`], {
+    stdio: 'ignore',
+  });
+}
+
 async function cleanupResidualServices(repoRoot: string): Promise<void> {
-  const apiPattern = `${repoRoot}/packages/api/dist/index.js`;
-  const telegramPattern = `${repoRoot}/packages/telegram/dist/index.js`;
+  const apiPattern = 'pnpm -F @enzo/api start';
+  const telegramPattern = 'pnpm -F @enzo/telegram start';
   const uiPattern = `${repoRoot}/packages/ui/.*vite`;
 
   // First ask processes to exit gracefully.
   killByPattern('TERM', apiPattern);
   killByPattern('TERM', telegramPattern);
   killByPattern('TERM', uiPattern);
+  killByPort('TERM', '3001');
+  killByPort('TERM', '3004');
   await delay(1200);
 
   // Hard-kill leftovers to avoid port/getUpdates conflicts on restart.
   killByPattern('KILL', apiPattern);
   killByPattern('KILL', telegramPattern);
   killByPattern('KILL', uiPattern);
+  killByPort('KILL', '3001');
+  killByPort('KILL', '3004');
 }
 
 export async function start(): Promise<void> {
