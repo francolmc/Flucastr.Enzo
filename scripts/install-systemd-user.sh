@@ -68,7 +68,7 @@ Type=simple
 WorkingDirectory=${REPO_ROOT}
 Environment=HOME=${HOME}
 Environment=USER=${USER}
-Environment=ENZO_UPDATE_RESTART_CMD=systemctl --user restart ${SERVICE_NAME}
+Environment="ENZO_UPDATE_RESTART_CMD=systemctl --user restart ${SERVICE_NAME}"
 ExecStart=${WRAPPER_PATH}
 Restart=always
 RestartSec=3
