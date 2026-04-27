@@ -103,7 +103,7 @@ async function main() {
     }
 
     const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
-    const echoEngine = getEchoEngine();
+    const echoEngine = getEchoEngine({ memoryService, configService });
     echoEngine.start();
     const orchestrator = new Orchestrator(
       ollamaProvider,

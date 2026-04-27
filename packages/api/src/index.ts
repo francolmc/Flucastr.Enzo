@@ -83,7 +83,7 @@ const orchestrator = new Orchestrator(
   { skillRegistry, configService, toolRegistry }
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
-const echoEngine = getEchoEngine();
+const echoEngine = getEchoEngine({ memoryService, configService });
 echoEngine.start();
 
 // Initialize skills on startup
