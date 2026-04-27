@@ -113,12 +113,13 @@ function isOwner(userId: string): boolean {
 
 async function runCommandCapture(
   command: string,
-  args: string[]
+  args: string[],
+  cwd: string = process.cwd()
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
-      shell: true,
+      cwd,
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -147,10 +148,11 @@ async function runStep(
   ctx: EnzoContext,
   title: string,
   command: string,
-  args: string[]
+  args: string[],
+  cwd: string = process.cwd()
 ): Promise<void> {
   await ctx.reply(`• ${title}`);
-  const result = await runCommandCapture(command, args);
+  const result = await runCommandCapture(command, args, cwd);
   if (result.code !== 0) {
     const detail = (result.stderr || result.stdout || 'Sin detalle').trim().slice(0, 1200);
     throw new Error(`${title} falló.\n${detail}`);
@@ -302,8 +304,13 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
       if (repoCheck.code !== 0 || !repoCheck.stdout.includes('true')) {
         throw new Error('No estoy corriendo dentro de un repositorio Git válido.');
       }
+      const repoRootResult = await runCommandCapture('git', ['rev-parse', '--show-toplevel']);
+      if (repoRootResult.code !== 0 || !repoRootResult.stdout.trim()) {
+        throw new Error('No pude resolver la raíz del repositorio para ejecutar ./enzo.');
+      }
+      const repoRoot = repoRootResult.stdout.trim();
 
-      const dirtyCheck = await runCommandCapture('git', ['status', '--porcelain']);
+      const dirtyCheck = await runCommandCapture('git', ['status', '--porcelain'], repoRoot);
       if (dirtyCheck.code !== 0) {
         throw new Error('No pude verificar cambios locales antes de actualizar.');
       }
@@ -316,17 +323,20 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         return;
       }
 
-      await runStep(ctx, 'Sincronizando cambios remotos (`git pull --ff-only`)...', 'git', [
-        'pull',
-        '--ff-only',
-      ]);
-      await runStep(ctx, 'Instalando dependencias (`pnpm install`)...', 'pnpm', ['install']);
-      await runStep(ctx, 'Compilando paquetes (`pnpm build`)...', 'pnpm', ['build']);
-      await runStep(ctx, 'Verificando configuración (`./enzo status`)...', resolveEnzoScriptPath(process.cwd()), [
+      await runStep(
+        ctx,
+        'Sincronizando cambios remotos (`git pull --ff-only`)...',
+        'git',
+        ['pull', '--ff-only'],
+        repoRoot
+      );
+      await runStep(ctx, 'Instalando dependencias (`pnpm install`)...', 'pnpm', ['install'], repoRoot);
+      await runStep(ctx, 'Compilando paquetes (`pnpm build`)...', 'pnpm', ['build'], repoRoot);
+      await runStep(ctx, 'Verificando configuración (`./enzo status`)...', resolveEnzoScriptPath(repoRoot), [
         'status',
-      ]);
+      ], repoRoot);
 
-      const restart = scheduleEnzoSupervisorRestart({ cwd: process.cwd() });
+      const restart = scheduleEnzoSupervisorRestart({ cwd: repoRoot });
       const restartLine =
         restart.kind === 'skipped'
           ? `⚠️ ${restart.userMessage}`
