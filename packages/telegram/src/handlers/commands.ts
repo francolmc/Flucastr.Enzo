@@ -170,7 +170,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         '- `/clear` - limpiar historial de conversación',
         '- `/memory` - ver memorias guardadas',
         '- `/agent` o `/agents` - listar o configurar agente por conversación',
-        '- `/update` - actualizar y reiniciar el stack (solo admin; requiere `./enzo start` o ENZO_UPDATE_RESTART_CMD)',
+        '- `/update` - actualizar Enzo y disparar reinicio externo (solo admin; requiere ENZO_UPDATE_RESTART_CMD)',
         '',
         'Ejemplos de agente:',
         '- `/agent` o `/agents`',
