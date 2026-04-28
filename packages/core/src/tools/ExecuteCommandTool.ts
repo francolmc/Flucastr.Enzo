@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import { accessSync, constants, existsSync } from 'fs';
+import path from 'path';
 import { ExecutableTool, ToolResult } from './types.js';
 import { shellExecutableCandidates } from './resolveExecutableShell.js';
 import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
@@ -31,6 +33,37 @@ const DIRECT_EXEC_ALLOWED = new Set([
   'stat',
   'id',
 ]);
+
+function resolveDirectExecutable(bin: string): string | null {
+  if (!bin) return null;
+  if (path.isAbsolute(bin)) {
+    return isExecutablePath(bin) ? bin : null;
+  }
+  const dirs = (process.env.PATH?.split(path.delimiter).filter(Boolean) ?? []).concat([
+    '/bin',
+    '/usr/bin',
+    '/usr/local/bin',
+    '/sbin',
+    '/usr/sbin',
+  ]);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, bin);
+    if (isExecutablePath(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isExecutablePath(p: string): boolean {
+  try {
+    if (!existsSync(p)) return false;
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function spawnArgsFor(command: string): string[] {
   return process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
@@ -125,11 +158,15 @@ async function runDirectCommand(command: string, cwd: string): Promise<ShellRunR
   if (!DIRECT_EXEC_ALLOWED.has(bin)) {
     throw new Error(`Direct execution not allowed for command: ${bin}`);
   }
+  const executable = resolveDirectExecutable(bin);
+  if (!executable) {
+    throw new Error(`Direct execution binary not found in PATH: ${bin}`);
+  }
   const args = tokens.slice(1);
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(bin, args, {
+      child = spawn(executable, args, {
         cwd,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
