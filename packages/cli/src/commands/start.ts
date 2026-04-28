@@ -5,7 +5,7 @@ import path from 'path';
 import {
   clearEnzoSupervisorState,
   ENZO_SUPERVISOR_STATE_FILENAME,
-  resolveShellForExec,
+  resolveShell,
   writeEnzoSupervisorState,
 } from '@enzo/core';
 import { configExists, createConfigService } from '../utils/config.js';
@@ -31,7 +31,8 @@ function killByPattern(signal: 'TERM' | 'KILL', pattern: string): void {
 }
 
 function killByPort(signal: 'TERM' | 'KILL', port: string): void {
-  spawnSync(resolveShellForExec(), ['-c', `lsof -ti :${port} | xargs -r kill -${signal}`], {
+  const { shell, args } = resolveShell();
+  spawnSync(shell, [...args, `lsof -ti :${port} | xargs -r kill -${signal}`], {
     stdio: 'ignore',
   });
 }

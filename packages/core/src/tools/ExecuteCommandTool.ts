@@ -1,10 +1,92 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { ExecutableTool, ToolResult } from './types.js';
-import { resolveShellForExec } from './resolveShellForExec.js';
+import { resolveShell } from './resolveShell.js';
 import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
-const execAsync = promisify(exec);
+const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const EXEC_TIMEOUT_MS = 30000;
+
+function runSpawnedShellCommand(
+  command: string,
+  cwd: string
+): Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null }> {
+  const { shell, args } = resolveShell();
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(shell, [...args, command], {
+      cwd,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    let outLen = 0;
+    let errLen = 0;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      settled = true;
+      killChild();
+      reject(new Error('Command timed out'));
+    }, EXEC_TIMEOUT_MS);
+
+    function killChild(): void {
+      try {
+        if (process.platform === 'win32') {
+          child.kill();
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      const s = chunk.toString('utf8');
+      outLen += Buffer.byteLength(s, 'utf8');
+      if (outLen > MAX_BUFFER_BYTES) {
+        clearTimeout(timer);
+        settled = true;
+        killChild();
+        reject(new Error(`stdout maxBuffer ${MAX_BUFFER_BYTES} exceeded`));
+        return;
+      }
+      stdout += s;
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      const s = chunk.toString('utf8');
+      errLen += Buffer.byteLength(s, 'utf8');
+      if (errLen > MAX_BUFFER_BYTES) {
+        clearTimeout(timer);
+        settled = true;
+        killChild();
+        reject(new Error(`stderr maxBuffer ${MAX_BUFFER_BYTES} exceeded`));
+        return;
+      }
+      stderr += s;
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code, signal: signal ?? null });
+    });
+  });
+}
 
 export type ExecuteCommandToolOptions = {
   /** Working directory for the shell (defaults to workspace root). */
@@ -52,7 +134,6 @@ export class ExecuteCommandTool implements ExecutableTool {
         };
       }
 
-      // Check if command is blocked
       if (this.isBlocked(command)) {
         return {
           success: false,
@@ -68,12 +149,21 @@ export class ExecuteCommandTool implements ExecutableTool {
         };
       }
 
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.cwd,
-        timeout: 30000,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: resolveShellForExec(),
-      });
+      const { stdout, stderr, code, signal } = await runSpawnedShellCommand(command, this.cwd);
+
+      if (signal) {
+        return {
+          success: false,
+          error: `Command terminated by signal: ${signal}`,
+        };
+      }
+
+      if (code !== 0 && code !== null) {
+        return {
+          success: false,
+          error: stderr.trim() || stdout.trim() || `Command failed with exit code ${code}`,
+        };
+      }
 
       return {
         success: true,
@@ -103,8 +193,6 @@ export class ExecuteCommandTool implements ExecutableTool {
   }
 
   private isBlocked(command: string): boolean {
-    // Strip quoted strings so filenames containing blocked words don't trigger false positives
-    // e.g. mv "Formato Informe.docx" should NOT match 'format'
     const commandWithoutQuotes = command
       .replace(/"[^"]*"/g, '""')
       .replace(/'[^']*'/g, "''");
