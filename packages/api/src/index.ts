@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
-import fsSync from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
@@ -43,17 +43,24 @@ const enzoSecret = ensureLocalSecret();
 
 const workspaceRoot = path.resolve(__dirname, "../../..");
 
-function resolveSharedPath(envValue: string | undefined, fallbackAbsolutePath: string): string {
-  if (!envValue || envValue.trim().length === 0) {
-    return fallbackAbsolutePath;
+function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
+  let resolved = configValue
+    ? path.isAbsolute(configValue)
+      ? configValue
+      : path.resolve(homedir(), configValue)
+    : fallbackAbsolutePath;
+
+  if (!existsSync(resolved)) {
+    try {
+      mkdirSync(resolved, { recursive: true });
+      console.log(`[Config] Created missing directory: ${resolved}`);
+    } catch (err) {
+      console.warn(`[Config] Could not create directory ${resolved}:`, err);
+      resolved = fallbackAbsolutePath;
+    }
   }
 
-  const normalized = envValue.replace(/^~(?=$|\/|\\)/, homedir());
-  if (path.isAbsolute(normalized)) {
-    return normalized;
-  }
-
-  return path.resolve(workspaceRoot, normalized);
+  return resolved;
 }
 
 // Initialize encryption and configuration services
@@ -72,8 +79,8 @@ app.use(express.json());
 const dbPath = resolveSharedPath(systemConfig.dbPath, path.join(homedir(), ".enzo", "enzo.db"));
 const skillsPath = resolveSharedPath(systemConfig.enzoSkillsPath, path.join(homedir(), ".enzo", "skills"));
 process.env.ENZO_SKILLS_PATH = skillsPath;
-fsSync.mkdirSync(path.dirname(dbPath), { recursive: true });
-fsSync.mkdirSync(skillsPath, { recursive: true });
+mkdirSync(path.dirname(dbPath), { recursive: true });
+mkdirSync(skillsPath, { recursive: true });
 console.log(`[API] Shared DB path: ${dbPath}`);
 console.log(`[API] Shared skills path: ${skillsPath}`);
 

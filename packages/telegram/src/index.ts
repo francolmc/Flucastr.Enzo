@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { Telegraf } from 'telegraf';
@@ -9,16 +10,23 @@ const __dirname = path.dirname(__filename);
 const workspaceRoot = path.resolve(__dirname, '../../..');
 
 function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
-  if (!configValue || configValue.trim().length === 0) {
-    return fallbackAbsolutePath;
+  let resolved = configValue
+    ? path.isAbsolute(configValue)
+      ? configValue
+      : path.resolve(homedir(), configValue)
+    : fallbackAbsolutePath;
+
+  if (!existsSync(resolved)) {
+    try {
+      mkdirSync(resolved, { recursive: true });
+      console.log(`[Config] Created missing directory: ${resolved}`);
+    } catch (err) {
+      console.warn(`[Config] Could not create directory ${resolved}:`, err);
+      resolved = fallbackAbsolutePath;
+    }
   }
 
-  const normalized = configValue.replace(/^~(?=$|\/|\\)/, homedir());
-  if (path.isAbsolute(normalized)) {
-    return normalized;
-  }
-
-  return path.resolve(workspaceRoot, normalized);
+  return resolved;
 }
 
 import {
