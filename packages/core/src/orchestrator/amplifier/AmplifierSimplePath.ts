@@ -502,15 +502,23 @@ ${
         }
       } else if (toolName && toolName !== 'none') {
         log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
+        finalContent = `No pude ejecutar la acción "${toolName}". Intentá de nuevo.`;
       }
-    } catch {
-      log.info('[AmplifierLoop] SIMPLE path - respuesta directa (no JSON)');
+    } catch (err) {
+      log.warn('[AmplifierLoop] SIMPLE path - error procesando tool:', err);
+      finalContent = 'Tuve un problema procesando tu solicitud. ¿Podés reformularla?';
     }
   }
 
   if (!finalContent) {
     log.warn('[AmplifierLoop] SIMPLE path - contenido vacío, usando fallback');
     finalContent = 'No pude procesar tu solicitud. ¿Puedes intentarlo de nuevo?';
+  }
+
+  // Nunca devolver JSON crudo al usuario.
+  const trimmedFinalContent = finalContent.trim();
+  if (trimmedFinalContent.startsWith('{') || trimmedFinalContent.startsWith('[')) {
+    finalContent = 'Entendido, procesando tu solicitud...';
   }
 
   log.info('[AmplifierLoop] SIMPLE path - respuesta final:', finalContent.substring(0, 100));
