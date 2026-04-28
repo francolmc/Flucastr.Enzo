@@ -146,6 +146,7 @@ If you include any text outside the JSON, the tool will not execute.
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
   const dateLine = formatFastPathDateLine(input);
+  const toolNames = executableTools.map((t) => t.name).join(', ');
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
@@ -160,7 +161,8 @@ To use a tool, respond ONLY with JSON (no extra text, no markdown):
 {"tool":"TOOL_NAME","input":{PARAMS}}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Built-in tool names: execute_command, web_search, read_file, write_file, remember.
+AVAILABLE TOOLS (use ONLY these exact names): ${toolNames}
+Never invent tool names. If you cannot complete the task with these tools, respond in plain text.
 MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
