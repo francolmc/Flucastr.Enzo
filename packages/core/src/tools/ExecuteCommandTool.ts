@@ -1,6 +1,5 @@
 import { spawn } from 'child_process';
 import { ExecutableTool, ToolResult } from './types.js';
-import { resolveShell } from './resolveShell.js';
 import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -10,11 +9,10 @@ function runSpawnedShellCommand(
   command: string,
   cwd: string
 ): Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null }> {
-  const { shell, args } = resolveShell();
-
   return new Promise((resolve, reject) => {
-    const child = spawn(shell, [...args, command], {
+    const child = spawn(command, {
       cwd,
+      shell: true,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
