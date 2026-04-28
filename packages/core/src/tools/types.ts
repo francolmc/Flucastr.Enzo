@@ -22,7 +22,7 @@ export interface ToolExecutionContext {
 }
 
 export interface ExecutableTool extends Tool {
-  execute(input: any): Promise<ToolResult>;
+  execute(input: any, context?: ToolExecutionContext): Promise<ToolResult>;
   /**
    * Lowercase values of the JSON `action` field that imply this tool (fast-path i18n).
    * Example: `ejecutar_comando` → `execute_command`.

@@ -1,6 +1,7 @@
 import type { EchoTask } from '../EchoEngine.js';
 import type { NotificationGateway } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
+import type { EmailService } from '../../email/EmailService.js';
 
 const MORNING_BRIEFING_SCHEDULE = '0 7 * * *';
 
@@ -14,6 +15,7 @@ export interface MorningBriefingTaskOptions {
   resolveUserId: () => Promise<string | undefined>;
   now?: () => Date;
   locale?: string;
+  emailService?: EmailService;
 }
 
 function formatDate(now: Date, locale: string): { weekday: string; date: string } {
@@ -77,11 +79,31 @@ export function createMorningBriefingTask(options: MorningBriefingTaskOptions): 
       }
 
       const memories = await options.memoryService.recall(userId);
-      const message = buildMorningBriefingMessage({
+      let message = buildMorningBriefingMessage({
         now: nowProvider(),
         locale,
         memories,
       });
+
+      if (options.emailService?.getConfiguredAccounts?.().length) {
+        const yesterday = new Date(nowProvider().getTime() - 24 * 60 * 60 * 1000);
+        const emailResult = await options.emailService.getRecent({
+          limit: 5,
+          since: yesterday,
+        });
+        if (emailResult.success && emailResult.messages?.length) {
+          const msgs = emailResult.messages;
+          message += `\n\n📧 Correos recientes (${msgs.length}):\n`;
+          msgs.slice(0, 3).forEach((msg) => {
+            message += `• ${msg.from}: ${msg.subject}\n`;
+          });
+          if (msgs.length > 3) {
+            message += `  ...y ${msgs.length - 3} más\n`;
+          }
+        } else if (emailResult.success && (!emailResult.messages || emailResult.messages.length === 0)) {
+          message += '\n\n📧 Sin emails nuevos en las últimas 24h\n';
+        }
+      }
 
       await options.notificationGateway.notify(userId, message, {
         priority: 'URGENT',

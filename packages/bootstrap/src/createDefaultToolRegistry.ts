@@ -10,6 +10,9 @@ import {
   SendFileTool,
   resolveWorkspaceRoot,
   MarkItDownConverter,
+  EmailService,
+  ReadEmailTool,
+  SearchEmailTool,
 } from '@enzo/core';
 
 export interface TelegramFileDeliveryDeps {
@@ -44,6 +47,11 @@ export function createDefaultToolRegistry(
     registry.register(
       new SendFileTool(telegramFileDelivery.sendFileFn, telegramFileDelivery.fileHandler, workspacePath)
     );
+  }
+  const emailService = configService ? new EmailService(configService) : undefined;
+  if (emailService && emailService.getConfiguredAccounts().length > 0) {
+    registry.register(new ReadEmailTool(emailService));
+    registry.register(new SearchEmailTool(emailService));
   }
   return registry;
 }

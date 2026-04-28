@@ -21,6 +21,7 @@ export * from './voice/index.js';
 export * from './input/InputChunker.js';
 export * from './input/ChunkCapture.js';
 export * from './config/ConfigService.js';
+export * from './email/index.js';
 export * from './security/EncryptionService.js';
 export * from './security/SecretFile.js';
 export * from './files/index.js';

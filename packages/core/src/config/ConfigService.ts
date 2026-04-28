@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { EncryptionService } from '../security/EncryptionService.js';
 import { VOICE_RESPONSE_TRIGGERS } from '../voice/VoiceTrigger.js';
+import { type EmailAccountConfig, type EmailConfig, emailPasswordEncryptedKey } from './emailConfig.js';
+
+export type { EmailAccountConfig, EmailConfig } from './emailConfig.js';
 
 export interface ProviderConfig {
   name: string;
@@ -17,6 +20,7 @@ export interface ModelsConfig {
   system: StoredSystemConfig;
   assistantProfile: AssistantProfile;
   userProfile: UserProfile;
+  email: EmailConfig;
 }
 
 export interface AssistantProfile {
@@ -231,7 +235,40 @@ function getDefaultConfig(): ModelsConfig {
       styleGuidelines: '',
     },
     userProfile: {},
+    email: { accounts: [] },
   };
+}
+
+function normalizeEmailConfig(loaded: unknown, defaults: EmailConfig): EmailConfig {
+  if (!loaded || typeof loaded !== 'object' || !('accounts' in loaded)) {
+    return { ...defaults };
+  }
+  const acc = (loaded as { accounts?: unknown }).accounts;
+  if (!Array.isArray(acc)) {
+    return { ...defaults };
+  }
+  const accounts: EmailAccountConfig[] = [];
+  for (const raw of acc) {
+    if (!raw || typeof raw !== 'object') continue;
+    const o = raw as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id.trim() : '';
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    const enabled = typeof o.enabled === 'boolean' ? o.enabled : true;
+    const imap = o.imap;
+    if (!imap || typeof imap !== 'object') continue;
+    const im = imap as Record<string, unknown>;
+    const host = typeof im.host === 'string' ? im.host.trim() : '';
+    const port = typeof im.port === 'number' && Number.isFinite(im.port) ? im.port : 993;
+    const user = typeof im.user === 'string' ? im.user.trim() : '';
+    if (!id || !host || !user) continue;
+    accounts.push({
+      id,
+      label: label || id,
+      imap: { host, port, user },
+      enabled,
+    });
+  }
+  return { accounts };
 }
 
 /**
@@ -344,6 +381,7 @@ export class ConfigService {
         ...defaults.userProfile,
         ...(loaded?.userProfile || {}),
       },
+      email: normalizeEmailConfig(loaded?.email, defaults.email),
     };
   }
 
@@ -635,6 +673,59 @@ export class ConfigService {
     console.log('[ConfigService] User profile updated');
   }
 
+  getEmailConfig(): EmailConfig {
+    this.syncConfigFromDisk();
+    return {
+      accounts: this.config.email.accounts.map((a) => ({ ...a, imap: { ...a.imap } })),
+    };
+  }
+
+  getEmailPassword(accountId: string): string | null {
+    this.syncConfigFromDisk();
+    const key = emailPasswordEncryptedKey(accountId);
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    const encryptedValue = sys[key];
+    if (!encryptedValue) {
+      return null;
+    }
+    try {
+      return this.encryptionService.decrypt(encryptedValue);
+    } catch (error) {
+      console.error(`[ConfigService] Failed to decrypt email password for "${accountId}":`, error);
+      return null;
+    }
+  }
+
+  setEmailPassword(accountId: string, password: string): void {
+    this.syncConfigFromDisk();
+    const encrypted = this.encryptionService.encrypt(password);
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    sys[emailPasswordEncryptedKey(accountId)] = encrypted;
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  setEmailAccountEnabled(accountId: string, enabled: boolean): void {
+    this.syncConfigFromDisk();
+    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) {
+      throw new Error(`Unknown email account: ${accountId}`);
+    }
+    this.config.email.accounts[idx] = {
+      ...this.config.email.accounts[idx],
+      enabled,
+    };
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  hasEmailPassword(accountId: string): boolean {
+    this.syncConfigFromDisk();
+    const key = emailPasswordEncryptedKey(accountId);
+    const encrypted = (this.config.system as unknown as Record<string, string | undefined>)[key];
+    return typeof encrypted === 'string' && encrypted.length > 0;
+  }
+
   // Get full config (without sensitive data)
 
   getSystemConfig(): SystemConfigView {
@@ -786,6 +877,13 @@ export class ConfigService {
     }
     delete copy.system.telegramBotTokenEncrypted;
     delete copy.system.tavilyApiKeyEncrypted;
+
+    const sysCopy = copy.system as unknown as Record<string, unknown>;
+    for (const k of Object.keys(sysCopy)) {
+      if (/^emailPassword_.+Encrypted$/u.test(k)) {
+        delete sysCopy[k];
+      }
+    }
 
     return copy;
   }

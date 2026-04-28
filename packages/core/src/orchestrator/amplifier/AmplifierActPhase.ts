@@ -123,7 +123,7 @@ export async function runActPhase(
 
         const tool = executableTools.find((t) => t.name === resolvedAction.target);
         if (tool) {
-          const result = await tool.execute(toolInput);
+          const result = await tool.execute(toolInput, fmtCtx);
           if (!result.success) {
             output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
           } else {

@@ -17,6 +17,8 @@ import {
   EchoResult,
   Notification,
   Project,
+  EmailAccountConfigDTO,
+  EmailMessageDTO,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -58,7 +60,10 @@ class ApiClient {
       if (!response.ok) {
         let error: ApiError = {};
         try {
-          error = (await response.json()) as ApiError;
+          const errText = await response.text();
+          if (errText.trim()) {
+            error = JSON.parse(errText) as ApiError;
+          }
         } catch {
           // Ignore JSON parsing errors and use HTTP status fallback.
         }
@@ -66,7 +71,11 @@ class ApiClient {
         throw new Error(detail);
       }
 
-      return await response.json();
+      const bodyText = await response.text();
+      if (!bodyText.trim()) {
+        return {} as T;
+      }
+      return JSON.parse(bodyText) as T;
     } catch (error) {
       clearTimeout(timeoutId);
       if (error instanceof Error && error.name === 'AbortError') {
@@ -443,6 +452,38 @@ class ApiClient {
   // Projects API
   async getProjects(userId: string): Promise<{ projects: Project[] }> {
     return this.request(`/projects/${encodeURIComponent(userId)}`);
+  }
+
+  async getEmailAccounts(): Promise<EmailAccountConfigDTO[]> {
+    const data = await this.request<{ accounts: EmailAccountConfigDTO[] }>('/email/accounts');
+    return data.accounts ?? [];
+  }
+
+  async testEmailAccount(id: string): Promise<{ success: boolean; error?: string }> {
+    return this.request(`/email/accounts/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async setEmailPassword(id: string, password: string): Promise<void> {
+    await this.request(`/email/accounts/${encodeURIComponent(id)}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  async toggleEmailAccount(id: string, enabled: boolean): Promise<void> {
+    await this.request(`/email/accounts/${encodeURIComponent(id)}/toggle`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async getRecentEmails(limit?: number): Promise<EmailMessageDTO[]> {
+    const q =
+      typeof limit === 'number' ? `?limit=${encodeURIComponent(String(limit))}` : '';
+    const data = await this.request<{ messages: EmailMessageDTO[] }>(`/email/recent${q}`);
+    return data.messages ?? [];
   }
 
   // MCP APIs

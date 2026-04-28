@@ -163,9 +163,35 @@ Ejemplo valido:
     "telegramBotTokenEncrypted": "<encrypted>",
     "telegramAllowedUsers": "12345678",
     "enzoDebug": false
+  },
+  "email": {
+    "accounts": [
+      {
+        "id": "outlook",
+        "label": "Outlook personal",
+        "imap": {
+          "host": "outlook.office365.com",
+          "port": 993,
+          "user": "tu@outlook.com"
+        },
+        "enabled": true
+      },
+      {
+        "id": "gmail",
+        "label": "Gmail",
+        "imap": {
+          "host": "imap.gmail.com",
+          "port": 993,
+          "user": "tu@gmail.com"
+        },
+        "enabled": true
+      }
+    ]
   }
 }
 ```
+
+Las contraseñas IMAP no van en el ejemplo: se guardan cifradas como `emailPassword_<id>Encrypted` dentro de `system` (ver `docs/config.md`).
 
 ## Seguridad
 

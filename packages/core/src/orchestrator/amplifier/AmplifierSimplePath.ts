@@ -28,7 +28,7 @@ import {
   validateToolInput,
 } from './AmplifierLoopFastPathTools.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './AmplifierVerifyPhase.js';
-import type { ExecutableTool } from '../../tools/types.js';
+import type { ExecutableTool, ToolExecutionContext } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
@@ -355,7 +355,7 @@ Format:
 
       if (resolved) {
         let execName = resolved.name;
-        const execCtx = {
+        const execCtx: ToolExecutionContext = {
           userId: input.userId,
           requestId: requestId ?? input.requestId,
           ...input.toolExecutionContext,
@@ -412,11 +412,12 @@ Format:
               if (!tool) {
                 setupError = `Herramienta interna no encontrada: ${execName}`;
               } else {
-                const result = await tool.execute(preparedToolInput);
-                const fmtCtx = {
+                const result = await tool.execute(preparedToolInput, execCtx);
+                const fmtCtx: ToolExecutionContext = {
                   userId: input.userId,
                   requestId: requestId ?? input.requestId,
-                  outputStyle: 'full' as const,
+                  outputStyle: 'full',
+                  ...execCtx,
                 };
                 const formatted = result.success ? tool.formatToolOutput?.(result.data, fmtCtx) : undefined;
                 rawToolOutput =

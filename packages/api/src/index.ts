@@ -31,6 +31,7 @@ import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
 import { createEchoRouter } from "./routes/echo.js";
+import { createEmailRouter } from "./routes/email.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -189,6 +190,7 @@ app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter(skillRegistry));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
+app.use(createEmailRouter(configService));
 
 app.use(errorHandler);
 

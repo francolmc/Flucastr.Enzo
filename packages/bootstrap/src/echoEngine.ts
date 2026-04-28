@@ -5,6 +5,7 @@ import {
   createMorningBriefingTask,
   createContextRefreshTask,
   createNightSummaryTask,
+  EmailService,
   type ConfigService,
   type MemoryService,
 } from '@enzo/core';
@@ -118,8 +119,14 @@ export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
       const notificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
       echoNotificationGateway = notificationGateway;
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
+      const emailService = new EmailService(configService);
       sharedEchoEngine.registerTask(
-        createMorningBriefingTask({ memoryService, notificationGateway, resolveUserId })
+        createMorningBriefingTask({
+          memoryService,
+          notificationGateway,
+          resolveUserId,
+          emailService,
+        })
       );
       sharedEchoEngine.registerTask(
         createContextRefreshTask({ memoryService, notificationGateway, resolveUserId })

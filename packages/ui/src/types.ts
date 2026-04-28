@@ -232,3 +232,30 @@ export interface Project {
   lastActivity: string;
   pendingItems: string[];
 }
+
+/** Email account as returned by GET /api/email/accounts */
+export interface EmailAccountConfigDTO {
+  id: string;
+  label: string;
+  imap: {
+    host: string;
+    port: number;
+    user: string;
+  };
+  enabled: boolean;
+  hasPassword: boolean;
+}
+
+/** Email preview row (API GET /api/email/recent) */
+export interface EmailMessageDTO {
+  id: string;
+  subject: string;
+  from: string;
+  to: string[];
+  date: string;
+  preview: string;
+  hasAttachments: boolean;
+  folder: string;
+  accountId?: string;
+  accountLabel?: string;
+}

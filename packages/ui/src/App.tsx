@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import MemoryPage from './pages/MemoryPage';
 import ProjectsPage from './pages/ProjectsPage';
 import EchoPage from './pages/EchoPage';
+import EmailPage from './pages/EmailPage';
 import { formatRelativeTime } from './utils/timeFormat';
 import './App.css';
 
@@ -21,7 +22,8 @@ export type Page =
   | 'stats'
   | 'skills'
   | 'mcp'
-  | 'config';
+  | 'config'
+  | 'email';
 
 const NAV_ITEMS: Array<{
   id: Page;
@@ -35,6 +37,7 @@ const NAV_ITEMS: Array<{
   { id: 'echo', label: 'Echo', description: 'Tareas programadas', icon: '🔄' },
   { id: 'chat', label: 'Chat', description: 'Conversaciones y contexto', icon: '💬' },
   { id: 'skills', label: 'Skills', description: 'Capacidades del asistente', icon: '⚡' },
+  { id: 'email', label: 'Correo', description: 'IMAP Outlook / Gmail', icon: '📧' },
   { id: 'stats', label: 'Insights', description: 'Métricas y señales', icon: '📈' },
   { id: 'mcp', label: 'MCP', description: 'Conectores y tools', icon: '🔌' },
   { id: 'config', label: 'Config', description: 'Modelos y agentes', icon: '⚙️' },
@@ -175,6 +178,7 @@ function App() {
         {currentPage === 'chat' && <ChatPage />}
         {currentPage === 'stats' && <StatsPage />}
         {currentPage === 'skills' && <SkillsPage />}
+        {currentPage === 'email' && <EmailPage />}
         {currentPage === 'mcp' && <MCPPage />}
         {currentPage === 'config' && <ConfigPage />}
       </main>

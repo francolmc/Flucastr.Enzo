@@ -65,5 +65,14 @@ export {
   type ConversionResult,
   type MarkItDownService,
 } from './files/index.js';
+export { ReadEmailTool, SearchEmailTool } from './tools/index.js';
 export type { VisionService, VisionResult } from './vision/VisionService.js';
+export {
+  EmailService,
+  IMAPClient,
+  type EmailMessage,
+  type EmailQuery,
+  type EmailServiceResult,
+  type IMAPClientOptions,
+} from './email/index.js';
 export { OllamaVisionService } from './vision/OllamaVisionService.js';
