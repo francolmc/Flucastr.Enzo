@@ -74,7 +74,7 @@ function mergePreferredShellsFirst(rest: string[]): string[] {
   };
 
   for (const p of PREFERRED_POSIX_SHELL_ORDER) {
-    if (existsSync(p)) {
+    if (isExecutableFile(p)) {
       push(p);
     }
   }
@@ -92,7 +92,10 @@ function appendPathDiscoveredShells(out: string[]): void {
       continue;
     }
     for (const name of names) {
-      uniqPush(out, path.join(dir, name));
+      const candidate = path.join(dir, name);
+      if (isExecutableFile(candidate)) {
+        uniqPush(out, candidate);
+      }
     }
   }
 }
@@ -161,7 +164,9 @@ export function shellExecutableCandidates(): string[] {
     uniqPush(out, 'cmd.exe');
     return out;
   }
-  const filtered = posixPathCandidates().filter((p) => !shouldSkipShellCandidate(p));
+  const filtered = posixPathCandidates().filter(
+    (p) => !shouldSkipShellCandidate(p) && isExecutableFile(p)
+  );
   return mergePreferredShellsFirst(filtered);
 }
 
