@@ -27,6 +27,30 @@ function uniqPush(out: string[], p: string | undefined): void {
   }
 }
 
+/** Snap (and similar) shim paths often stat as executable yet spawn ENOENT outside snap confinement — try them last. */
+function isSnapOrSimilarShim(shellPath: string): boolean {
+  const n = path.normalize(shellPath);
+  return (
+    n.startsWith('/snap/') ||
+    n.startsWith('/var/lib/snapd/') ||
+    n.startsWith('/snapd/')
+  );
+}
+
+/** Prefer distro / posix paths; append snap-derived shells after (still retried if needed). */
+function prioritizeNonSnapShells(entries: string[]): string[] {
+  const preferred: string[] = [];
+  const deferred: string[] = [];
+  for (const e of entries) {
+    if (isSnapOrSimilarShim(e)) {
+      deferred.push(e);
+    } else {
+      preferred.push(e);
+    }
+  }
+  return [...preferred, ...deferred];
+}
+
 function appendPathDiscoveredShells(out: string[]): void {
   const names = ['sh', 'bash', 'dash'];
   const dirs = process.env.PATH?.split(path.delimiter).filter(Boolean) ?? [];
@@ -93,7 +117,7 @@ export function shellExecutableCandidates(): string[] {
     uniqPush(out, 'cmd.exe');
     return out;
   }
-  return posixPathCandidates();
+  return prioritizeNonSnapShells(posixPathCandidates());
 }
 
 export function pickFirstResolvableShellExecutable(): string | undefined {
