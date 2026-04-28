@@ -136,6 +136,7 @@ export async function executeOrchestratorProcess(
       onProgress: input.onProgress,
       runtimeHints,
       toolExecutionContext,
+      imageContext: input.imageContext,
     });
   } catch (amplifierError) {
     console.error('[Orchestrator] AmplifierLoop error:', amplifierError);
@@ -162,6 +163,7 @@ export async function executeOrchestratorProcess(
         onProgress: input.onProgress,
         runtimeHints,
         toolExecutionContext,
+        imageContext: input.imageContext,
       });
     } else {
       const errorMsg = amplifierError instanceof Error ? amplifierError.message : String(amplifierError);

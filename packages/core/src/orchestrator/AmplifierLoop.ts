@@ -133,7 +133,7 @@ export class AmplifierLoop {
     d: { agent: string; task: string; reason: string },
     iteration: number,
     requestId: string | undefined,
-    input: Pick<AmplifierInput, 'userId' | 'userMemories' | 'message'>,
+    input: Pick<AmplifierInput, 'userId' | 'userMemories' | 'message' | 'imageContext'>,
     options: { conversationSummary: string; previousStepResults?: string }
   ): Promise<{ actTrace: Step; observe: Step }> {
     const actTrace: Step = {
@@ -176,6 +176,8 @@ export class AmplifierLoop {
         memories: input.userMemories ?? [],
         conversationSummary: options.conversationSummary,
         previousStepResults: options.previousStepResults,
+        imageBase64: input.imageContext?.base64,
+        imageMimeType: input.imageContext?.mimeType,
       },
     };
 
@@ -311,7 +313,8 @@ No markdown. No prose.`;
     if (
       (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) &&
       !hasMultiStepSkillRequirement &&
-      !skipFastPathForMultiTool
+      !skipFastPathForMultiTool &&
+      !input.imageContext
     ) {
       return runSimpleModerateFastPath({
         input,

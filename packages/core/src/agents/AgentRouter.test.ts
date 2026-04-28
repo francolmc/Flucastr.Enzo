@@ -7,6 +7,7 @@ import { AgentRouter } from './AgentRouter.js';
 import type { AgentRouterContract, DelegationRequest, DelegationResult } from './AgentRouter.js';
 import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
 import type { DocAgent } from './DocAgent.js';
+import type { VisionAgent } from './VisionAgent.js';
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -50,9 +51,15 @@ async function testClaudeCodeRoutesToExecute() {
       return { success: false, agent: 'doc_agent', output: '', error: 'should not run' };
     },
   };
+  const vision = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'vision_agent', output: '', error: 'should not run' };
+    },
+  };
   const router = new AgentRouter({
     claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
     docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
   });
   const r = await router.delegate({
     agent: 'claude_code',
@@ -81,9 +88,15 @@ async function testDocAgentRoutesToExecute() {
       return { success: true, agent: 'doc_agent', output: 'docout' };
     },
   };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'vision_agent', output: '', error: 'no' };
+    },
+  };
   const router = new AgentRouter({
     claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
     docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
   });
   const r = await router.delegate({
     agent: 'doc_agent',
@@ -106,9 +119,15 @@ async function testUnknownAgentNoThrow() {
       return { success: true, agent: 'doc_agent', output: '' };
     },
   };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: true, agent: 'vision_agent', output: '' };
+    },
+  };
   const router = new AgentRouter({
     claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
     docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
   });
   const r = await router.delegate({
     agent: 'unknown_xyz',
@@ -132,9 +151,15 @@ async function testNotifyRunsBeforeExecute() {
       return { success: true, agent: 'doc_agent', output: '' };
     },
   };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: true, agent: 'vision_agent', output: '' };
+    },
+  };
   const router = new AgentRouter({
     claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
     docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
     notificationGateway: {
       notify: async () => {
         order.push('notify');
@@ -148,6 +173,45 @@ async function testNotifyRunsBeforeExecute() {
     context: { userId: 'u1', memories: [], conversationSummary: '' },
   });
   assert(order[0] === 'notify' && order[1] === 'execute', `expected notify then execute, got ${order.join(',')}`);
+}
+
+async function testVisionAgentRoutesToExecute() {
+  let lastTask: string | null = null;
+  const claude: Pick<ClaudeCodeAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'claude_code', output: '', error: 'no' };
+    },
+  };
+  const doc: Pick<DocAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'doc_agent', output: '', error: 'no' };
+    },
+  };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(request: DelegationRequest): Promise<DelegationResult> {
+      lastTask = request.task;
+      return { success: true, agent: 'vision_agent', output: 'saw a chart' };
+    },
+  };
+  const router = new AgentRouter({
+    claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
+    docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
+  });
+  const r = await router.delegate({
+    agent: 'vision_agent',
+    task: 'Describe axes',
+    reason: 'Local model has no vision',
+    context: {
+      userId: 'u1',
+      memories: [],
+      conversationSummary: 's',
+      imageBase64: 'abc',
+      imageMimeType: 'image/jpeg',
+    },
+  });
+  assert(r.success && r.output === 'saw a chart', JSON.stringify(r));
+  assert(lastTask === 'Describe axes', 'vision task');
 }
 
 async function testMemoryAfterDelegationResult() {
@@ -194,6 +258,7 @@ async function runTests() {
   console.log('AgentRouter tests\n');
   await testClaudeCodeRoutesToExecute();
   await testDocAgentRoutesToExecute();
+  await testVisionAgentRoutesToExecute();
   await testUnknownAgentNoThrow();
   await testNotifyRunsBeforeExecute();
   await testMemoryAfterDelegationResult();

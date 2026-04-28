@@ -102,9 +102,19 @@ Do NOT return conversational text. Do NOT return {"action":"skill"}.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
   }
 
+  const imageDelegationBlock =
+    !isAlgorithmMode && input.imageContext?.base64 && input.imageContext?.mimeType
+      ? `
+IMAGE DELEGATION (mandatory):
+The user message concerns an image the local model could not analyze. Image bytes are attached only for delegation — you MUST NOT invent or guess visual content from text alone.
+Respond with exactly ONE JSON object: {"action":"delegate","agent":"vision_agent","task":"<what to analyze or extract from the image>","reason":"Local model does not support vision; image is in delegation context"}.
+Use a concrete task (include any user question about the image in the task text). No other action is valid until this delegation runs.
+`
+      : '';
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
-
+${imageDelegationBlock}
 AVAILABLE TOOLS:
 ${toolsList}
 
@@ -120,6 +130,7 @@ Available agents:
   writing more than 50 lines of code, or technical analysis requiring deep reasoning
 - "doc_agent": for generating professional documents (reports, proposals, presentations)
   that require structured formatting, multiple sections, or executive-level quality
+- "vision_agent": for analyzing images when the local model cannot process them
 
 DELEGATION RULES — read carefully:
 - Only delegate when you genuinely cannot complete the task with available tools

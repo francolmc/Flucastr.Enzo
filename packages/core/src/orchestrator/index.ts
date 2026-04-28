@@ -8,6 +8,7 @@ export type { DelegationRequest, DelegationResult, AgentRouterContract, AgentRou
 export { DELEGATION_NOT_CONFIGURED, AgentRouter } from './AgentRouter.js';
 export { ClaudeCodeAgent } from '../agents/ClaudeCodeAgent.js';
 export { DocAgent } from '../agents/DocAgent.js';
+export { VisionAgent } from '../agents/VisionAgent.js';
 export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';

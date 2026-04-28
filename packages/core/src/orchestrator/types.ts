@@ -33,7 +33,7 @@ export interface AgentConfig {
 export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none' | 'delegate';
 
 /** Valid agent ids for the delegate action (THINK / CapabilityResolver / prompts must stay aligned). */
-export const DELEGATION_AGENT_IDS = ['claude_code', 'doc_agent'] as const;
+export const DELEGATION_AGENT_IDS = ['claude_code', 'doc_agent', 'vision_agent'] as const;
 export type DelegationAgentId = (typeof DELEGATION_AGENT_IDS)[number];
 
 /**
@@ -102,6 +102,8 @@ export interface AmplifierInput {
   };
   /** When set (e.g. by AmplifierLoop), THINK skips re-resolving skills against `message`. */
   resolvedSkills?: RelevantSkill[];
+  /** Image bytes for vision delegation (e.g. Telegram when local Ollama cannot see). */
+  imageContext?: { base64: string; mimeType: string };
 }
 
 export interface AmplifierResult {
@@ -201,6 +203,8 @@ export interface OrchestratorInput {
   runtimeHints?: AmplifierInput['runtimeHints'];
   /** Optional; merged with userId/requestId/source/conversationId inside process(). */
   toolExecutionContext?: Partial<ToolExecutionContext>;
+  /** Passed through to AmplifierInput for vision_agent delegation. */
+  imageContext?: { base64: string; mimeType: string };
 }
 
 export const AVAILABLE_TOOLS = [

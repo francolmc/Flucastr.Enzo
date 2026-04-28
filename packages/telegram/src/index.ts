@@ -32,6 +32,8 @@ import {
   ensureLocalSecret,
   WhisperTranscriptionService,
   EdgeTTSService,
+  FileHandler,
+  OllamaVisionService,
 } from '@enzo/core';
 import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway, createAgentRouter } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -88,6 +90,8 @@ async function main() {
     skillRegistry.startWatching();
     console.log('[Telegram] SkillRegistry initialized and loaded');
 
+    const resolvedUserWorkspace = resolveSharedPath(systemConfig.enzoWorkspacePath, homedir());
+
     const ollamaBaseUrl =
       systemConfig.ollamaBaseUrl || 'http://localhost:11434';
     const ollamaPrimaryModel = configService.getPrimaryModel() || 'qwen2.5:7b';
@@ -125,11 +129,33 @@ async function main() {
       }
     };
 
-    const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
+    const sendTelegramFile = async (
+      chatId: string,
+      buffer: Buffer,
+      filename: string
+    ): Promise<void> => {
+      if (!bot) {
+        throw new Error('[Telegram] Bot not ready for send_document');
+      }
+      await bot.telegram.sendDocument(chatId, { source: buffer, filename });
+    };
+
+    const fileHandler = new FileHandler({
+      workspacePath: resolvedUserWorkspace,
+      maxSizeMb: 50,
+    });
+
+    const toolRegistry = createDefaultToolRegistry(
+      memoryService,
+      resolvedUserWorkspace,
+      configService,
+      { fileHandler, sendFileFn: sendTelegramFile }
+    );
     const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
     echoEngine.start();
     const transcriptionService = new WhisperTranscriptionService(configService);
     const ttsService = new EdgeTTSService({ configService });
+    const visionService = new OllamaVisionService(configService);
     const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
     const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
     const orchestrator = new Orchestrator(
@@ -180,7 +206,13 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService, { configService, transcriptionService, ttsService });
+      const nextBot = createBot(orchestrator, memoryService, {
+        configService,
+        transcriptionService,
+        ttsService,
+        fileHandler,
+        visionService,
+      });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
       const maxAttempts = 20;

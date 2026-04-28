@@ -1,5 +1,5 @@
 import type { ConfigService, MemoryService, NotificationGateway } from '@enzo/core';
-import { AgentRouter, ClaudeCodeAgent, DocAgent } from '@enzo/core';
+import { AgentRouter, ClaudeCodeAgent, DocAgent, VisionAgent } from '@enzo/core';
 
 /**
  * Wires the delegation router with concrete Anthropic-backed agents. Use the same `workspacePath`
@@ -15,5 +15,6 @@ export function createAgentRouter(
     notificationGateway,
     claudeCodeAgent: new ClaudeCodeAgent(configService, workspacePath),
     docAgent: new DocAgent(configService, workspacePath),
+    visionAgent: new VisionAgent(configService),
   });
 }

@@ -23,5 +23,7 @@ export * from './input/ChunkCapture.js';
 export * from './config/ConfigService.js';
 export * from './security/EncryptionService.js';
 export * from './security/SecretFile.js';
+export * from './files/index.js';
+export * from './vision/index.js';
 export * from './supervisor/supervisorState.js';
 export * from './supervisor/scheduleEnzoSupervisorRestart.js';

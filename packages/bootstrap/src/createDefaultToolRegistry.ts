@@ -1,4 +1,4 @@
-import type { MemoryService, ConfigService } from '@enzo/core';
+import type { MemoryService, ConfigService, SendFileFn, FileHandler } from '@enzo/core';
 import {
   ToolRegistry,
   WebSearchTool,
@@ -7,8 +7,14 @@ import {
   RememberTool,
   RecallTool,
   WriteFileTool,
+  SendFileTool,
   resolveWorkspaceRoot,
 } from '@enzo/core';
+
+export interface TelegramFileDeliveryDeps {
+  fileHandler: FileHandler;
+  sendFileFn: SendFileFn;
+}
 
 /**
  * Default tool set for API / Telegram: Tavily-backed search, shell, filesystem, memory.
@@ -16,11 +22,13 @@ import {
  *
  * @param workspacePath - Root for `read_file` when paths are relative. If omitted, `ReadFileTool` uses
  *   `process.env.ENZO_WORKSPACE_PATH` or falls back to `./workspace` (see `ReadFileTool` in `@enzo/core`).
+ * @param telegramFileDelivery - When set (typically Telegram bot), registers `send_file`.
  */
 export function createDefaultToolRegistry(
   memoryService: MemoryService,
   workspacePath?: string,
-  configService?: ConfigService
+  configService?: ConfigService,
+  telegramFileDelivery?: TelegramFileDeliveryDeps
 ): ToolRegistry {
   const registry = new ToolRegistry();
   const resolvedWorkspace = resolveWorkspaceRoot(workspacePath);
@@ -30,5 +38,10 @@ export function createDefaultToolRegistry(
   registry.register(new RememberTool(memoryService));
   registry.register(new RecallTool(memoryService));
   registry.register(new WriteFileTool(workspacePath));
+  if (telegramFileDelivery) {
+    registry.register(
+      new SendFileTool(telegramFileDelivery.sendFileFn, telegramFileDelivery.fileHandler, workspacePath)
+    );
+  }
   return registry;
 }

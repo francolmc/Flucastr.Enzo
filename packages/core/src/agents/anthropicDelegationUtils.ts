@@ -135,3 +135,87 @@ async function processFileTagsAndBuildResult(
 
   return { success: true, agent, output: stripFileTags(rawText), filesCreated };
 }
+
+const VISION_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+function normalizeVisionMediaType(mime: string): string {
+  const lower = mime.trim().toLowerCase();
+  return VISION_MEDIA_TYPES.has(lower) ? lower : 'image/jpeg';
+}
+
+/**
+ * Single-turn Anthropic Messages call with one image (base64) + task text. No file-tag processing.
+ */
+export async function runAnthropicVisionTask(options: {
+  configService: ConfigService;
+  systemPrompt: string;
+  task: string;
+  imageBase64: string;
+  imageMimeType: string;
+  fetchImpl?: typeof fetch;
+}): Promise<DelegationResult> {
+  const agent = 'vision_agent';
+  const apiKey = options.configService.getProviderApiKey('anthropic');
+  if (!apiKey || !apiKey.trim()) {
+    return {
+      success: false,
+      agent,
+      output: '',
+      error: 'Anthropic API key is not configured. Set the anthropic key in config or provide ANTHROPIC_API_KEY.',
+    };
+  }
+
+  const mediaType = normalizeVisionMediaType(options.imageMimeType);
+  const fetchFn = options.fetchImpl ?? fetch;
+
+  const userContent: unknown[] = [
+    {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mediaType,
+        data: options.imageBase64,
+      },
+    },
+    { type: 'text', text: options.task },
+  ];
+
+  try {
+    const response = await fetchWithRetry(
+      ANTHROPIC_MESSAGES_URL,
+      {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_DELEGATION_MODEL,
+          max_tokens: MAX_TOKENS,
+          system: options.systemPrompt,
+          messages: [{ role: 'user', content: userContent }],
+        }),
+      },
+      { providerName: 'anthropic', fetchFn, maxAttempts: 2 }
+    );
+
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        const errBody = (await response.json()) as { error?: { message?: string; type?: string } };
+        detail = errBody?.error?.message || errBody?.error?.type || detail;
+      } catch {
+        // keep HTTP detail
+      }
+      return { success: false, agent, output: '', error: `Anthropic API error: ${detail}` };
+    }
+
+    const data = (await response.json()) as { content?: unknown };
+    const rawText = extractTextBlocks(data).trim();
+    return { success: true, agent, output: rawText };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, agent, output: '', error: `Request failed: ${msg}` };
+  }
+}

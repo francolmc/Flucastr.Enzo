@@ -1,6 +1,7 @@
 import type { NotificationGateway } from '../echo/NotificationGateway.js';
 import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
 import type { DocAgent } from './DocAgent.js';
+import type { VisionAgent } from './VisionAgent.js';
 
 export interface DelegationRequest {
   agent: string;
@@ -11,6 +12,8 @@ export interface DelegationRequest {
     memories: Array<{ key: string; value: string }>;
     conversationSummary: string;
     previousStepResults?: string;
+    imageBase64?: string;
+    imageMimeType?: string;
   };
 }
 
@@ -28,6 +31,7 @@ export const DELEGATION_NOT_CONFIGURED =
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   claude_code: 'asistente de código',
   doc_agent: 'generador de documentos',
+  vision_agent: 'análisis de imágenes',
 };
 
 /**
@@ -40,6 +44,7 @@ export type AgentRouterContract = {
 export type AgentRouterOptions = {
   claudeCodeAgent: ClaudeCodeAgent;
   docAgent: DocAgent;
+  visionAgent: VisionAgent;
   notificationGateway?: Pick<NotificationGateway, 'notify'>;
 };
 
@@ -47,11 +52,13 @@ export class AgentRouter implements AgentRouterContract {
   private readonly notificationGateway?: Pick<NotificationGateway, 'notify'>;
   private readonly claudeCodeAgent: ClaudeCodeAgent;
   private readonly docAgent: DocAgent;
+  private readonly visionAgent: VisionAgent;
 
   constructor(options: AgentRouterOptions) {
     this.notificationGateway = options.notificationGateway;
     this.claudeCodeAgent = options.claudeCodeAgent;
     this.docAgent = options.docAgent;
+    this.visionAgent = options.visionAgent;
   }
 
   async delegate(request: DelegationRequest): Promise<DelegationResult> {
@@ -63,6 +70,9 @@ export class AgentRouter implements AgentRouterContract {
       case 'doc_agent':
         await this.notifyIfConfigured(request.context.userId, displayName);
         return this.docAgent.execute(request);
+      case 'vision_agent':
+        await this.notifyIfConfigured(request.context.userId, displayName);
+        return this.runVisionAgent(request);
       default:
         return {
           success: false,
@@ -71,6 +81,10 @@ export class AgentRouter implements AgentRouterContract {
           error: `Unknown agent: ${request.agent}`,
         };
     }
+  }
+
+  private async runVisionAgent(request: DelegationRequest): Promise<DelegationResult> {
+    return this.visionAgent.execute(request);
   }
 
   private async notifyIfConfigured(userId: string, displayName: string): Promise<void> {

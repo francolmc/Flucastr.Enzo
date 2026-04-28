@@ -66,6 +66,7 @@ MODERATE — needs exactly ONE tool:
 - Real-world facts that may be outdated or require verification: current prices, exchange rates, weather, news, recent events, status of a person/company/project, sports results, release dates, any question about "now", "today", "currently", "latest", "recent"
 - Factual questions where being wrong would mislead the user: "who is the CEO of X", "what is the population of Y", "how much does Z cost", "what happened with W"
 - File operations: "read file...", "show contents of...", "list folder...", "create file..."
+- Sending or sharing an existing file to the user via Telegram: "mandame el archivo...", "compartí el reporte", "enviame lo que generaste", "send me the file..." — needs send_file
 - Single command execution
 - Personal statements to remember: "my name is...", "I am a...", "I live in...", "soy..."
   These are ALWAYS MODERATE (save to memory), never COMPLEX
@@ -108,6 +109,9 @@ Examples:
 "¿qué versión de macOS tengo?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
 "¿cuánto espacio libre hay en disco?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
 "consulta https://api.github.com/users/octocat" → {"level":"MODERATE","reason":"single curl API call"}
+"mandame el archivo informe.docx que está en Descargas" → {"level":"MODERATE","reason":"send_file tool"}
+"compartí el reporte" → {"level":"MODERATE","reason":"send_file tool"}
+"enviame lo que generaste" → {"level":"MODERATE","reason":"send_file tool"}
 "¿qué tengo pendiente de Dash?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
 "¿recordás lo que dijimos del PR?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
 "search what is the Atacama Desert and then create a file with a summary" → {"level":"COMPLEX","reason":"chained: search then write file"}

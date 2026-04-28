@@ -6,6 +6,8 @@ import type {
   ConfigService,
   TranscriptionService,
   TTSService,
+  FileHandler,
+  VisionService,
 } from '@enzo/core';
 
 export interface EnzoContext extends Context {
@@ -14,12 +16,20 @@ export interface EnzoContext extends Context {
   configService?: ConfigService;
   transcriptionService?: TranscriptionService;
   ttsService?: TTSService;
+  fileHandler?: FileHandler;
+  visionService?: VisionService;
 }
 
 export function createBot(
   orchestrator: Orchestrator,
   memoryService: MemoryService,
-  options?: { configService?: ConfigService; transcriptionService?: TranscriptionService; ttsService?: TTSService }
+  options?: {
+    configService?: ConfigService;
+    transcriptionService?: TranscriptionService;
+    ttsService?: TTSService;
+    fileHandler?: FileHandler;
+    visionService?: VisionService;
+  }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
 
@@ -58,6 +68,8 @@ export function createBot(
     ctx.configService = options?.configService;
     ctx.transcriptionService = options?.transcriptionService;
     ctx.ttsService = options?.ttsService;
+    ctx.fileHandler = options?.fileHandler;
+    ctx.visionService = options?.visionService;
     return next();
   });
 

@@ -19,6 +19,7 @@ export { ModelSelector } from './orchestrator/ModelSelector.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './orchestrator/OrchestratorCapabilities.js';
 export { ClaudeCodeAgent } from './agents/ClaudeCodeAgent.js';
 export { DocAgent } from './agents/DocAgent.js';
+export { VisionAgent } from './agents/VisionAgent.js';
 export {
   AgentRouter,
   type AgentRouterContract,
@@ -50,6 +51,11 @@ export {
   ReadFileTool,
   RememberTool,
   WriteFileTool,
+  SendFileTool,
+  type SendFileFn,
   resolveWorkspaceRoot,
   isPathWithinWorkspace,
 } from './tools/index.js';
+export { FileHandler, type ReceivedFile, type FileHandlerOptions } from './files/index.js';
+export type { VisionService, VisionResult } from './vision/VisionService.js';
+export { OllamaVisionService } from './vision/OllamaVisionService.js';
