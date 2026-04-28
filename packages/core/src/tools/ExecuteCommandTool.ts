@@ -1,18 +1,59 @@
 import { spawn } from 'child_process';
 import { ExecutableTool, ToolResult } from './types.js';
+import { shellExecutableCandidates } from './resolveExecutableShell.js';
 import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const EXEC_TIMEOUT_MS = 30000;
 
-function runSpawnedShellCommand(
-  command: string,
-  cwd: string
-): Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null }> {
+type ShellRunResult = {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
+
+function spawnArgsFor(command: string): string[] {
+  return process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
+}
+
+/**
+ * Spawn the user command via an explicit shell binary (`sh -c` / cmd /c).
+ * Tries shells in {@link shellExecutableCandidates} order; retries on ENOENT only.
+ */
+async function runSpawnedShellCommand(command: string, cwd: string): Promise<ShellRunResult> {
+  const candidates = shellExecutableCandidates();
+  if (candidates.length === 0) {
+    throw new Error(
+      'Cannot resolve a shell executable. Set ENZO_SHELL to the full path of sh or bash on this machine.'
+    );
+  }
+
+  let lastError: unknown;
+  for (let i = 0; i < candidates.length; i++) {
+    const shell = candidates[i]!;
+    try {
+      return await runOneShellSpawn(shell, command, cwd);
+    } catch (err) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as NodeJS.ErrnoException).code) : '';
+      if (code !== 'ENOENT') {
+        throw err;
+      }
+      lastError = err;
+    }
+  }
+  throw (
+    lastError ??
+    new Error(
+      'Cannot spawn any shell. Set ENZO_SHELL to the absolute path of a POSIX shell available in this runtime.'
+    )
+  );
+}
+
+function runOneShellSpawn(shell: string, command: string, cwd: string): Promise<ShellRunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, {
+    const child = spawn(shell, spawnArgsFor(command), {
       cwd,
-      shell: true,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

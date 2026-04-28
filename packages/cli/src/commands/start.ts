@@ -5,6 +5,7 @@ import path from 'path';
 import {
   clearEnzoSupervisorState,
   ENZO_SUPERVISOR_STATE_FILENAME,
+  pickFirstResolvableShellExecutable,
   writeEnzoSupervisorState,
 } from '@enzo/core';
 import { configExists, createConfigService } from '../utils/config.js';
@@ -30,10 +31,14 @@ function killByPattern(signal: 'TERM' | 'KILL', pattern: string): void {
 }
 
 function killByPort(signal: 'TERM' | 'KILL', port: string): void {
-  spawnSync(`lsof -ti :${port} | xargs -r kill -${signal}`, {
-    shell: true,
-    stdio: 'ignore',
-  });
+  const sh = pickFirstResolvableShellExecutable();
+  if (!sh) {
+    return;
+  }
+  const script = `lsof -ti :${port} | xargs -r kill -${signal}`;
+  const spawnArgs =
+    process.platform === 'win32' ? ['/d', '/s', '/c', script] : ['-c', script];
+  spawnSync(sh, spawnArgs, { stdio: 'ignore' });
 }
 
 async function cleanupResidualServices(repoRoot: string): Promise<void> {

@@ -8,4 +8,8 @@ export { WriteFileTool } from './WriteFileTool.js';
 export { SendFileTool, type SendFileFn } from './SendFileTool.js';
 export { ReadEmailTool, type ReadEmailInput } from './ReadEmailTool.js';
 export { SearchEmailTool, type SearchEmailInput } from './SearchEmailTool.js';
+export {
+  shellExecutableCandidates,
+  pickFirstResolvableShellExecutable,
+} from './resolveExecutableShell.js';
 export { resolveWorkspaceRoot, isPathWithinWorkspace } from './workspacePathPolicy.js';
