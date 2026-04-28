@@ -415,7 +415,19 @@ async function handleIncomingAttachment(
     const who = ctx.from?.first_name?.trim() || 'Franco';
     const typeLabel = mimeType || saved.extension || 'application/octet-stream';
     const sizeHuman = formatFileSizeHuman(saved.sizeBytes);
-    let messageText = `[${who} mandó un archivo: ${saved.originalName} (${typeLabel}, ${sizeHuman}). Está guardado en ${saved.localPath}]`;
+
+    let contentDescription = '';
+    const markItDown = ctx.markItDownService;
+    if (markItDown && markItDown.isSupported(saved.extension)) {
+      const conversion = await markItDown.convert(saved.localPath);
+      if (conversion.success && conversion.markdown) {
+        contentDescription = `\n\nContenido del archivo:\n${conversion.markdown}`;
+      } else {
+        contentDescription = `\n\n[No se pudo leer el contenido del archivo: ${conversion.error ?? 'unknown'}]`;
+      }
+    }
+
+    let messageText = `[${who} mandó un archivo: ${saved.originalName} (${typeLabel}, ${sizeHuman}). Está guardado en ${saved.localPath}]${contentDescription}`;
     if (caption?.trim()) {
       messageText += `\n[Archivo: ${saved.originalName}] ${caption.trim()}`;
     }

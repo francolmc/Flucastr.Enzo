@@ -34,6 +34,7 @@ import {
   EdgeTTSService,
   FileHandler,
   OllamaVisionService,
+  MarkItDownConverter,
 } from '@enzo/core';
 import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway, createAgentRouter } from '@enzo/bootstrap';
 import { createBot } from './bot.js';
@@ -144,6 +145,7 @@ async function main() {
       workspacePath: resolvedUserWorkspace,
       maxSizeMb: 50,
     });
+    const markItDownService = new MarkItDownConverter();
 
     const toolRegistry = createDefaultToolRegistry(
       memoryService,
@@ -212,6 +214,7 @@ async function main() {
         ttsService,
         fileHandler,
         visionService,
+        markItDownService,
       });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);

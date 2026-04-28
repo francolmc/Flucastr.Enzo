@@ -8,6 +8,7 @@ import type {
   TTSService,
   FileHandler,
   VisionService,
+  MarkItDownService,
 } from '@enzo/core';
 
 export interface EnzoContext extends Context {
@@ -18,6 +19,7 @@ export interface EnzoContext extends Context {
   ttsService?: TTSService;
   fileHandler?: FileHandler;
   visionService?: VisionService;
+  markItDownService?: MarkItDownService;
 }
 
 export function createBot(
@@ -29,6 +31,7 @@ export function createBot(
     ttsService?: TTSService;
     fileHandler?: FileHandler;
     visionService?: VisionService;
+    markItDownService?: MarkItDownService;
   }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
@@ -70,6 +73,7 @@ export function createBot(
     ctx.ttsService = options?.ttsService;
     ctx.fileHandler = options?.fileHandler;
     ctx.visionService = options?.visionService;
+    ctx.markItDownService = options?.markItDownService;
     return next();
   });
 

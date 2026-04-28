@@ -56,6 +56,14 @@ export {
   resolveWorkspaceRoot,
   isPathWithinWorkspace,
 } from './tools/index.js';
-export { FileHandler, type ReceivedFile, type FileHandlerOptions } from './files/index.js';
+export {
+  FileHandler,
+  type ReceivedFile,
+  type FileHandlerOptions,
+  MarkItDownConverter,
+  type MarkItDownConverterOptions,
+  type ConversionResult,
+  type MarkItDownService,
+} from './files/index.js';
 export type { VisionService, VisionResult } from './vision/VisionService.js';
 export { OllamaVisionService } from './vision/OllamaVisionService.js';

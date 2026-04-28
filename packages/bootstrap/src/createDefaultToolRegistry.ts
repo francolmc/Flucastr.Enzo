@@ -9,6 +9,7 @@ import {
   WriteFileTool,
   SendFileTool,
   resolveWorkspaceRoot,
+  MarkItDownConverter,
 } from '@enzo/core';
 
 export interface TelegramFileDeliveryDeps {
@@ -32,9 +33,10 @@ export function createDefaultToolRegistry(
 ): ToolRegistry {
   const registry = new ToolRegistry();
   const resolvedWorkspace = resolveWorkspaceRoot(workspacePath);
+  const markItDownService = new MarkItDownConverter();
   registry.register(new WebSearchTool(() => configService?.getSystemSecret('tavilyApiKeyEncrypted') ?? null));
   registry.register(new ExecuteCommandTool({ cwd: resolvedWorkspace }));
-  registry.register(new ReadFileTool(workspacePath));
+  registry.register(new ReadFileTool(workspacePath, { markItDownService }));
   registry.register(new RememberTool(memoryService));
   registry.register(new RecallTool(memoryService));
   registry.register(new WriteFileTool(workspacePath));

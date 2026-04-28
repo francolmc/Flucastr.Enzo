@@ -1,10 +1,15 @@
 import { readFileSync, statSync } from 'fs';
 import { resolve, isAbsolute } from 'path';
+import type { MarkItDownService } from '../files/MarkItDownService.js';
 import { ExecutableTool, ToolResult } from './types.js';
 import { isPathWithinWorkspace, resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const ALLOWED_EXTENSIONS = ['.txt', '.md', '.json', '.csv', '.log', '.ts', '.js', '.py'];
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+/** Office / PDF binaries: MarkItDown path allows up to 50 MiB (aligned with Telegram uploads). */
+const MAX_MARKITDOWN_BINARY_BYTES = 50 * 1024 * 1024;
+
+const BINARY_MARKITDOWN_EXTENSIONS = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'] as const;
 
 export class ReadFileTool implements ExecutableTool {
   name = 'read_file';
@@ -21,20 +26,23 @@ export class ReadFileTool implements ExecutableTool {
   private workspacePath: string;
   /** When true, absolute paths must also lie under the workspace (stricter sandbox). */
   private readonly strictAbsolutePaths: boolean;
+  private readonly markItDownService?: MarkItDownService;
 
   /**
    * @param workspacePath - Absolute root for resolving relative `path` inputs. If omitted, uses
    *   `process.env.ENZO_WORKSPACE_PATH` or `./workspace`.
    * @param options.strictAbsolutePaths - If true, absolute paths outside the workspace are rejected.
    *   Default: `true` when `ENZO_STRICT_WORKSPACE === 'true'`, else false (preserves reading user folders).
+   * @param options.markItDownService - When set, PDF and Office binaries are converted to Markdown via MarkItDown.
    */
   constructor(
     workspacePath?: string,
-    options?: { strictAbsolutePaths?: boolean }
+    options?: { strictAbsolutePaths?: boolean; markItDownService?: MarkItDownService }
   ) {
     this.workspacePath = workspacePath || process.env.ENZO_WORKSPACE_PATH || './workspace';
     this.strictAbsolutePaths =
       options?.strictAbsolutePaths ?? process.env.ENZO_STRICT_WORKSPACE === 'true';
+    this.markItDownService = options?.markItDownService;
   }
 
   async execute(input: any): Promise<ToolResult> {
@@ -82,8 +90,32 @@ export class ReadFileTool implements ExecutableTool {
         }
       }
 
-      // Check file extension
-      const ext = this.getExtension(fullPath);
+      const ext = this.getExtension(fullPath).toLowerCase();
+
+      if (
+        (BINARY_MARKITDOWN_EXTENSIONS as readonly string[]).includes(ext) &&
+        this.markItDownService
+      ) {
+        const statsBinary = statSync(fullPath);
+        if (statsBinary.size > MAX_MARKITDOWN_BINARY_BYTES) {
+          return {
+            success: false,
+            error: `File size exceeds maximum of 50MB for MarkItDown conversion`,
+          };
+        }
+        const conversion = await this.markItDownService.convert(fullPath);
+        if (conversion.success && conversion.markdown !== undefined) {
+          console.log(
+            `[ReadFileTool] MarkItDown conversion ok, markdown length:`,
+            conversion.markdown.length
+          );
+          return {
+            success: true,
+            data: conversion.markdown,
+          };
+        }
+      }
+
       if (!ALLOWED_EXTENSIONS.includes(ext)) {
         return {
           success: false,
@@ -91,7 +123,6 @@ export class ReadFileTool implements ExecutableTool {
         };
       }
 
-      // Check file size
       const stats = statSync(fullPath);
       if (stats.size > MAX_FILE_SIZE) {
         return {
@@ -100,7 +131,6 @@ export class ReadFileTool implements ExecutableTool {
         };
       }
 
-      // Read the file
       const content = readFileSync(fullPath, 'utf-8');
 
       console.log(`[ReadFileTool] File read successfully, content length:`, content.length);
