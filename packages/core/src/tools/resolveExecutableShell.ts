@@ -27,7 +27,7 @@ function uniqPush(out: string[], p: string | undefined): void {
   }
 }
 
-/** Snap (and similar) shim paths often stat as executable yet spawn ENOENT outside snap confinement — try them last. */
+/** Snap shims typically cannot be exec()'d reliably from arbitrary Node systemd services — do not spawn them. */
 function isSnapOrSimilarShim(shellPath: string): boolean {
   const n = path.normalize(shellPath);
   return (
@@ -37,24 +37,47 @@ function isSnapOrSimilarShim(shellPath: string): boolean {
   );
 }
 
-/** Prefer distro / posix paths; append snap-derived shells after (still retried if needed). */
-function prioritizeNonSnapShells(entries: string[]): string[] {
-  const preferred: string[] = [];
-  const deferred: string[] = [];
-  for (const e of entries) {
-    if (isSnapOrSimilarShim(e)) {
-      deferred.push(e);
-    } else {
-      preferred.push(e);
+/** Well-known distro paths first (even if $PATH lists /snap/bin first). */
+const PREFERRED_POSIX_SHELL_ORDER = [
+  '/bin/sh',
+  '/usr/bin/sh',
+  '/bin/bash',
+  '/usr/bin/bash',
+  '/usr/local/bin/bash',
+  '/bin/dash',
+  '/usr/bin/dash',
+];
+
+function mergePreferredShellsFirst(rest: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (p: string): void => {
+    const n = path.normalize(p.trim());
+    if (!n || seen.has(n)) {
+      return;
+    }
+    seen.add(n);
+    out.push(n);
+  };
+
+  for (const p of PREFERRED_POSIX_SHELL_ORDER) {
+    if (existsSync(p)) {
+      push(p);
     }
   }
-  return [...preferred, ...deferred];
+  for (const p of rest) {
+    push(p);
+  }
+  return out;
 }
 
 function appendPathDiscoveredShells(out: string[]): void {
   const names = ['sh', 'bash', 'dash'];
   const dirs = process.env.PATH?.split(path.delimiter).filter(Boolean) ?? [];
   for (const dir of dirs) {
+    if (isSnapOrSimilarShim(dir) || dir.includes('/snap/')) {
+      continue;
+    }
     for (const name of names) {
       uniqPush(out, path.join(dir, name));
     }
@@ -89,14 +112,22 @@ function appendStandardPosixFallbacks(out: string[]): void {
 
 function posixPathCandidates(): string[] {
   const out: string[] = [];
-  uniqPush(out, process.env.ENZO_SHELL);
+  const enzoShell = process.env.ENZO_SHELL?.trim();
+  if (enzoShell && !isSnapOrSimilarShim(enzoShell)) {
+    uniqPush(out, process.env.ENZO_SHELL);
+  }
 
   // Standard paths first (/bin/sh) — fast on typical linux; then PATH (Nix, etc.); lastly $SHELL when actually executable here.
   appendStandardPosixFallbacks(out);
   appendPathDiscoveredShells(out);
 
   const shellEnv = process.env.SHELL?.trim();
-  if (shellEnv && shellEnv !== process.env.ENZO_SHELL?.trim() && isExecutableFile(path.normalize(shellEnv))) {
+  if (
+    shellEnv &&
+    shellEnv !== process.env.ENZO_SHELL?.trim() &&
+    !isSnapOrSimilarShim(shellEnv) &&
+    isExecutableFile(path.normalize(shellEnv))
+  ) {
     uniqPush(out, shellEnv);
   }
 
@@ -117,7 +148,8 @@ export function shellExecutableCandidates(): string[] {
     uniqPush(out, 'cmd.exe');
     return out;
   }
-  return prioritizeNonSnapShells(posixPathCandidates());
+  const withoutSnap = posixPathCandidates().filter((p) => !isSnapOrSimilarShim(p));
+  return mergePreferredShellsFirst(withoutSnap);
 }
 
 export function pickFirstResolvableShellExecutable(): string | undefined {
