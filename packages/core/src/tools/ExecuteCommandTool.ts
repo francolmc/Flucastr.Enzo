@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ExecutableTool, ToolResult } from './types.js';
+import { resolveShellForExec } from './resolveShellForExec.js';
 import { resolveWorkspaceRoot } from './workspacePathPolicy.js';
 
 const execAsync = promisify(exec);
@@ -71,6 +72,7 @@ export class ExecuteCommandTool implements ExecutableTool {
         cwd: this.cwd,
         timeout: 30000,
         maxBuffer: 10 * 1024 * 1024,
+        shell: resolveShellForExec(),
       });
 
       return {

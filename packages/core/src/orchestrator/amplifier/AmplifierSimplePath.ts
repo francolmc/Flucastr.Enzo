@@ -129,6 +129,18 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     ? `You MUST use one of the tools above to answer this request. Do NOT answer from memory.`
     : `If you can answer directly without tools, respond with plain text.`;
 
+  const moderateToolJsonOnly = isModerate
+    ? `
+
+CRITICAL: When you need to use a tool, respond with ONLY the JSON object.
+No text before, no text after, no explanation.
+WRONG: "Ejecutando el comando... {"action":"tool"...}"
+RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/franco"}}
+
+If you include any text outside the JSON, the tool will not execute.
+`
+    : '';
+
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
   const dateLine = formatFastPathDateLine(input);
@@ -148,7 +160,7 @@ CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate the
 Built-in tool names: execute_command, web_search, read_file, write_file, remember.
 MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
+RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}${moderateToolJsonOnly}
 
 Valid examples:
 {"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
@@ -244,7 +256,7 @@ If responding with plain text (no tool), write in this language.`;
     const forcedTool = '';
     const strictPrompt = `${buildAssistantIdentityPrompt(input)}
 You failed to return a valid tool JSON in a MODERATE request.
-Return ONLY JSON now. No prose, no markdown.
+Return ONLY JSON now. No prose, no markdown, no narration before or after the object.
 ${forcedTool ? `You MUST use tool "${forcedTool}".` : 'You MUST use one of the available tools.'}
 Format:
 {"action":"tool","tool":"TOOL_NAME","input":{...}}`;
