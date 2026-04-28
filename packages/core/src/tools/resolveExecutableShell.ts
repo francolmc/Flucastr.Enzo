@@ -1,3 +1,4 @@
+import { spawnSync } from 'child_process';
 import { accessSync, constants, existsSync, statSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -13,6 +14,30 @@ function isExecutableFile(filePath: string): boolean {
     accessSync(filePath, constants.X_OK);
     return true;
   } catch {
+    return false;
+  }
+}
+
+const shellSpawnabilityCache = new Map<string, boolean>();
+
+/**
+ * A file may exist and be executable yet still fail at execve time (e.g. broken interpreter/loader),
+ * which surfaces as ENOENT from Node spawn. Probe once and cache.
+ */
+function canSpawnShellExecutable(shellPath: string): boolean {
+  const n = path.normalize(shellPath);
+  const cached = shellSpawnabilityCache.get(n);
+  if (cached !== undefined) {
+    return cached;
+  }
+  try {
+    const args = process.platform === 'win32' ? ['/d', '/s', '/c', 'echo ok'] : ['-c', 'true'];
+    const r = spawnSync(n, args, { stdio: 'ignore' });
+    const ok = !r.error;
+    shellSpawnabilityCache.set(n, ok);
+    return ok;
+  } catch {
+    shellSpawnabilityCache.set(n, false);
     return false;
   }
 }
@@ -74,7 +99,7 @@ function mergePreferredShellsFirst(rest: string[]): string[] {
   };
 
   for (const p of PREFERRED_POSIX_SHELL_ORDER) {
-    if (isExecutableFile(p)) {
+    if (isExecutableFile(p) && canSpawnShellExecutable(p)) {
       push(p);
     }
   }
@@ -93,7 +118,7 @@ function appendPathDiscoveredShells(out: string[]): void {
     }
     for (const name of names) {
       const candidate = path.join(dir, name);
-      if (isExecutableFile(candidate)) {
+      if (isExecutableFile(candidate) && canSpawnShellExecutable(candidate)) {
         uniqPush(out, candidate);
       }
     }
@@ -142,7 +167,8 @@ function posixPathCandidates(): string[] {
     shellEnv &&
     shellEnv !== process.env.ENZO_SHELL?.trim() &&
     !shouldSkipShellCandidate(shellEnv) &&
-    isExecutableFile(path.normalize(shellEnv))
+    isExecutableFile(path.normalize(shellEnv)) &&
+    canSpawnShellExecutable(path.normalize(shellEnv))
   ) {
     uniqPush(out, shellEnv);
   }
@@ -165,7 +191,7 @@ export function shellExecutableCandidates(): string[] {
     return out;
   }
   const filtered = posixPathCandidates().filter(
-    (p) => !shouldSkipShellCandidate(p) && isExecutableFile(p)
+    (p) => !shouldSkipShellCandidate(p) && isExecutableFile(p) && canSpawnShellExecutable(p)
   );
   return mergePreferredShellsFirst(filtered);
 }
