@@ -18,6 +18,7 @@ import {
   buildRelevantSkillsSection,
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
+import { describeHostForExecuteCommandPrompt, humanOsLabel } from '../runtimeHostContext.js';
 import {
   applyExecutableToolContext,
   extractFirstJsonObject,
@@ -75,7 +76,7 @@ function resolveHomeDir(input: AmplifierInput): string {
 }
 
 function resolveOsLabel(input: AmplifierInput): string {
-  return input.runtimeHints?.osLabel ?? 'macOS';
+  return input.runtimeHints?.osLabel ?? humanOsLabel();
 }
 
 /**
@@ -146,6 +147,8 @@ If you include any text outside the JSON, the tool will not execute.
   const dateLine = formatFastPathDateLine(input);
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
+
+${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 Date: ${dateLine}.
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
@@ -159,14 +162,13 @@ To use a tool, respond ONLY with JSON (no extra text, no markdown):
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
 Built-in tool names: execute_command, web_search, read_file, write_file, remember.
 MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
-WRONG: {"accion":"ejecutar","herramienta":"vm_stat","entrada":{}}
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}${moderateToolJsonOnly}
+WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
+RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
 
-Valid examples:
+Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
-{"action":"tool","tool":"execute_command","input":{"command":"vm_stat"}}
 {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}
-{"action":"tool","tool":"execute_command","input":{"command":"sw_vers"}}
+{"action":"tool","tool":"execute_command","input":{"command":"uname -a"}}
 {"action":"tool","tool":"web_search","input":{"query":"search terms"}}
 {"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
 {"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
@@ -179,8 +181,7 @@ TOOL SELECTION — CRITICAL:
 - Search the internet for information → web_search
 - Call an HTTP/API endpoint when user provides a URL → execute_command with curl
   Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
-- Query current system state (RAM, disk, processes, OS version, CPU) → execute_command
-  Useful commands: "vm_stat" (RAM), "df -h" (disk), "sw_vers" (macOS version), "top -l 1 -n 5" (processes)
+- Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)
 - External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
 - Run any other shell command → execute_command
 - NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
@@ -332,7 +333,7 @@ Format:
 
     if (!normalizedContent.startsWith('{')) {
       const shellCmdPattern =
-        /^(ls|df|du|ps|top|sw_vers|vm_stat|uname|which|find|cat|mkdir|mv|cp|curl|wget|git|npm|pip|brew|open|echo|pwd|env|printenv)\s/i;
+        /^(ls|df|du|ps|top|free|sw_vers|vm_stat|uname|sysctl|which|find|cat|mkdir|mv|cp|curl|wget|git|npm|pip|brew|open|echo|pwd|env|printenv)\s/i;
       if (shellCmdPattern.test(rawContent.trim())) {
         normalizedContent = JSON.stringify({
           action: 'tool',

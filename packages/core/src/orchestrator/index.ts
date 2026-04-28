@@ -18,6 +18,11 @@ export {
   executeOrchestratorProcess,
   type OrchestratorProcessBindings,
 } from './OrchestratorProcess.js';
+export {
+  buildOrchestratorRuntimeHints,
+  describeHostForExecuteCommandPrompt,
+  humanOsLabel,
+} from './runtimeHostContext.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 export { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
 export { impliesMultiToolWorkflow } from './taskRoutingHints.js';

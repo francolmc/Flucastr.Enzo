@@ -4,6 +4,7 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { SkillResolver, RelevantSkill } from '../SkillResolver.js';
 import { buildAssistantIdentityPrompt } from './AmplifierLoopPromptHelpers.js';
+import { describeHostForExecuteCommandPrompt } from '../runtimeHostContext.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 
 export type ThinkPhaseDeps = {
@@ -113,6 +114,8 @@ Use a concrete task (include any user question about the image in the task text)
       : '';
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
+
+${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
 ${imageDelegationBlock}
 AVAILABLE TOOLS:

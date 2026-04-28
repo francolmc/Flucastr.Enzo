@@ -87,12 +87,24 @@ export interface AmplifierInput {
   /** Structured user memories (from recall) for delegation and prompts. */
   userMemories?: Array<{ key: string; value: string }>;
   onProgress?: (step: Step) => void;
-  /** Optional OS/paths for prompts (fast path). Defaults preserve prior macOS-oriented behavior. */
+  /**
+   * Host context so the model can choose CLI commands/paths for the machine running Enzo
+   * (prefer this over branching on OS in application code).
+   */
   runtimeHints?: {
     homeDir?: string;
+    /** e.g. "Linux", "macOS"; use with hostPlatform */
     osLabel?: string;
     timeLocale?: string;
     timeZone?: string;
+    /** Node process.platform where Enzo runs */
+    hostPlatform?: NodeJS.Platform;
+    /** False on Windows CMD/PowerShell default; affects prompt wording */
+    posixShell?: boolean;
+    /** e.g. uname release on Unix */
+    kernelRelease?: string;
+    /** process.arch */
+    arch?: string;
   };
   /** Merged into tool execution (e.g. remember). Usually set by the orchestrator from the request. */
   toolExecutionContext?: ToolExecutionContext;

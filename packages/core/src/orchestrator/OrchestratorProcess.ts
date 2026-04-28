@@ -10,6 +10,7 @@ import { ComplexityLevel as CL } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
+import { buildOrchestratorRuntimeHints } from './runtimeHostContext.js';
 
 /** Bound callbacks from Orchestrator — keeps process pipeline out of the class body. */
 export type OrchestratorProcessBindings = {
@@ -94,13 +95,7 @@ export async function executeOrchestratorProcess(
   const skills = resolveSkillsForOrchestrator(b.getSkillRegistry(), b.getAvailableSkills());
   const agents = b.getAvailableAgents();
 
-  const defaultRuntimeHints = {
-    homeDir: process.env.HOME,
-    osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,
-    timeLocale: 'es-CL',
-    timeZone: 'America/Santiago',
-  } as const;
-  const runtimeHints = { ...defaultRuntimeHints, ...(input.runtimeHints ?? {}) };
+  const runtimeHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
 
   const toolExecutionContext = {
     userId: input.userId,

@@ -7,6 +7,7 @@ import {
   InputChunker,
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
+  buildOrchestratorRuntimeHints,
   type ChunkResult,
   type ConfigService,
 } from '@enzo/core';
@@ -58,6 +59,7 @@ function resolveUserLanguageFromRequest(req: Request): string {
 }
 
 function buildRuntimeHintsFromConfig(configService?: ConfigService) {
+  const base = buildOrchestratorRuntimeHints();
   const profile = configService?.getUserProfile();
   const systemTz = configService?.getSystemConfig()?.tz?.trim();
   const lang = process.env.LANG || '';
@@ -66,21 +68,13 @@ function buildRuntimeHintsFromConfig(configService?: ConfigService) {
     (lang.toLowerCase().includes('en_us') || lang.toLowerCase().startsWith('en')
       ? 'en-US'
       : 'es-CL');
-  const hints: {
-    homeDir?: string;
-    osLabel?: string;
-    timeLocale?: string;
-    timeZone?: string;
-  } = {
-    homeDir: process.env.HOME,
-    osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,
-    timeLocale,
-  };
   const tz = profile?.timezone?.trim() || systemTz;
-  if (tz) {
-    hints.timeZone = tz;
-  }
-  return hints;
+  return {
+    ...base,
+    homeDir: process.env.HOME ?? base.homeDir,
+    timeLocale,
+    ...(tz ? { timeZone: tz } : {}),
+  };
 }
 
 const inputChunker = new InputChunker();

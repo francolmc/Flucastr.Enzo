@@ -5,6 +5,7 @@ import {
   InputChunker,
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
+  buildOrchestratorRuntimeHints,
   AudioConverter,
   getVoiceTriggers,
   requestsVoiceResponse,
@@ -178,12 +179,11 @@ async function processMessageInBackground(
         conversationId,
         telegramChatId: ctx.chat?.id != null ? String(ctx.chat.id) : undefined,
       },
-      runtimeHints: {
+      runtimeHints: buildOrchestratorRuntimeHints({
         homeDir: process.env.HOME,
-        osLabel: process.platform === 'darwin' ? 'macOS' : process.platform,
         timeLocale,
         ...(timeZone ? { timeZone } : {}),
-      },
+      }),
       ...(imageContext ? { imageContext } : {}),
       onProgress: isSimple ? undefined : async (step) => {
         if (progressMessageId && ctx.chat) {

@@ -17,6 +17,19 @@ function spawnArgsFor(command: string): string[] {
   return process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
 }
 
+/** Node sets `code: 'ENOENT'` on spawn failures; tolerate message-only diagnostics. */
+function isSpawnENOENTFailure(err: unknown): boolean {
+  if (err !== null && typeof err === 'object' && 'code' in err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return true;
+    }
+  }
+  if (err instanceof Error && /ENOENT/.test(err.message) && /spawn/i.test(err.message)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Spawn the user command via an explicit shell binary (`sh -c` / cmd /c).
  * Tries shells in {@link shellExecutableCandidates} order; retries on ENOENT only.
@@ -35,8 +48,7 @@ async function runSpawnedShellCommand(command: string, cwd: string): Promise<She
     try {
       return await runOneShellSpawn(shell, command, cwd);
     } catch (err) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as NodeJS.ErrnoException).code) : '';
-      if (code !== 'ENOENT') {
+      if (!isSpawnENOENTFailure(err)) {
         throw err;
       }
       lastError = err;
@@ -52,11 +64,18 @@ async function runSpawnedShellCommand(command: string, cwd: string): Promise<She
 
 function runOneShellSpawn(shell: string, command: string, cwd: string): Promise<ShellRunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(shell, spawnArgsFor(command), {
-      cwd,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let child: ReturnType<typeof spawn>;
+
+    try {
+      child = spawn(shell, spawnArgsFor(command), {
+        cwd,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (syncErr) {
+      reject(syncErr);
+      return;
+    }
 
     let stdout = '';
     let stderr = '';
@@ -148,7 +167,7 @@ export class ExecuteCommandTool implements ExecutableTool {
   name = 'execute_command';
   readonly actionAliases = ['ejecutar_comando', 'ejecutar'] as const;
   description =
-    'Execute a shell command. Runs with cwd set to the workspace root unless overridden in the constructor.';
+    'Execute a shell command on THIS Enzo host. Choose utilities and paths for the OS shown in orchestrator/host context—not another machine.';
   parameters = {
     type: 'object',
     properties: {

@@ -37,26 +37,43 @@ function appendPathDiscoveredShells(out: string[]): void {
   }
 }
 
-function posixPathCandidates(): string[] {
-  const out: string[] = [];
-  uniqPush(out, process.env.ENZO_SHELL);
-  uniqPush(out, process.env.SHELL);
+function appendIfExists(out: string[], candidatePath: string): void {
+  const n = path.normalize(candidatePath);
+  if (existsSync(n)) {
+    uniqPush(out, n);
+  }
+}
 
-  // PATH second: Nix, custom layouts, containers often only expose sh under PATH-derived paths.
-  appendPathDiscoveredShells(out);
-
+function appendStandardPosixFallbacks(out: string[]): void {
   const fixed = [
     '/bin/sh',
     '/usr/bin/sh',
     '/bin/bash',
     '/usr/bin/bash',
     '/usr/local/bin/bash',
-    '/opt/homebrew/bin/bash',
     '/bin/dash',
     '/usr/bin/dash',
   ];
   for (const p of fixed) {
     uniqPush(out, p);
+  }
+  // Optional installations — only add if present on disk (no OS-specific if/else).
+  for (const p of ['/opt/homebrew/bin/bash', '/opt/homebrew/bin/zsh']) {
+    appendIfExists(out, p);
+  }
+}
+
+function posixPathCandidates(): string[] {
+  const out: string[] = [];
+  uniqPush(out, process.env.ENZO_SHELL);
+
+  // Standard paths first (/bin/sh) — fast on typical linux; then PATH (Nix, etc.); lastly $SHELL when actually executable here.
+  appendStandardPosixFallbacks(out);
+  appendPathDiscoveredShells(out);
+
+  const shellEnv = process.env.SHELL?.trim();
+  if (shellEnv && shellEnv !== process.env.ENZO_SHELL?.trim() && isExecutableFile(path.normalize(shellEnv))) {
+    uniqPush(out, shellEnv);
   }
 
   return out;
