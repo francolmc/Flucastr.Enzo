@@ -315,18 +315,6 @@ Format:
       }
     }
 
-    if (!normalizedContent.startsWith('{')) {
-      const shellCmdPattern =
-        /^(ls|df|du|ps|top|free|sw_vers|vm_stat|uname|sysctl|which|find|cat|mkdir|mv|cp|curl|wget|git|npm|pip|brew|open|echo|pwd|env|printenv)\s/i;
-      if (shellCmdPattern.test(rawContent.trim())) {
-        normalizedContent = JSON.stringify({
-          action: 'tool',
-          tool: 'execute_command',
-          input: { command: rawContent.trim() },
-        });
-        log.info('[AmplifierLoop] SIMPLE path - comando shell detectado, auto-wrapped como execute_command');
-      }
-    }
   }
 
   if (normalizedContent.startsWith('{')) {
