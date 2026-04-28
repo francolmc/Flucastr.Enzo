@@ -1,5 +1,5 @@
 import type { Tool } from '../../providers/types.js';
-import type { ExecutableTool, ToolExecutionContext } from '../../tools/types.js';
+import type { ExecutableTool } from '../../tools/types.js';
 import type { AmplifierInput } from '../types.js';
 import type { MCPRegistry } from '../../mcp/MCPRegistry.js';
 import { ToolCallValidator } from '../ToolCallValidator.js';
@@ -42,11 +42,6 @@ export function extractFirstJsonObject(text: string): string | null {
 function canonicalizeToolNameLower(toolNameLower: string, executableTools: ExecutableTool[]): string {
   const exact = executableTools.find((t) => t.name.toLowerCase() === toolNameLower);
   if (exact) return exact.name.toLowerCase();
-  for (const t of executableTools) {
-    if (t.actionAliases?.some((a) => a.toLowerCase() === toolNameLower)) {
-      return t.name.toLowerCase();
-    }
-  }
   return toolNameLower;
 }
 
@@ -54,15 +49,14 @@ function canonicalizeToolNameLower(toolNameLower: string, executableTools: Execu
 export function applyExecutableToolContext(
   toolName: string,
   toolInput: unknown,
-  executableTools: ExecutableTool[],
-  ctx: ToolExecutionContext
+  executableTools: ExecutableTool[]
 ): Record<string, unknown> {
-  const tool = executableTools.find((t) => t.name === toolName);
   const base: Record<string, unknown> =
     typeof toolInput === 'object' && toolInput !== null && !Array.isArray(toolInput)
       ? { ...(toolInput as Record<string, unknown>) }
       : {};
-  tool?.injectExecutionContext?.(base, ctx);
+  void toolName;
+  void executableTools;
   return base;
 }
 
@@ -83,32 +77,15 @@ export function normalizeFastPathToolCall(
     }
   }
 
-  const actionVal = String(normalized.action ?? '').toLowerCase();
-  if (actionVal) {
-    for (const tool of executableTools) {
-      const hit = tool.actionAliases?.some((a) => actionVal === a.toLowerCase());
-      if (hit) {
-        normalized.action = 'tool';
-        if (!normalized.tool) {
-          normalized.tool = tool.name;
-        }
-        break;
-      }
-    }
-  }
-
   let toolName = String(normalized.tool ?? normalized.action ?? '').toLowerCase();
   let toolInput = normalized.input ?? {};
 
   const knownToolNames = new Set<string>();
   for (const tool of executableTools) {
     knownToolNames.add(tool.name.toLowerCase());
-    for (const alias of tool.actionAliases ?? []) {
-      knownToolNames.add(alias.toLowerCase());
-    }
   }
   if (!knownToolNames.has(toolName) && toolName !== 'none' && toolName !== '') {
-    const originalAction = String(normalized.action ?? actionVal).toLowerCase();
+    const originalAction = String(normalized.action ?? '').toLowerCase();
     if (originalAction === 'execute_command' || originalAction === 'ejecutar_comando' || originalAction === 'ejecutar') {
       toolInput = { command: toolName };
       toolName = 'execute_command';

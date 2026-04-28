@@ -35,9 +35,6 @@ export { MemoryService } from './memory/MemoryService.js';
 export { MemoryExtractor } from './memory/MemoryExtractor.js';
 export {
   RecallTool,
-  type RecallInput,
-  type RecallOutput,
-  type RecallItem,
 } from './memory/RecallTool.js';
 export type { Message, LLMProvider, Tool } from './providers/types.js';
 export { CircuitOpenError } from './providers/circuitBreaker.js';
@@ -47,14 +44,11 @@ export {
   type ToolResult,
   WebSearchTool,
   ExecuteCommandTool,
-  type ExecuteCommandToolOptions,
   ReadFileTool,
   RememberTool,
   WriteFileTool,
   SendFileTool,
   type SendFileFn,
-  resolveWorkspaceRoot,
-  isPathWithinWorkspace,
 } from './tools/index.js';
 export {
   FileHandler,

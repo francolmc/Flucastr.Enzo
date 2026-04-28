@@ -1,7 +1,6 @@
 import type { EmailMessage } from '../email/IMAPClient.js';
 import type { EmailService } from '../email/EmailService.js';
-import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
-import { resolveSinceDate } from './emailSinceParse.js';
+import { ExecutableTool, ToolResult } from './types.js';
 
 export interface SearchEmailInput {
   query: string;
@@ -52,58 +51,37 @@ function formatSearchOutput(messages: EmailMessage[], requestedLimit: number, lo
 
 export class SearchEmailTool implements ExecutableTool {
   name = 'search_email';
-  readonly actionAliases = ['buscar_correo', 'buscar_email'] as const;
   description = 'Search emails by sender, subject or content';
-  readonly triggers = [
-    'busca en el correo',
-    'buscar email',
-    'buscar correo',
-    'llegó respuesta de',
-    'hay algo de',
-    'mail de',
-    'encontrá el email de',
-  ];
   parameters = {
-    type: 'object',
+    type: 'object' as const,
     properties: {
       query: { type: 'string', description: 'Text to find' },
-      accountId: { type: 'string' },
-      limit: { type: 'number' },
-      since: { type: 'string' },
-      folder: { type: 'string' },
+      accountId: { type: 'string', description: 'Optional account id' },
+      limit: { type: 'number', description: 'Maximum number of messages' },
+      since: { type: 'string', description: 'Optional since date in ISO format' },
+      folder: { type: 'string', description: 'Optional IMAP folder' },
     },
     required: ['query'],
   };
 
   constructor(private readonly emailService: EmailService) {}
 
-  formatToolOutput(data: unknown, _ctx: ToolExecutionContext): string | undefined {
-    if (data && typeof data === 'object' && 'formatted' in data && typeof (data as { formatted: unknown }).formatted === 'string') {
-      return (data as { formatted: string }).formatted;
-    }
-    return undefined;
-  }
-
-  async execute(input: SearchEmailInput, context: ToolExecutionContext = {}): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
     try {
       if (this.emailService.getConfiguredAccounts().length === 0) {
-        return {
-          success: true,
-          data: {
-            formatted: 'No hay cuentas de email configuradas.',
-          },
-        };
+        return { success: true, output: 'No hay cuentas de email configuradas.' };
       }
 
-      const q = typeof input?.query === 'string' ? input.query.trim() : '';
+      const typed = input as unknown as SearchEmailInput;
+      const q = typeof typed.query === 'string' ? typed.query.trim() : '';
       if (!q) {
-        return { success: false, error: 'query is required' };
+        return { success: false, output: '', error: 'query is required' };
       }
 
-      const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
-      const since = resolveSinceDate(input?.since, context.timeZone);
-      const accountId = typeof input?.accountId === 'string' ? input.accountId.trim() : undefined;
-      const folder = typeof input?.folder === 'string' ? input.folder.trim() : undefined;
+      const limit = Math.max(1, Math.min(50, typed.limit ?? 10));
+      const since = typed.since ? new Date(typed.since) : undefined;
+      const accountId = typeof typed.accountId === 'string' ? typed.accountId.trim() : undefined;
+      const folder = typeof typed.folder === 'string' ? typed.folder.trim() : undefined;
 
       const result = await this.emailService.search({
         query: q,
@@ -114,20 +92,17 @@ export class SearchEmailTool implements ExecutableTool {
       });
 
       if (!result.success) {
-        return { success: false, error: result.error || 'Search failed' };
+        return { success: false, output: '', error: result.error || 'Search failed' };
       }
 
       const messages = result.messages ?? [];
       const locale = 'es-AR';
       const formatted = formatSearchOutput(messages, limit, locale);
 
-      return {
-        success: true,
-        data: { messages, formatted },
-      };
+      return { success: true, output: formatted };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, error: msg };
+      return { success: false, output: '', error: msg };
     }
   }
 }

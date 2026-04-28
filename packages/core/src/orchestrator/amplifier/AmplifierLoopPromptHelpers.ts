@@ -1,5 +1,6 @@
 import type { AmplifierInput, Step } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
+import type { Tool } from '../../providers/types.js';
 
 export function getAssistantIdentityContext(input: AmplifierInput): {
   name: string;
@@ -130,4 +131,25 @@ export function extractOutputTemplates(skills: RelevantSkill[]): string {
 
   if (templates.length === 0) return '';
   return `\nREQUIRED OUTPUT TEMPLATES:\n${templates.join('\n\n')}\n`;
+}
+
+export function buildToolsPrompt(tools: Tool[]): string {
+  const toolList = tools
+    .map(
+      (tool) => `- **${tool.name}**: ${tool.description}
+  Input: ${JSON.stringify(tool.parameters?.properties ?? {}, null, 0)}`
+    )
+    .join('\n');
+
+  return `AVAILABLE TOOLS:
+${toolList}
+
+To use a tool, respond with ONLY this JSON:
+{"tool":"tool_name","input":{"param":"value"}}
+
+To respond directly without a tool, write plain text.
+To delegate to a specialized agent:
+{"action":"delegate","agent":"agent_name","task":"description","reason":"why"}
+
+ONE action per response. No text before or after the JSON.`;
 }

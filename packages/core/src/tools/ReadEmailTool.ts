@@ -1,7 +1,6 @@
 import type { EmailMessage } from '../email/IMAPClient.js';
 import type { EmailService } from '../email/EmailService.js';
-import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
-import { resolveSinceDate } from './emailSinceParse.js';
+import { ExecutableTool, ToolResult } from './types.js';
 
 export interface ReadEmailInput {
   accountId?: string;
@@ -57,57 +56,35 @@ function formatReadEmailOutput(
 
 export class ReadEmailTool implements ExecutableTool {
   name = 'read_email';
-  readonly actionAliases = ['leer_correo', 'ver_emails', 'revisar_correo'] as const;
   description = 'Read recent emails from configured accounts';
-  readonly triggers = [
-    'correo',
-    'email',
-    'emails',
-    'correos',
-    'llegó algo',
-    'llegó un mail',
-    'tengo mensajes',
-    'revisar inbox',
-    'qué hay en el correo',
-    'mail de',
-    'email de',
-    'mensaje de',
-  ];
   parameters = {
-    type: 'object',
+    type: 'object' as const,
     properties: {
       accountId: { type: 'string', description: 'Specific account id or omit for all' },
       limit: { type: 'number', description: 'Max messages (default 10)' },
       since: { type: 'string', description: 'ISO date or today / yesterday / this week' },
       folder: { type: 'string', description: 'IMAP folder (default INBOX)' },
     },
+    required: [],
   };
 
   constructor(private readonly emailService: EmailService) {}
 
-  formatToolOutput(data: unknown, ctx: ToolExecutionContext): string | undefined {
-    if (data && typeof data === 'object' && 'formatted' in data && typeof (data as { formatted: unknown }).formatted === 'string') {
-      return (data as { formatted: string }).formatted;
-    }
-    return undefined;
-  }
-
-  async execute(input: ReadEmailInput, context: ToolExecutionContext = {}): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
     try {
       if (this.emailService.getConfiguredAccounts().length === 0) {
         return {
           success: true,
-          data: {
-            formatted:
-              'No hay cuentas de email configuradas con contraseña guardada. Configurá cuentas en ~/.enzo/config.json y la contraseña desde la UI o la API.',
-          },
+          output:
+            'No hay cuentas de email configuradas con contraseña guardada. Configurá cuentas en ~/.enzo/config.json y la contraseña desde la UI o la API.',
         };
       }
 
-      const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
-      const since = resolveSinceDate(input?.since, context.timeZone);
-      const accountId = typeof input?.accountId === 'string' ? input.accountId.trim() : undefined;
-      const folder = typeof input?.folder === 'string' ? input.folder.trim() : undefined;
+      const typed = input as ReadEmailInput;
+      const limit = Math.max(1, Math.min(50, typed.limit ?? 10));
+      const since = typed.since ? new Date(typed.since) : undefined;
+      const accountId = typeof typed.accountId === 'string' ? typed.accountId.trim() : undefined;
+      const folder = typeof typed.folder === 'string' ? typed.folder.trim() : undefined;
 
       const result = await this.emailService.getRecent({
         accountId: accountId || undefined,
@@ -119,6 +96,7 @@ export class ReadEmailTool implements ExecutableTool {
       if (!result.success) {
         return {
           success: false,
+          output: '',
           error: result.error || 'Failed to load email',
         };
       }
@@ -134,14 +112,11 @@ export class ReadEmailTool implements ExecutableTool {
 
       return {
         success: true,
-        data: {
-          messages,
-          formatted,
-        },
+        output: formatted,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, error: msg };
+      return { success: false, output: '', error: msg };
     }
   }
 }

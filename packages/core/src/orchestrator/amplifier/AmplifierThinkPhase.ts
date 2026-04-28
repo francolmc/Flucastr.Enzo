@@ -3,7 +3,7 @@ import type { AmplifierInput, Step } from '../types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { SkillResolver, RelevantSkill } from '../SkillResolver.js';
-import { buildAssistantIdentityPrompt } from './AmplifierLoopPromptHelpers.js';
+import { buildAssistantIdentityPrompt, buildToolsPrompt } from './AmplifierLoopPromptHelpers.js';
 import { describeHostForExecuteCommandPrompt } from '../runtimeHostContext.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 
@@ -40,7 +40,7 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
       }
     }
   }
-  const toolsList = mergedTools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n');
+  const toolsPrompt = buildToolsPrompt(mergedTools);
 
   const previousActSteps = previousSteps.filter((s) => s.type === 'act');
   const previousObservations = previousSteps.filter((s) => s.type === 'observe' && s.output);
@@ -118,8 +118,7 @@ Use a concrete task (include any user question about the image in the task text)
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
 ${imageDelegationBlock}
-AVAILABLE TOOLS:
-${toolsList}
+${toolsPrompt}
 
 DELEGATION — use when the task genuinely exceeds your capabilities:
 If you determine that completing this task requires capabilities beyond what
@@ -149,9 +148,7 @@ Do not answer from memory when web_search is available.
 If you are unsure whether to search — search.
 
 CRITICAL: To use a tool, respond ONLY with this EXACT JSON format:
-{"action":"tool","tool":"TOOL_NAME","input":{"param":"value"}}
-
-The "input" field MUST be a nested object. Never put params at the root level.
+{"tool":"TOOL_NAME","input":{"param":"value"}}
 
 CORRECT examples:
 {"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}

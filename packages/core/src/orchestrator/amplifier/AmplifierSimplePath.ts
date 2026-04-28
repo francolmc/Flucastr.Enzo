@@ -15,6 +15,7 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
+  buildToolsPrompt,
   buildRelevantSkillsSection,
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
@@ -29,7 +30,7 @@ import {
   validateToolInput,
 } from './AmplifierLoopFastPathTools.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './AmplifierVerifyPhase.js';
-import type { ExecutableTool, ToolExecutionContext } from '../../tools/types.js';
+import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
@@ -109,7 +110,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   log.info(`[AmplifierLoop] Fast-path ${isModerate ? 'MODERATE' : 'SIMPLE'}`);
 
   const mergedToolDefs = mergeAvailableToolDefinitions(input, mcpRegistry);
-  const toolsList = mergedToolDefs.map((t) => `- ${t.name}: ${t.description}`).join('\n');
+  const toolsPrompt = buildToolsPrompt(mergedToolDefs);
 
   const isCapabilityQuery =
     /\b(qu[eé] puedes|what can you|capabilities|habilidades|skills|funciones|qu[eé] sabes|what do you|qu[eé] eres capaz|qu[eé] haces|what are you)\b/i.test(
@@ -152,12 +153,11 @@ ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 Date: ${dateLine}.
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
-AVAILABLE TOOLS:
-${toolsList}
+${toolsPrompt}
 ${skillListSection}
 ${relevantSkillsSection}
 To use a tool, respond ONLY with JSON (no extra text, no markdown):
-{"action":"tool","tool":"TOOL_NAME","input":{PARAMS}}
+{"tool":"TOOL_NAME","input":{PARAMS}}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
 Built-in tool names: execute_command, web_search, read_file, write_file, remember.
@@ -211,44 +211,28 @@ If responding with plain text (no tool), write in this language.`;
 
   const messages: Message[] = [...input.history, { role: 'user', content: input.message }];
 
-  const triggerMatch = capabilityResolver
-    ? capabilityResolver.resolveByTrigger(input.message, executableTools)
-    : null;
-
   let rawContent: string;
-  if (triggerMatch) {
-    log.info(
-      `[AmplifierLoop] Trigger matched "${triggerMatch.matched}" → tool "${triggerMatch.toolName}" (skipping LLM tool selection)`
+  let firstResponse;
+  const fastThinkStart = Date.now();
+  try {
+    firstResponse = await withTimeout(
+      baseProvider.complete({
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        temperature: 0.3,
+        maxTokens: 384,
+      }),
+      180_000,
+      'SIMPLE first call'
     );
-    rawContent = JSON.stringify({
-      action: 'tool',
-      tool: triggerMatch.toolName,
-      input: { query: input.originalMessage ?? input.message },
-    });
-    recordStageMetric(stageMetrics, 'think', 0, true);
-  } else {
-    let firstResponse;
-    const fastThinkStart = Date.now();
-    try {
-      firstResponse = await withTimeout(
-        baseProvider.complete({
-          messages: [{ role: 'system', content: systemPrompt }, ...messages],
-          temperature: 0.3,
-          maxTokens: 384,
-        }),
-        180_000,
-        'SIMPLE first call'
-      );
-    } catch (err) {
-      log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
-      recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
-      throw err;
-    }
-    recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
-
-    rawContent = (firstResponse.content ?? '').trim();
-    log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
+  } catch (err) {
+    log.error('[AmplifierLoop] SIMPLE path - primera llamada falló:', err);
+    recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, false);
+    throw err;
   }
+  recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+
+  rawContent = (firstResponse.content ?? '').trim();
+  log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
 
   let finalContent = rawContent;
 
@@ -368,12 +352,7 @@ Format:
 
       if (resolved) {
         let execName = resolved.name;
-        const execCtx: ToolExecutionContext = {
-          userId: input.userId,
-          requestId: requestId ?? input.requestId,
-          ...input.toolExecutionContext,
-        };
-        let preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
+        let preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools);
 
         const validationError = validateToolInput(execName, preparedToolInput, executableTools, mcpRegistry);
         if (validationError) {
@@ -397,7 +376,7 @@ Format:
             } else {
               execName = resolved.name;
               log.info(`[AmplifierLoop] SIMPLE path - corrected tool input for "${execName}"`);
-              preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools, execCtx);
+              preparedToolInput = applyExecutableToolContext(execName, toolInput, executableTools);
             }
           }
         }
@@ -425,18 +404,8 @@ Format:
               if (!tool) {
                 setupError = `Herramienta interna no encontrada: ${execName}`;
               } else {
-                const result = await tool.execute(preparedToolInput, execCtx);
-                const fmtCtx: ToolExecutionContext = {
-                  userId: input.userId,
-                  requestId: requestId ?? input.requestId,
-                  outputStyle: 'full',
-                  ...execCtx,
-                };
-                const formatted = result.success ? tool.formatToolOutput?.(result.data, fmtCtx) : undefined;
-                rawToolOutput =
-                  formatted !== undefined && formatted.length > 0
-                    ? formatted
-                    : extractToolOutput(result, { maxChars: 3000 });
+                const result = await tool.execute(preparedToolInput);
+                rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
               }
             } else if (mcpRegistry) {
               try {

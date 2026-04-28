@@ -1,8 +1,8 @@
 import type { ConfigService } from '../config/ConfigService.js';
 import { fetchWithRetry } from '../providers/retry.js';
 import { WriteFileTool } from '../tools/WriteFileTool.js';
-import { resolveWorkspaceRoot } from '../tools/workspacePathPolicy.js';
 import type { DelegationResult } from './AgentRouter.js';
+import path from 'path';
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 export const ANTHROPIC_DELEGATION_MODEL = 'claude-sonnet-4-20250514';
@@ -51,7 +51,7 @@ export async function runAnthropicDelegatedTask(options: {
     };
   }
 
-  const workspaceRoot = resolveWorkspaceRoot(options.workspacePath);
+  const workspaceRoot = options.workspacePath ?? process.cwd();
   const fetchFn = options.fetchImpl ?? fetch;
 
   try {
@@ -105,13 +105,14 @@ async function processFileTagsAndBuildResult(
     return { success: true, agent, output: rawText.trim() };
   }
 
-  const writeTool = new WriteFileTool(workspaceRoot);
+  const writeTool = new WriteFileTool();
   const filesCreated: string[] = [];
 
   for (const m of matches) {
     const filePath = m[1]?.trim() ?? '';
     const fileContent = m[2] ?? '';
-    const result = await writeTool.execute({ path: filePath, content: fileContent });
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath);
+    const result = await writeTool.execute({ path: fullPath, content: fileContent });
     if (!result.success) {
       return {
         success: false,
@@ -121,16 +122,7 @@ async function processFileTagsAndBuildResult(
         error: result.error ?? 'write_file failed',
       };
     }
-    if (typeof result.data === 'string') {
-      const pathMatch = result.data.match(/File created successfully at (.+)$/);
-      if (pathMatch?.[1]) {
-        filesCreated.push(pathMatch[1].trim());
-      } else {
-        filesCreated.push(filePath);
-      }
-    } else {
-      filesCreated.push(filePath);
-    }
+    filesCreated.push(fullPath);
   }
 
   return { success: true, agent, output: stripFileTags(rawText), filesCreated };

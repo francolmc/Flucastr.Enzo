@@ -1,15 +1,10 @@
 export { ToolRegistry } from './ToolRegistry.js';
-export type { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
+export type { ExecutableTool, ToolParameters, ToolResult } from './types.js';
 export { WebSearchTool } from './WebSearchTool.js';
-export { ExecuteCommandTool, type ExecuteCommandToolOptions } from './ExecuteCommandTool.js';
+export { ExecuteCommandTool } from './ExecuteCommandTool.js';
 export { ReadFileTool } from './ReadFileTool.js';
 export { RememberTool } from './RememberTool.js';
 export { WriteFileTool } from './WriteFileTool.js';
 export { SendFileTool, type SendFileFn } from './SendFileTool.js';
 export { ReadEmailTool, type ReadEmailInput } from './ReadEmailTool.js';
 export { SearchEmailTool, type SearchEmailInput } from './SearchEmailTool.js';
-export {
-  shellExecutableCandidates,
-  pickFirstResolvableShellExecutable,
-} from './resolveExecutableShell.js';
-export { resolveWorkspaceRoot, isPathWithinWorkspace } from './workspacePathPolicy.js';

@@ -8,7 +8,6 @@ import {
   RecallTool,
   WriteFileTool,
   SendFileTool,
-  resolveWorkspaceRoot,
   MarkItDownConverter,
   EmailService,
   ReadEmailTool,
@@ -35,17 +34,19 @@ export function createDefaultToolRegistry(
   telegramFileDelivery?: TelegramFileDeliveryDeps
 ): ToolRegistry {
   const registry = new ToolRegistry();
-  const resolvedWorkspace = resolveWorkspaceRoot(workspacePath);
+  const defaultUserId = process.env.ENZO_DEFAULT_USER_ID ?? 'default-user';
   const markItDownService = new MarkItDownConverter();
-  registry.register(new WebSearchTool(() => configService?.getSystemSecret('tavilyApiKeyEncrypted') ?? null));
-  registry.register(new ExecuteCommandTool({ cwd: resolvedWorkspace }));
-  registry.register(new ReadFileTool(workspacePath, { markItDownService }));
-  registry.register(new RememberTool(memoryService));
-  registry.register(new RecallTool(memoryService));
-  registry.register(new WriteFileTool(workspacePath));
+  const apiKey = configService?.getSystemSecret('tavilyApiKeyEncrypted') ?? process.env.TAVILY_API_KEY ?? '';
+  registry.register(new WebSearchTool(apiKey));
+  registry.register(new ExecuteCommandTool(workspacePath ?? process.cwd()));
+  registry.register(new ReadFileTool(markItDownService));
+  registry.register(new RememberTool(memoryService, defaultUserId));
+  registry.register(new RecallTool(memoryService, defaultUserId));
+  registry.register(new WriteFileTool());
   if (telegramFileDelivery) {
+    const telegramChatId = process.env.ENZO_DEFAULT_TELEGRAM_CHAT_ID ?? '';
     registry.register(
-      new SendFileTool(telegramFileDelivery.sendFileFn, telegramFileDelivery.fileHandler, workspacePath)
+      new SendFileTool(telegramFileDelivery.sendFileFn, telegramFileDelivery.fileHandler, telegramChatId)
     );
   }
   const emailService = configService ? new EmailService(configService) : undefined;

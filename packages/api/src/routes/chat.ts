@@ -131,7 +131,6 @@ export function createChatRouter(
           requestId,
           userLanguage,
           runtimeHints: buildRuntimeHintsFromConfig(configService),
-          toolExecutionContext: { source: 'web', conversationId: finalConversationId },
         });
       });
 
@@ -208,7 +207,6 @@ export function createChatRouter(
           requestId,
           userLanguage,
           runtimeHints: buildRuntimeHintsFromConfig(configService),
-          toolExecutionContext: { source: 'web', conversationId: finalConversationId },
           onProgress: (step: Step) => {
             progressCount++;
             // Send progress event every step

@@ -19,16 +19,8 @@ export function smartTruncate(text: string, maxChars: number): string {
 }
 
 export function extractToolOutput(result: ToolResult, options?: { maxChars?: number }): string {
-  if (!result.success) return `Error: ${result.error}`;
-  const data = result.data;
-  let output = '';
-  if (data && typeof data === 'object' && 'stdout' in data) {
-    output = (data as any).stdout ?? '';
-  } else if (typeof data === 'string') {
-    output = data;
-  } else {
-    output = JSON.stringify(data, null, 2);
-  }
+  if (!result.success) return result.error ? `Error: ${result.error}` : result.output;
+  const output = result.output ?? '';
   const maxChars = options?.maxChars;
   if (!maxChars || maxChars <= 0) {
     return output;

@@ -95,7 +95,6 @@ export class AmplifierLoop {
     this.memoryService = options?.memoryService;
     this.capabilityResolver = new CapabilityResolver();
     this.intentAnalyzer = new IntentAnalyzer(baseProvider);
-    this.capabilityResolver.setIntentAnalyzer(this.intentAnalyzer);
     this.contextSynthesizer = new ContextSynthesizer();
     this.escalationManager = new EscalationManager();
     this.skillResolver = new SkillResolver();
@@ -473,7 +472,7 @@ ${accumulatedContext}`;
                     throw new Error(validationError);
                   }
                   const result = await tool.execute(directInput);
-                  const stdout = (result.data as any)?.stdout ?? '';
+                  const stdout = result.output ?? '';
                   // For mv/mkdir commands stdout is empty on success — build a meaningful message
                   if (result.success) {
                     output = stdout.trim() || `success`;
@@ -655,9 +654,7 @@ ${accumulatedContext}`;
                 throw new Error(validationError);
               }
               const result = await ecTool.execute(directInput);
-              const output = result.success
-                ? ((result.data as any)?.stdout ?? JSON.stringify(result.data))
-                : `Error: ${result.error}`;
+              const output = result.success ? result.output : `Error: ${result.error}`;
 
               toolsUsed.add('execute_command');
               // Append to accumulatedContext (don't overwrite — previous steps may have context)
@@ -694,9 +691,7 @@ ${accumulatedContext}`;
               }
               const result = await wsTool.execute(directInput);
               if (result.success) {
-                const wsOutput =
-                  wsTool.formatToolOutput?.(result.data, { outputStyle: 'compact' }) ??
-                  `Tool execution successful: ${JSON.stringify(result.data)}`;
+                const wsOutput = result.output;
                 toolsUsed.add('web_search');
                 accumulatedContext += (accumulatedContext ? '\n\n' : '') + wsOutput;
                 steps.push({
@@ -814,8 +809,7 @@ Do NOT search for more information. Use what is provided.`;
             modelsUsed,
             toolsUsed,
             input.userId,
-            requestId,
-            input.toolExecutionContext
+            requestId
           );
           if (actResult.kind === 'delegate') {
             recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, true);
@@ -1106,8 +1100,7 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         toolsUsed,
         input.userId,
-        requestId,
-        input.toolExecutionContext
+        requestId
       );
       if (actResult.kind === 'delegate') {
         recordStageMetric(stageMetrics, 'act', Date.now() - actStart, true);

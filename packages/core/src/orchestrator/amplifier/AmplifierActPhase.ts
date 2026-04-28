@@ -4,8 +4,7 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { Step, ResolvedAction } from '../types.js';
 import { normalizeError } from '../NormalizedError.js';
-import { applyExecutableToolContext, validateToolInput } from './AmplifierLoopFastPathTools.js';
-import type { ToolExecutionContext } from '../../tools/types.js';
+import { validateToolInput } from './AmplifierLoopFastPathTools.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import type { ThinkPhaseDeps } from './AmplifierThinkPhase.js';
 
@@ -31,8 +30,7 @@ export async function runActPhase(
   modelsUsed: Set<string>,
   toolsUsed: Set<string>,
   userId?: string,
-  requestId?: string,
-  toolSession?: Partial<ToolExecutionContext>
+  requestId?: string
 ): Promise<ActPhaseResult> {
   const { baseProvider, executableTools, mcpRegistry, skillRegistry, log } = deps;
   const startTime = Date.now();
@@ -50,13 +48,6 @@ export async function runActPhase(
   try {
     if (resolvedAction.type === 'tool') {
       toolsUsed.add(resolvedAction.target);
-      const fmtCtx: ToolExecutionContext = {
-        outputStyle: 'compact',
-        ...toolSession,
-        userId: userId ?? toolSession?.userId,
-        requestId: requestId ?? toolSession?.requestId,
-      };
-
       if (resolvedAction.target.startsWith('mcp_') && mcpRegistry) {
         const validationError = validateToolInput(
           resolvedAction.target,
@@ -90,12 +81,7 @@ export async function runActPhase(
           output = `Error [${normalized.code}]: ${normalized.technicalMessage}`;
         }
       } else {
-        const toolInput = applyExecutableToolContext(
-          resolvedAction.target,
-          resolvedAction.input,
-          executableTools,
-          fmtCtx
-        );
+        const toolInput = resolvedAction.input;
         const validationError = validateToolInput(
           resolvedAction.target,
           toolInput,
@@ -123,15 +109,11 @@ export async function runActPhase(
 
         const tool = executableTools.find((t) => t.name === resolvedAction.target);
         if (tool) {
-          const result = await tool.execute(toolInput, fmtCtx);
+          const result = await tool.execute(toolInput);
           if (!result.success) {
             output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
           } else {
-            const formatted = tool.formatToolOutput?.(result.data, fmtCtx);
-            output =
-              formatted !== undefined && formatted.length > 0
-                ? formatted
-                : `Tool execution successful: ${JSON.stringify(result.data)}`;
+            output = result.output;
           }
         } else {
           output = `Tool not found: ${resolvedAction.target}`;

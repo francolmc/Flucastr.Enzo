@@ -1,74 +1,41 @@
-import { ExecutableTool, ToolExecutionContext, ToolResult } from './types.js';
+import { ExecutableTool, ToolResult } from './types.js';
 import { MemoryService } from '../memory/MemoryService.js';
+import { normalizeMemoryKey } from '../memory/MemoryKeys.js';
 
 export class RememberTool implements ExecutableTool {
   name = 'remember';
-  readonly actionAliases = ['recordar', 'guardar_memoria'] as const;
-  description = 'Save information to memory explicitly';
+  description = 'Save a fact about the user to persistent memory';
   parameters = {
-    type: 'object',
+    type: 'object' as const,
     properties: {
-      key: { type: 'string', description: 'Memory key' },
-      value: { type: 'string', description: 'Content to remember' },
-      userId: { type: 'string', description: 'User ID' },
+      key: {
+        type: 'string',
+        description:
+          'Category: name, city, profession, projects, preferences, routines, family, or other',
+      },
+      value: {
+        type: 'string',
+        description: 'The information to remember',
+      },
     },
-    required: ['key', 'value', 'userId'],
+    required: ['key', 'value'],
   };
 
-  private memoryService: MemoryService;
+  constructor(
+    private readonly memoryService: MemoryService,
+    private readonly userId: string
+  ) {}
 
-  constructor(memoryService: MemoryService) {
-    this.memoryService = memoryService;
-  }
-
-  injectExecutionContext(input: Record<string, unknown>, ctx: ToolExecutionContext): void {
-    const uid = ctx.userId;
-    if (!uid || typeof uid !== 'string') return;
-    const existing = input['userId'];
-    if (existing === undefined || existing === null || String(existing).trim() === '') {
-      input['userId'] = uid;
-    }
-  }
-
-  async execute(input: any): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const key = normalizeMemoryKey(String(input.key ?? ''));
+    const value = String(input.value ?? '');
     try {
-      const { key, value, userId } = input;
-
-      console.log(`[RememberTool] execute() called with:`, { key, value, userId, inputKeys: Object.keys(input) });
-
-      if (!key || typeof key !== 'string') {
-        return {
-          success: false,
-          error: 'Key must be a non-empty string',
-        };
-      }
-
-      if (!value || typeof value !== 'string') {
-        return {
-          success: false,
-          error: 'Value must be a non-empty string',
-        };
-      }
-
-      if (!userId || typeof userId !== 'string') {
-        console.error(`[RememberTool] Invalid userId:`, userId);
-        return {
-          success: false,
-          error: 'UserId must be a non-empty string',
-        };
-      }
-
-      console.log(`[RememberTool] Saving memory for userId ${userId}: ${key} = ${value}`);
-      await this.memoryService.remember(userId, key, value);
-      console.log(`[RememberTool] Memory saved successfully`);
-
-      return {
-        success: true,
-        data: `Successfully saved memory: ${key} = ${value}`,
-      };
+      await this.memoryService.remember(this.userId, key, value);
+      return { success: true, output: `Remembered: ${key} = ${value}` };
     } catch (error) {
       return {
         success: false,
+        output: '',
         error: error instanceof Error ? error.message : String(error),
       };
     }

@@ -1,7 +1,6 @@
 import { Message, Tool, LLMProvider } from '../providers/types.js';
 import type { Subtask, DecompositionResult } from './Decomposer.js';
 import type { AssistantProfile, UserProfile } from '../config/ConfigService.js';
-import type { ToolExecutionContext } from '../tools/types.js';
 import type { RelevantSkill } from './SkillResolver.js';
 
 export enum ComplexityLevel {
@@ -106,8 +105,6 @@ export interface AmplifierInput {
     /** process.arch */
     arch?: string;
   };
-  /** Merged into tool execution (e.g. remember). Usually set by the orchestrator from the request. */
-  toolExecutionContext?: ToolExecutionContext;
   decomposition?: {
     steps: Subtask[];
     originalMessage: string;
@@ -213,8 +210,6 @@ export interface OrchestratorInput {
   onProgress?: (step: Step) => void;
   /** Passed through to AmplifierInput when present; else process() supplies env defaults. */
   runtimeHints?: AmplifierInput['runtimeHints'];
-  /** Optional; merged with userId/requestId/source/conversationId inside process(). */
-  toolExecutionContext?: Partial<ToolExecutionContext>;
   /** Passed through to AmplifierInput for vision_agent delegation. */
   imageContext?: { base64: string; mimeType: string };
 }

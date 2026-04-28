@@ -97,15 +97,6 @@ export async function executeOrchestratorProcess(
 
   const runtimeHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
 
-  const toolExecutionContext = {
-    userId: input.userId,
-    requestId,
-    source: input.source,
-    conversationId: input.conversationId,
-    timeZone: runtimeHints.timeZone,
-    ...input.toolExecutionContext,
-  };
-
   const userMemories = await b.recallUserMemories(input.userId);
 
   let amplifierResult: AmplifierResult;
@@ -130,7 +121,6 @@ export async function executeOrchestratorProcess(
       userLanguage: input.userLanguage ?? 'es',
       onProgress: input.onProgress,
       runtimeHints,
-      toolExecutionContext,
       imageContext: input.imageContext,
     });
   } catch (amplifierError) {
@@ -157,7 +147,6 @@ export async function executeOrchestratorProcess(
         userLanguage: input.userLanguage ?? 'es',
         onProgress: input.onProgress,
         runtimeHints,
-        toolExecutionContext,
         imageContext: input.imageContext,
       });
     } else {

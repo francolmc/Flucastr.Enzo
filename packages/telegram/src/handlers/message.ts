@@ -174,11 +174,6 @@ async function processMessageInBackground(
       userLanguage: langContext.userLanguage,
       agentId: resolvedAgentId,
       classifiedLevel: complexityLevel as any,
-      toolExecutionContext: {
-        source: 'telegram',
-        conversationId,
-        telegramChatId: ctx.chat?.id != null ? String(ctx.chat.id) : undefined,
-      },
       runtimeHints: buildOrchestratorRuntimeHints({
         homeDir: process.env.HOME,
         timeLocale,
