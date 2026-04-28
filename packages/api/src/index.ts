@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, lstatSync } from "fs";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { homedir } from "os";
@@ -43,13 +43,25 @@ const enzoSecret = ensureLocalSecret();
 
 const workspaceRoot = path.resolve(__dirname, "../../..");
 
-function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
-  let resolved = configValue
-    ? path.isAbsolute(configValue)
-      ? configValue
-      : path.resolve(homedir(), configValue)
-    : fallbackAbsolutePath;
+function normalizeConfiguredPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
+  if (!configValue || !configValue.trim()) {
+    return fallbackAbsolutePath;
+  }
+  const trimmed = configValue.trim();
+  if (trimmed === "~") {
+    return homedir();
+  }
+  if (trimmed.startsWith("~/")) {
+    return path.join(homedir(), trimmed.slice(2));
+  }
+  if (path.isAbsolute(trimmed)) {
+    return trimmed;
+  }
+  return path.resolve(homedir(), trimmed);
+}
 
+function resolveSharedDirPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
+  let resolved = normalizeConfiguredPath(configValue, fallbackAbsolutePath);
   if (!existsSync(resolved)) {
     try {
       mkdirSync(resolved, { recursive: true });
@@ -57,9 +69,23 @@ function resolveSharedPath(configValue: string | undefined, fallbackAbsolutePath
     } catch (err) {
       console.warn(`[Config] Could not create directory ${resolved}:`, err);
       resolved = fallbackAbsolutePath;
+      mkdirSync(resolved, { recursive: true });
     }
+  } else if (!lstatSync(resolved).isDirectory()) {
+    console.warn(`[Config] Expected a directory path but got file: ${resolved}. Using fallback: ${fallbackAbsolutePath}`);
+    resolved = fallbackAbsolutePath;
+    mkdirSync(resolved, { recursive: true });
   }
+  return resolved;
+}
 
+function resolveSharedFilePath(configValue: string | undefined, fallbackAbsolutePath: string): string {
+  let resolved = normalizeConfiguredPath(configValue, fallbackAbsolutePath);
+  if (existsSync(resolved) && lstatSync(resolved).isDirectory()) {
+    console.warn(`[Config] Expected a file path but got directory: ${resolved}. Using fallback: ${fallbackAbsolutePath}`);
+    resolved = fallbackAbsolutePath;
+  }
+  mkdirSync(path.dirname(resolved), { recursive: true });
   return resolved;
 }
 
@@ -76,8 +102,8 @@ const allowedOrigins = [`http://localhost:${uiPort}`, `http://127.0.0.1:${uiPort
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
-const dbPath = resolveSharedPath(systemConfig.dbPath, path.join(homedir(), ".enzo", "enzo.db"));
-const skillsPath = resolveSharedPath(systemConfig.enzoSkillsPath, path.join(homedir(), ".enzo", "skills"));
+const dbPath = resolveSharedFilePath(systemConfig.dbPath, path.join(homedir(), ".enzo", "enzo.db"));
+const skillsPath = resolveSharedDirPath(systemConfig.enzoSkillsPath, path.join(homedir(), ".enzo", "skills"));
 process.env.ENZO_SKILLS_PATH = skillsPath;
 mkdirSync(path.dirname(dbPath), { recursive: true });
 mkdirSync(skillsPath, { recursive: true });
