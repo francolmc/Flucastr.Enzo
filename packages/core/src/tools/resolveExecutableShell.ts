@@ -72,7 +72,7 @@ function shouldSkipShellCandidate(shellPath: string | undefined): boolean {
     return true;
   }
   const n = path.normalize(shellPath.trim());
-  return isSnapOrSimilarShim(n) || isWslWindowsMountPath(n);
+  return isSnapOrSimilarShim(n) || isWslWindowsMountPath(n) || path.basename(n) === 'dash';
 }
 
 /** Well-known distro paths first (even if $PATH lists /snap/bin first). */
@@ -82,8 +82,6 @@ const PREFERRED_POSIX_SHELL_ORDER = [
   '/bin/bash',
   '/usr/bin/bash',
   '/usr/local/bin/bash',
-  '/bin/dash',
-  '/usr/bin/dash',
 ];
 
 function mergePreferredShellsFirst(rest: string[]): string[] {
@@ -110,7 +108,7 @@ function mergePreferredShellsFirst(rest: string[]): string[] {
 }
 
 function appendPathDiscoveredShells(out: string[]): void {
-  const names = ['sh', 'bash', 'dash'];
+  const names = ['sh', 'bash'];
   const dirs = process.env.PATH?.split(path.delimiter).filter(Boolean) ?? [];
   for (const dir of dirs) {
     if (shouldSkipShellCandidate(dir) || dir.includes('/snap/')) {
@@ -139,8 +137,6 @@ function appendStandardPosixFallbacks(out: string[]): void {
     '/bin/bash',
     '/usr/bin/bash',
     '/usr/local/bin/bash',
-    '/bin/dash',
-    '/usr/bin/dash',
   ];
   for (const p of fixed) {
     uniqPush(out, p);
