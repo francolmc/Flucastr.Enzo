@@ -37,6 +37,19 @@ function isSnapOrSimilarShim(shellPath: string): boolean {
   );
 }
 
+/** WSL mounts Windows drives as /mnt/c/... — PATH often points at broken or non-ELF tools there; skip for spawn. */
+function isWslWindowsMountPath(shellPath: string): boolean {
+  return /^\/mnt\/[a-zA-Z](\/|$)/.test(path.normalize(shellPath));
+}
+
+function shouldSkipShellCandidate(shellPath: string | undefined): boolean {
+  if (!shellPath?.trim()) {
+    return true;
+  }
+  const n = path.normalize(shellPath.trim());
+  return isSnapOrSimilarShim(n) || isWslWindowsMountPath(n);
+}
+
 /** Well-known distro paths first (even if $PATH lists /snap/bin first). */
 const PREFERRED_POSIX_SHELL_ORDER = [
   '/bin/sh',
@@ -75,7 +88,7 @@ function appendPathDiscoveredShells(out: string[]): void {
   const names = ['sh', 'bash', 'dash'];
   const dirs = process.env.PATH?.split(path.delimiter).filter(Boolean) ?? [];
   for (const dir of dirs) {
-    if (isSnapOrSimilarShim(dir) || dir.includes('/snap/')) {
+    if (shouldSkipShellCandidate(dir) || dir.includes('/snap/')) {
       continue;
     }
     for (const name of names) {
@@ -113,7 +126,7 @@ function appendStandardPosixFallbacks(out: string[]): void {
 function posixPathCandidates(): string[] {
   const out: string[] = [];
   const enzoShell = process.env.ENZO_SHELL?.trim();
-  if (enzoShell && !isSnapOrSimilarShim(enzoShell)) {
+  if (enzoShell && !shouldSkipShellCandidate(enzoShell)) {
     uniqPush(out, process.env.ENZO_SHELL);
   }
 
@@ -125,7 +138,7 @@ function posixPathCandidates(): string[] {
   if (
     shellEnv &&
     shellEnv !== process.env.ENZO_SHELL?.trim() &&
-    !isSnapOrSimilarShim(shellEnv) &&
+    !shouldSkipShellCandidate(shellEnv) &&
     isExecutableFile(path.normalize(shellEnv))
   ) {
     uniqPush(out, shellEnv);
@@ -148,8 +161,8 @@ export function shellExecutableCandidates(): string[] {
     uniqPush(out, 'cmd.exe');
     return out;
   }
-  const withoutSnap = posixPathCandidates().filter((p) => !isSnapOrSimilarShim(p));
-  return mergePreferredShellsFirst(withoutSnap);
+  const filtered = posixPathCandidates().filter((p) => !shouldSkipShellCandidate(p));
+  return mergePreferredShellsFirst(filtered);
 }
 
 export function pickFirstResolvableShellExecutable(): string | undefined {
