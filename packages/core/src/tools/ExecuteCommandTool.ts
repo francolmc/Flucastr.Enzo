@@ -13,6 +13,25 @@ type ShellRunResult = {
   signal: NodeJS.Signals | null;
 };
 
+const DIRECT_EXEC_ALLOWED = new Set([
+  'ls',
+  'pwd',
+  'df',
+  'du',
+  'ps',
+  'uname',
+  'which',
+  'env',
+  'printenv',
+  'echo',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'stat',
+  'id',
+]);
+
 function spawnArgsFor(command: string): string[] {
   return process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
 }
@@ -60,6 +79,129 @@ async function runSpawnedShellCommand(command: string, cwd: string): Promise<She
       'Cannot spawn any shell. Set ENZO_SHELL to the absolute path of a POSIX shell available in this runtime.'
     )
   );
+}
+
+function tokenizeSimpleCommand(command: string): string[] | null {
+  // Minimal tokenizer for simple commands: supports plain whitespace splitting and quoted args.
+  // Rejects shell metacharacters to avoid accidental partial-shell semantics.
+  if (/[|&;<>()`$]/.test(command)) {
+    return null;
+  }
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < command.length) {
+    while (i < command.length && /\s/.test(command[i]!)) i++;
+    if (i >= command.length) break;
+    const ch = command[i]!;
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i++;
+      let acc = '';
+      while (i < command.length && command[i] !== quote) {
+        acc += command[i]!;
+        i++;
+      }
+      if (i >= command.length) return null;
+      i++;
+      tokens.push(acc);
+      continue;
+    }
+    let acc = '';
+    while (i < command.length && !/\s/.test(command[i]!)) {
+      acc += command[i]!;
+      i++;
+    }
+    tokens.push(acc);
+  }
+  return tokens.length > 0 ? tokens : null;
+}
+
+async function runDirectCommand(command: string, cwd: string): Promise<ShellRunResult> {
+  const tokens = tokenizeSimpleCommand(command);
+  if (!tokens || tokens.length === 0) {
+    throw new Error('Direct execution unavailable for complex shell syntax');
+  }
+  const bin = tokens[0]!;
+  if (!DIRECT_EXEC_ALLOWED.has(bin)) {
+    throw new Error(`Direct execution not allowed for command: ${bin}`);
+  }
+  const args = tokens.slice(1);
+  return new Promise((resolve, reject) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(bin, args, {
+        cwd,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (syncErr) {
+      reject(syncErr);
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let outLen = 0;
+    let errLen = 0;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      settled = true;
+      killChild();
+      reject(new Error('Command timed out'));
+    }, EXEC_TIMEOUT_MS);
+
+    function killChild(): void {
+      try {
+        if (process.platform === 'win32') child.kill();
+        else child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      const s = chunk.toString('utf8');
+      outLen += Buffer.byteLength(s, 'utf8');
+      if (outLen > MAX_BUFFER_BYTES) {
+        clearTimeout(timer);
+        settled = true;
+        killChild();
+        reject(new Error(`stdout maxBuffer ${MAX_BUFFER_BYTES} exceeded`));
+        return;
+      }
+      stdout += s;
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      const s = chunk.toString('utf8');
+      errLen += Buffer.byteLength(s, 'utf8');
+      if (errLen > MAX_BUFFER_BYTES) {
+        clearTimeout(timer);
+        settled = true;
+        killChild();
+        reject(new Error(`stderr maxBuffer ${MAX_BUFFER_BYTES} exceeded`));
+        return;
+      }
+      stderr += s;
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code, signal: signal ?? null });
+    });
+  });
 }
 
 function runOneShellSpawn(shell: string, command: string, cwd: string): Promise<ShellRunResult> {
@@ -207,7 +349,16 @@ export class ExecuteCommandTool implements ExecutableTool {
         };
       }
 
-      const { stdout, stderr, code, signal } = await runSpawnedShellCommand(command, this.cwd);
+      let runResult: ShellRunResult;
+      try {
+        runResult = await runSpawnedShellCommand(command, this.cwd);
+      } catch (shellErr) {
+        if (!isSpawnENOENTFailure(shellErr)) {
+          throw shellErr;
+        }
+        runResult = await runDirectCommand(command, this.cwd);
+      }
+      const { stdout, stderr, code, signal } = runResult;
 
       if (signal) {
         return {
