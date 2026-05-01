@@ -1,6 +1,10 @@
 import { AvailableCapabilities, ResolvedAction } from './types.js';
 
 export class CapabilityResolver {
+  /**
+   * Parses THINK JSON. `available.agents` (conversational presets) is ignored here: delegation uses only
+   * `action: "delegate"` with targets from DELEGATION_AGENT_IDS (see types) as instructed in the THINK system prompt.
+   */
   async resolve(thought: string, available: AvailableCapabilities): Promise<ResolvedAction> {
     const parsed = this.tryParseJSON(thought);
     if (!parsed) {

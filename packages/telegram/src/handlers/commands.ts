@@ -56,10 +56,10 @@ async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promi
         : undefined;
       const agentsList = agents.map((agent) => `- ${agent.name} (${agent.provider}/${agent.model})`).join('\n');
       const activeLine = activeAgent
-        ? `Activo en esta conversación: *${activeAgent.name}*`
-        : 'No hay agente activo en esta conversación.';
+        ? `Preset conversacional activo: *${activeAgent.name}*`
+        : 'Sin preset conversacional (modelo principal de la instancia).';
       await ctx.reply(
-        `${activeLine}\n\nAgentes disponibles:\n${agentsList}\n\nUsa \`/agent <name>\` para activar o \`/agent off\` para desactivar.`,
+        `${activeLine}\n\nPresets disponibles (proveedor/modelo para esta conversación):\n${agentsList}\n\nUsa \`/agent <name>\` para activar o \`/agent off\` para volver al modelo principal.`,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -68,7 +68,7 @@ async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promi
     const normalizedArg = rawArg.toLowerCase();
     if (normalizedArg === 'off' || normalizedArg === 'none' || normalizedArg === 'default') {
       await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
-      await ctx.reply('Modo agente desactivado para esta conversación. Volvemos al modelo principal.');
+      await ctx.reply('Preset conversacional desactivado. Esta conversación vuelve a usar el modelo principal de la instancia.');
       return;
     }
 
@@ -78,13 +78,13 @@ async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promi
     });
 
     if (!selectedAgent) {
-      await ctx.reply(`No encontré un agente llamado "${rawArg}". Usa \`/agent\` para ver la lista.`);
+      await ctx.reply(`No encontré un preset llamado "${rawArg}". Usa \`/agent\` para ver la lista.`);
       return;
     }
 
     await ctx.memoryService.setConversationActiveAgent(conversationId, userId, selectedAgent.id);
     await ctx.reply(
-      `Agente *${selectedAgent.name}* activado para esta conversación.\nModelo: \`${selectedAgent.provider}/${selectedAgent.model}\``,
+      `Preset conversacional *${selectedAgent.name}* activo en esta conversación.\nModelo: \`${selectedAgent.provider}/${selectedAgent.model}\``,
       { parse_mode: 'Markdown' }
     );
   } catch (error) {

@@ -36,7 +36,7 @@ ${toolsList || '(none)'}
 Available skills:
 ${skillsList || '(none)'}
 
-Available agents:
+Conversational presets (user-configured provider/model — not delegation specialists like claude_code):
 ${agentsList || '(none)'}
 
 Respond with a JSON object with this exact format:
@@ -49,7 +49,7 @@ Respond with a JSON object with this exact format:
 }
 
 Rules:
-- Only suggest tools/skills/agents that are actually available
+- Only suggest tools/skills/conversational presets that are actually available
 - If the thought indicates the model has enough information to answer, return type "none"
 - If the thought indicates a need for more powerful reasoning, return type "escalate"
 - Return high confidence (0.8+) only if the intent is very clear

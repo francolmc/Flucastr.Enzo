@@ -78,6 +78,12 @@ export interface AmplifierInput {
   history: Message[];
   availableTools: Tool[];
   availableSkills: Skill[];
+  /**
+   * User-defined conversational presets ({@link AgentConfig}): provider/model and optional persona overrides.
+   * Distinct from {@link DELEGATION_AGENT_IDS}: specialists are invoked only via THINK JSON `delegate`.
+   * Passed through for components that need the catalog (e.g. intent analysis); {@link CapabilityResolver}
+   * does not use this list to validate delegation targets.
+   */
   availableAgents: AgentConfig[];
   classifiedLevel?: ComplexityLevel;
   /** User's preferred language (e.g., 'es', 'en'). Defaults to 'es'. */
@@ -141,6 +147,10 @@ export interface InjectedSkillUsage {
 export interface AvailableCapabilities {
   tools: Tool[];
   skills: Skill[];
+  /**
+   * Mirrors {@link AmplifierInput.availableAgents}. Not used by CapabilityResolver to validate
+   * `delegate` actions (delegation targets are the fixed ids in DELEGATION_AGENT_IDS).
+   */
   agents: AgentConfig[];
   powerfulProvider?: LLMProvider;
 }

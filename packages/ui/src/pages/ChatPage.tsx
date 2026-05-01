@@ -106,9 +106,14 @@ function ChatPage() {
           <p>Modo respuesta completa activo para validar experiencia base.</p>
         </div>
         <div className="chat-agent-select">
-          <label htmlFor="activeAgent">Agente activo</label>
+          <label htmlFor="activeAgent">Modelo conversacional</label>
+          <p id="activeAgent-help" className="chat-agent-hint">
+            Elige un preset (proveedor y modelo para este chat). Es distinto de los agentes delegados que Enzo puede
+            invocar por dentro (por ejemplo código, documentos largos o visión) cuando la tarea lo requiere.
+          </p>
           <select
             id="activeAgent"
+            aria-describedby="activeAgent-help"
             value={selectedAgentId || ''}
             onChange={(e) => setSelectedAgentId(e.target.value || null)}
             disabled={isThinking}

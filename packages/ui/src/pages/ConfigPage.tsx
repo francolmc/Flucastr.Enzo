@@ -377,7 +377,7 @@ function ConfigPage() {
         <div>
           <h1 className="page-title">ControlCenter</h1>
           <p className="page-subtitle">
-            Configura modelos, providers y agentes con un flujo guiado de conexión, ajuste y validación.
+            Configura modelos, providers y presets conversacionales con un flujo guiado de conexión, ajuste y validación.
           </p>
         </div>
       </div>
@@ -879,15 +879,20 @@ function ConfigPage() {
       <section className="config-section">
         <div className="config-section-header">
           <span className="badge">Paso 5 · Configurar</span>
-          <h2>Agentes personalizados</h2>
+          <h2>Presets conversacionales (“agentes”)</h2>
         </div>
+        <p className="config-card-description">
+          Cada entrada define proveedor, modelo y, si quieres, instrucciones o tono para el asistente en ese modo. Enzo sigue gestionando memoria,
+          histórico y continuidad; esto sólo cambia qué modelo responde. Los especialistas delegados por el orquestador (código, documentos, visión) son otra
+          capa y no se configuran aquí.
+        </p>
 
         {!showNewAgentForm && (
           <button
             className="new-agent-btn"
             onClick={() => setShowNewAgentForm(true)}
           >
-            + Nuevo Agente
+            + Nuevo preset
           </button>
         )}
 
@@ -1010,7 +1015,7 @@ function ConfigPage() {
 
             <div className="form-actions">
               <button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Guardando...' : editingAgentId ? 'Guardar cambios' : 'Crear Agente'}
+                {isSubmitting ? 'Guardando...' : editingAgentId ? 'Guardar cambios' : 'Crear preset'}
               </button>
               <button
                 type="button"
@@ -1037,7 +1042,7 @@ function ConfigPage() {
         )}
 
         {agents.length === 0 ? (
-          <p className="empty-state">Sin agentes configurados</p>
+          <p className="empty-state">Sin presets conversacionales configurados</p>
         ) : (
           <div className="agents-list">
             {agents.map((agent) => (

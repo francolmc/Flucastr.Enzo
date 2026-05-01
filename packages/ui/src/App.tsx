@@ -40,7 +40,7 @@ const NAV_ITEMS: Array<{
   { id: 'email', label: 'Correo', description: 'IMAP Outlook / Gmail', icon: '📧' },
   { id: 'stats', label: 'Insights', description: 'Métricas y señales', icon: '📈' },
   { id: 'mcp', label: 'MCP', description: 'Conectores y tools', icon: '🔌' },
-  { id: 'config', label: 'Config', description: 'Modelos y agentes', icon: '⚙️' },
+  { id: 'config', label: 'Config', description: 'Modelos y presets conversacionales', icon: '⚙️' },
 ];
 
 function App() {

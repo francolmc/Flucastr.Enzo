@@ -313,6 +313,10 @@ Use this profile information to personalize responses while respecting user requ
     }
   }
 
+  /**
+   * Picks a user {@link AgentConfig} preset (provider/model for the chat turn). Not related to delegation
+   * specialists (claude_code, doc_agent, vision_agent).
+   */
   async routeAgentForMessage(message: string, userId: string): Promise<AgentConfig | undefined> {
     this.syncBaseProviderFromConfig();
     const trimmedMessage = (message || '').trim();
@@ -335,16 +339,16 @@ Use this profile information to personalize responses while respecting user requ
       .map((agent) => `- id: ${agent.id}; name: ${agent.name}; description: ${agent.description || 'N/A'}`)
       .join('\n');
 
-    const routingPrompt = `You are an agent router. Choose the best agent for the user message.
+    const routingPrompt = `You route the user message to at most one conversational preset (provider/model profile).
 Return ONLY JSON:
 {"agentId":"<id>"} or {"agentId":"none"}
 
 Rules:
-- Choose "none" when no agent is clearly relevant.
-- Prefer exact semantic match with agent name/description.
+- Choose "none" when no preset is clearly relevant.
+- Prefer exact semantic match with preset name/description.
 - Never invent ids.
 
-Available agents:
+Available conversational presets:
 ${providerList}`;
 
     try {

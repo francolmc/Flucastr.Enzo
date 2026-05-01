@@ -79,6 +79,14 @@
   padding: 0.45rem 0.55rem;
 }
 
+.chat-agent-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  max-width: 28rem;
+}
+
 .streaming-toggle {
   display: flex;
   flex-direction: row-reverse;

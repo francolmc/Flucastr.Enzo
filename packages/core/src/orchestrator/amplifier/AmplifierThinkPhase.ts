@@ -129,7 +129,7 @@ you can do with the available tools, you can delegate to a specialized agent.
 To delegate, respond with:
 {"action": "delegate", "agent": "<agent_name>", "task": "<what needs to be done>", "reason": "<why you cannot do it>"}
 
-Available agents:
+Delegation targets (fixed specialist backends — not the user's conversational model preset):
 - "claude_code": for complex code generation, debugging, architecture decisions,
   writing more than 50 lines of code, or technical analysis requiring deep reasoning
 - "doc_agent": for generating professional documents (reports, proposals, presentations)
@@ -141,7 +141,7 @@ DELEGATION RULES — read carefully:
 - Never delegate simple tasks you can handle with web_search, write_file, or execute_command
 - Never delegate just because the task is long — delegate when it requires capabilities you lack
 - Always try first. Delegate only when you realize mid-reasoning that you cannot proceed
-- When delegating, provide a complete and specific task description — the agent has no other context
+- The "task" string must be concrete and self-contained: the specialist receives ranked user memories, a short conversation/tool-trace summary built by the host, and optional image bytes — not the full raw chat. Put essential requirements, constraints, and success criteria in "task".
 
 PROACTIVE SEARCH RULE:
 Before answering any question about facts, people, companies, prices, events,
