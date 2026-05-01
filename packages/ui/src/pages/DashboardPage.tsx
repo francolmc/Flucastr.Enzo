@@ -11,7 +11,7 @@ import { useEnzoStore } from '../stores/enzoStore';
 import './DashboardPage.css';
 
 interface DashboardPageProps {
-  onNavigate: (page: 'memory') => void;
+  onNavigate: (page: 'memory' | 'calendar') => void;
 }
 
 export default function DashboardPage({ onNavigate }: DashboardPageProps) {
@@ -196,6 +196,18 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-head">
+          <h2 className="section-title">Agenda</h2>
+          <button type="button" className="link-nav" onClick={() => onNavigate('calendar')}>
+            Abrir agenda →
+          </button>
+        </div>
+        <p className="surface-card empty-cell" style={{ margin: 0 }}>
+          Consultá y editá eventos en la vista Agenda (misma base que la herramienta <code>calendar</code> del chat).
+        </p>
       </section>
 
       <section className="dashboard-section">

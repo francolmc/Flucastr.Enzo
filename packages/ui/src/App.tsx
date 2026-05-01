@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import MemoryPage from './pages/MemoryPage';
 import ProjectsPage from './pages/ProjectsPage';
 import EchoPage from './pages/EchoPage';
+import CalendarPage from './pages/CalendarPage';
 import EmailPage from './pages/EmailPage';
 import { formatRelativeTime } from './utils/timeFormat';
 import './App.css';
@@ -16,6 +17,7 @@ import './App.css';
 export type Page =
   | 'dashboard'
   | 'memory'
+  | 'calendar'
   | 'projects'
   | 'echo'
   | 'chat'
@@ -34,6 +36,7 @@ const NAV_ITEMS: Array<{
   { id: 'dashboard', label: 'Dashboard', description: 'Resumen del sistema', icon: '📊' },
   { id: 'memory', label: 'Memoria', description: 'Contexto persistente', icon: '🧠' },
   { id: 'projects', label: 'Proyectos', description: 'Vista por proyecto', icon: '🚀' },
+  { id: 'calendar', label: 'Agenda', description: 'Eventos y horarios', icon: '📅' },
   { id: 'echo', label: 'Echo', description: 'Tareas programadas', icon: '🔄' },
   { id: 'chat', label: 'Chat', description: 'Conversaciones y contexto', icon: '💬' },
   { id: 'skills', label: 'Skills', description: 'Capacidades del asistente', icon: '⚡' },
@@ -179,6 +182,7 @@ function App() {
         )}
         {currentPage === 'memory' && <MemoryPage />}
         {currentPage === 'projects' && <ProjectsPage />}
+        {currentPage === 'calendar' && <CalendarPage />}
         {currentPage === 'echo' && <EchoPage />}
         {currentPage === 'chat' && <ChatPage />}
         {currentPage === 'stats' && <StatsPage />}

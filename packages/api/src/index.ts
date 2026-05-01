@@ -16,6 +16,7 @@ import {
   EncryptionService,
   ensureLocalSecret,
   getMemoryMetricsSnapshot,
+  CalendarService,
 } from "@enzo/core";
 import {
   createDefaultToolRegistry,
@@ -33,6 +34,7 @@ import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
 import { createEchoRouter } from "./routes/echo.js";
+import { createCalendarRouter } from "./routes/calendar.js";
 import { createEmailRouter } from "./routes/email.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -128,6 +130,7 @@ const anthropicProvider = anthropicApiKey
   : undefined;
 
 const memoryService = new MemoryService(dbPath);
+const calendarService = new CalendarService(memoryService.getDbPath());
 const agentNotificationGateway = createNotificationGateway(memoryService);
 const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
 
@@ -234,6 +237,7 @@ app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter(skillRegistry));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
+app.use(createCalendarRouter(calendarService));
 app.use(createEmailRouter(configService));
 
 app.use(errorHandler);

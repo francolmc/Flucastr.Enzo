@@ -238,6 +238,21 @@ export class DatabaseManager {
         FOREIGN KEY (conversationId) REFERENCES conversations(id) ON DELETE CASCADE
       );
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        startAt INTEGER NOT NULL,
+        endAt INTEGER,
+        notes TEXT,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_calendar_events_user_start ON calendar_events(userId, startAt);`
+    );
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversationId, createdAt);');
     db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(userId, updatedAt DESC);');

@@ -4,7 +4,7 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { Step, ResolvedAction } from '../types.js';
 import { normalizeError } from '../NormalizedError.js';
-import { validateToolInput } from './AmplifierLoopFastPathTools.js';
+import { attachToolScopedUserId, validateToolInput } from './AmplifierLoopFastPathTools.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import type { ThinkPhaseDeps } from './AmplifierThinkPhase.js';
 
@@ -109,7 +109,12 @@ export async function runActPhase(
 
         const tool = executableTools.find((t) => t.name === resolvedAction.target);
         if (tool) {
-          const result = await tool.execute(toolInput);
+          const scoped = attachToolScopedUserId(
+            resolvedAction.target,
+            toolInput as Record<string, unknown>,
+            userId
+          );
+          const result = await tool.execute(scoped);
           if (!result.success) {
             output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
           } else {

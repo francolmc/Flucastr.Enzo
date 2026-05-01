@@ -11,7 +11,10 @@ import {
   resolveAlgorithmCursor,
 } from '../SkillAlgorithmProgress.js';
 import { buildAssistantIdentityPrompt, buildToolsPrompt } from './AmplifierLoopPromptHelpers.js';
-import { describeHostForExecuteCommandPrompt } from '../runtimeHostContext.js';
+import {
+  describeHostForExecuteCommandPrompt,
+  describeLocalWallClockPromptLine,
+} from '../runtimeHostContext.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 
@@ -118,6 +121,7 @@ Use a concrete task (include any user question about the image in the task text)
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
+${describeLocalWallClockPromptLine(input.runtimeHints)}
 ${isAlgorithmMode ? algorithmModeBlock : 'Your task is to decide what action is needed.'}
 ${imageDelegationBlock}
 ${toolsPrompt}
@@ -157,7 +161,8 @@ CORRECT examples:
 {"action":"tool","tool":"web_search","input":{"query":"search terms"}}
 {"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
 {"action":"tool","tool":"write_file","input":{"path":"/path/to/file.md","content":"File content here"}}
-{"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
+{"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
+{"action":"tool","tool":"calendar","input":{"action":"add","title":"Meeting","start_iso":"2026-06-01T15:30:00Z","notes":"optional"}}
 {"action":"delegate","agent":"claude_code","task":"Refactor the payment module for testability with full tests","reason":"Requires large-scale code changes beyond tool execution"}
 
 WRONG examples (never do this):

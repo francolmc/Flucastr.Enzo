@@ -1,6 +1,33 @@
 import os from 'os';
 import type { AmplifierInput } from './types.js';
 
+/**
+ * Compact wall-clock hint for prompts (timezone from profile/runtimeHints preferred over server-local).
+ */
+export function describeLocalWallClockPromptLine(
+  hints?: AmplifierInput['runtimeHints']
+): string {
+  const tz = hints?.timeZone ?? 'America/Santiago';
+  const locale = hints?.timeLocale ?? 'es-CL';
+  const now = new Date();
+  try {
+    const formatted = new Intl.DateTimeFormat(locale, {
+      timeZone: tz,
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(now);
+    return `User local time (${tz}, ${locale}): ${formatted}. UTC: ${now.toISOString()}.`;
+  } catch {
+    return `Server UTC: ${now.toISOString()} (timezone hint "${tz}", locale "${locale}" could not format).`;
+  }
+}
+
 /** Human-readable OS name for prompts (not for branching logic in tools). */
 export function humanOsLabel(platform: NodeJS.Platform = process.platform): string {
   switch (platform) {

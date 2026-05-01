@@ -22,6 +22,7 @@ import {
   Project,
   EmailAccountConfigDTO,
   EmailMessageDTO,
+  CalendarEventDTO,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -548,6 +549,50 @@ class ApiClient {
 
   async patchEchoSettings(body: { cronTimezone?: string }): Promise<void> {
     await this.request('/echo/settings', { method: 'PATCH', body: JSON.stringify(body) }, API_QUICK_READ_TIMEOUT_MS);
+  }
+
+  async getCalendarEvents(
+    userId: string,
+    fromIso: string,
+    toIso: string
+  ): Promise<{ events: CalendarEventDTO[] }> {
+    const q = new URLSearchParams({ from: fromIso, to: toIso });
+    return this.request(
+      `/calendar/${encodeURIComponent(userId)}/events?${q.toString()}`,
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async createCalendarEvent(
+    userId: string,
+    body: { title: string; startIso: string; endIso?: string | null; notes?: string | null }
+  ): Promise<{ event: CalendarEventDTO }> {
+    return this.request(
+      `/calendar/${encodeURIComponent(userId)}/events`,
+      { method: 'POST', body: JSON.stringify(body) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async updateCalendarEvent(
+    userId: string,
+    eventId: string,
+    body: { title?: string; startIso?: string; endIso?: string | null; notes?: string | null }
+  ): Promise<{ event: CalendarEventDTO }> {
+    return this.request(
+      `/calendar/${encodeURIComponent(userId)}/events/${encodeURIComponent(eventId)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async deleteCalendarEvent(userId: string, eventId: string): Promise<void> {
+    await this.request(
+      `/calendar/${encodeURIComponent(userId)}/events/${encodeURIComponent(eventId)}`,
+      { method: 'DELETE' },
+      API_QUICK_READ_TIMEOUT_MS
+    );
   }
 
   async getRecentNotifications(userId: string): Promise<Notification[]> {

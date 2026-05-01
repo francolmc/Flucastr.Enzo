@@ -45,6 +45,24 @@ function canonicalizeToolNameLower(toolNameLower: string, executableTools: Execu
   return toolNameLower;
 }
 
+/** Tool names whose execution must receive the authenticated Enzo user id from the runtime (never from LLM JSON). */
+const SERVER_SCOPED_USER_TOOL_NAMES = new Set(['calendar']);
+
+/**
+ * Attach internal fields after validation so the LLM cannot spoof another user's scope.
+ */
+export function attachToolScopedUserId(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  userId?: string
+): Record<string, unknown> {
+  const uid = userId?.trim();
+  if (!uid || !SERVER_SCOPED_USER_TOOL_NAMES.has(toolName)) {
+    return toolInput;
+  }
+  return { ...toolInput, __enzoScopedUserId: uid };
+}
+
 /** Shallow copy of tool input with optional host/runtime fields applied before validation and execute. */
 export function applyExecutableToolContext(
   toolName: string,

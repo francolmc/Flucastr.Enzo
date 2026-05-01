@@ -203,6 +203,18 @@ export interface UIMemoryHistoryItem extends UIMemory {
   isCurrent: boolean;
 }
 
+/** Row from GET/POST /api/calendar/:userId/events */
+export interface CalendarEventDTO {
+  id: string;
+  userId: string;
+  title: string;
+  startAt: number;
+  endAt: number | null;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface EchoResult {
   success: boolean;
   message?: string;

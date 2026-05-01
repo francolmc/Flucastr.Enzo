@@ -19,9 +19,14 @@ import {
   buildRelevantSkillsSection,
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
-import { describeHostForExecuteCommandPrompt, humanOsLabel } from '../runtimeHostContext.js';
+import {
+  describeHostForExecuteCommandPrompt,
+  describeLocalWallClockPromptLine,
+  humanOsLabel,
+} from '../runtimeHostContext.js';
 import {
   applyExecutableToolContext,
+  attachToolScopedUserId,
   extractFirstJsonObject,
   mergeAvailableToolDefinitions,
   normalizeFastPathToolCall,
@@ -69,16 +74,6 @@ export type SimpleModeratePathContext = {
   verifyBeforeSynthesize?: boolean;
   capabilityResolver?: CapabilityResolver;
 };
-
-function formatFastPathDateLine(input: AmplifierInput): string {
-  const tz = input.runtimeHints?.timeZone ?? 'America/Santiago';
-  const locale = input.runtimeHints?.timeLocale ?? 'es-CL';
-  try {
-    return new Date().toLocaleString(locale, { timeZone: tz });
-  } catch {
-    return new Date().toISOString();
-  }
-}
 
 function resolveHomeDir(input: AmplifierInput): string {
   return input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir();
@@ -395,12 +390,10 @@ If you include any text outside the JSON, the tool will not execute.
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
-  const dateLine = formatFastPathDateLine(input);
-
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
-Date: ${dateLine}.
+${describeLocalWallClockPromptLine(input.runtimeHints)}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
 ${toolsPrompt}
@@ -424,7 +417,8 @@ Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"web_search","input":{"query":"search terms"}}
 {"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
 {"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\\n\\nFull file body the user asked for — never empty unless they asked for an empty file."}}
-{"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
+{"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
+{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
 
 ${toolUsageRule}
 
@@ -433,6 +427,7 @@ TOOL SELECTION — CRITICAL:
 - List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
 - Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
 - Search the internet for information → web_search
+- Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
 - Call an HTTP/API endpoint when user provides a URL → execute_command with curl
   Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
 - Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)
@@ -692,7 +687,8 @@ Never invent tool names.`;
               if (!tool) {
                 setupError = `Herramienta interna no encontrada: ${execName}`;
               } else {
-                const result = await tool.execute(preparedToolInput);
+                const scoped = attachToolScopedUserId(execName, preparedToolInput, input.userId);
+                const result = await tool.execute(scoped);
                 rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
               }
             } else if (mcpRegistry) {

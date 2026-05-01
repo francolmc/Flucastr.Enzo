@@ -12,6 +12,8 @@ import {
   EmailService,
   ReadEmailTool,
   SearchEmailTool,
+  CalendarTool,
+  CalendarService,
 } from '@enzo/core';
 
 export interface TelegramFileDeliveryDeps {
@@ -42,6 +44,7 @@ export function createDefaultToolRegistry(
   registry.register(new ReadFileTool(markItDownService));
   registry.register(new RememberTool(memoryService, defaultUserId));
   registry.register(new RecallTool(memoryService, defaultUserId));
+  registry.register(new CalendarTool(new CalendarService(memoryService.getDbPath())));
   registry.register(new WriteFileTool());
   if (telegramFileDelivery) {
     const telegramChatId = process.env.ENZO_DEFAULT_TELEGRAM_CHAT_ID ?? '';
