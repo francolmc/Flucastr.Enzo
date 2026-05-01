@@ -56,7 +56,7 @@ export interface UsageStat {
   requestId?: string;
   conversationId: string;
   userId: string;
-  source: 'web' | 'telegram' | 'unknown';
+  source: 'web' | 'telegram' | 'unknown' | 'echo';
   provider: string;
   model: string;
   inputTokens: number;

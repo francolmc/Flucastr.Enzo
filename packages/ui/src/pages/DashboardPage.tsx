@@ -5,6 +5,7 @@ import {
   formatLastEchoCell,
   formatRelativeTime,
   formatUpcomingLabel,
+  summarizeEchoResult,
 } from '../utils/timeFormat';
 import { useEnzoStore } from '../stores/enzoStore';
 import './DashboardPage.css';
@@ -87,7 +88,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
     try {
       const result = await apiClient.runEchoTask(taskId);
       const msg = result.success
-        ? result.message || (result.notified ? 'Enviado' : 'OK')
+        ? summarizeEchoResult(result) || result.message || (result.notified ? 'Enviado' : 'OK')
         : result.error || 'Error';
       setRunFeedback((f) => ({ ...f, [taskId]: msg }));
       setTimeout(() => {
@@ -129,6 +130,12 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
           <p className="dash-card-meta">
             {!errors.echo && echo ? `${enabledEchoCount} tasks activos` : errors.echo ? 'Error al cargar' : '—'}
           </p>
+          {!errors.echo && echo?.diagnostics && (
+            <p className="dash-card-hint muted">
+              {echo.diagnostics.runtimeRole} · TZ {echo.diagnostics.processTimezoneLabel}
+              {!echo.diagnostics.echoTargetUserConfigured ? ' · sin usuario Echo' : ''}
+            </p>
+          )}
         </article>
         <article className="surface-card dash-card">
           <span className="dash-card-label">Skills</span>

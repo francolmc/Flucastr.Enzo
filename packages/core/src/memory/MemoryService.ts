@@ -525,7 +525,7 @@ Use only when relevant to the current request; never invent new failures from th
     userId?: string,
     from?: number,
     to?: number,
-    source?: 'web' | 'telegram' | 'unknown'
+    source?: 'web' | 'telegram' | 'unknown' | 'echo'
   ): Promise<UsageStat[]> {
     let query = 'SELECT * FROM usage_stats WHERE 1=1';
     const params: any[] = [];

@@ -218,11 +218,54 @@ export interface EchoTaskStatus {
   lastRun?: string;
   nextRun?: string;
   lastResult?: EchoResult;
+  taskKind?: 'builtin' | 'declarative';
+}
+
+export interface EchoDiagnostics {
+  processId: number;
+  configPath: string;
+  cronTimezoneConfigured?: string;
+  processTimezoneLabel: string;
+  utcOffsetMinutes: number;
+  runtimeRole: string;
+  echoTargetUserConfigured: boolean;
+  orchestratorBoundForDeclarative: boolean;
+  duplicateEchoWarning?: string;
 }
 
 export interface EchoEngineStatus {
   running: boolean;
   tasks: EchoTaskStatus[];
+  diagnostics: EchoDiagnostics;
+}
+
+export type EchoComplexityLevelOption = '' | 'SIMPLE' | 'MODERATE' | 'COMPLEX' | 'AGENT';
+
+export interface DeclarativeOrchestratorPayloadDTO {
+  message: string;
+  userId?: string;
+  conversationId?: string;
+  agentId?: string;
+  userLanguage?: string;
+  classifiedLevel?: 'SIMPLE' | 'MODERATE' | 'COMPLEX' | 'AGENT';
+  maxRetries?: number;
+  notifyOnResult?: boolean;
+  notificationPreviewChars?: number;
+}
+
+export interface DeclarativeEchoJobDTO {
+  id: string;
+  name?: string;
+  kind: 'orchestrator_message';
+  enabled?: boolean;
+  schedule: string;
+  payload: DeclarativeOrchestratorPayloadDTO;
+}
+
+export interface EchoDeclarativeJobsResponse {
+  jobs: DeclarativeEchoJobDTO[];
+  cronTimezone?: string;
+  invalidDeclarativeEntries: { index: number; summary: string }[];
 }
 
 export type NotificationPriority = 'URGENT' | 'NORMAL' | 'LOW';

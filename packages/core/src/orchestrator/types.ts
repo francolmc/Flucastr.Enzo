@@ -223,7 +223,7 @@ export interface OrchestratorInput {
   requestId?: string;
   conversationId: string;
   userId: string;
-  source?: 'web' | 'telegram' | 'unknown';
+  source?: 'web' | 'telegram' | 'unknown' | 'echo';
   classifiedLevel?: ComplexityLevel;
   userLanguage?: string;
   agentId?: string;

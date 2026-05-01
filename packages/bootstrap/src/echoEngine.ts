@@ -2,6 +2,8 @@ import https from 'node:https';
 import {
   EchoEngine,
   NotificationGateway,
+  Orchestrator,
+  buildOrchestratorRuntimeHints,
   createMorningBriefingTask,
   createContextRefreshTask,
   createNightSummaryTask,
@@ -111,6 +113,41 @@ export function getEchoNotificationGateway(): NotificationGateway | undefined {
   return echoNotificationGateway ?? undefined;
 }
 
+function buildEchoRuntimeHints(configService: ConfigService): Record<string, unknown> {
+  const base = buildOrchestratorRuntimeHints();
+  const profile = configService.getUserProfile();
+  const systemTz = configService.getSystemConfig()?.tz?.trim();
+  const lang = process.env.LANG || '';
+  const timeLocale =
+    profile?.locale?.trim() ||
+    (lang.toLowerCase().includes('en_us') || lang.toLowerCase().startsWith('en') ? 'en-US' : 'es-CL');
+  const tz = profile?.timezone?.trim() || systemTz;
+  return {
+    ...base,
+    homeDir: process.env.HOME ?? base.homeDir,
+    timeLocale,
+    ...(tz ? { timeZone: tz } : {}),
+  };
+}
+
+/** Tras crear `Orchestrator`, enlaza procesamiento para jobs declarativos `orchestrator_message`. */
+export function bindEchoDeclarativeOrchestrator(options: {
+  orchestrator: Orchestrator;
+  memoryService: MemoryService;
+  configService: ConfigService;
+  notificationGateway?: Pick<NotificationGateway, 'notify'>;
+}): void {
+  const engine = getEchoEngine();
+  const { orchestrator, memoryService, configService, notificationGateway } = options;
+  engine.setOrchestratorBinding({
+    process: (input) => orchestrator.process(input),
+    memoryService,
+    resolveEchoUserId: () => resolveEchoUserId(memoryService, configService),
+    ...(notificationGateway ? { notificationGateway } : {}),
+    buildRuntimeHints: () => buildEchoRuntimeHints(configService),
+  });
+}
+
 export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
   if (!sharedEchoEngine) {
     sharedEchoEngine = new EchoEngine();
@@ -118,6 +155,19 @@ export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
     if (memoryService && configService) {
       const notificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
       echoNotificationGateway = notificationGateway;
+      sharedEchoEngine.setDiagnosticsExtras(() => {
+        const cfg = configService.getSystemConfig();
+        const owner = Boolean(cfg.telegramAgentOwnerUserId?.trim());
+        const allowed = Boolean((cfg.telegramAllowedUsers || '').trim());
+        const duplicateEchoWarning =
+          process.env.ENZO_DUAL_ECHO === 'true' || process.env.ENZO_DUAL_ECHO === '1'
+            ? 'ENZO_DUAL_ECHO: pueden correr dos instancias (API + Telegram) y disparar los mismos cron dos veces.'
+            : undefined;
+        return {
+          echoTargetUserConfigured: owner || allowed,
+          duplicateEchoWarning,
+        };
+      });
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
       const emailService = new EmailService(configService);
       sharedEchoEngine.registerTask(

@@ -3,6 +3,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import cron from 'node-cron';
+import {
+  createDeclarativeOrchestratorAction,
+  declarativeJobSchema,
+  RESERVED_BUILTIN_ECHO_IDS,
+  type DeclarativeEchoJob,
+} from './DeclarativeEchoJobs.js';
+import type { EchoOrchestratorBinding } from './EchoOrchestrationBinding.js';
+import { computeCronNextRunUtcDate } from './cronNextRun.js';
 
 export interface EchoTask {
   id: string;
@@ -12,6 +20,8 @@ export interface EchoTask {
   lastRun?: Date;
   nextRun?: Date;
   action: () => Promise<EchoResult>;
+  /** Declarativas desde `echo.config.json`; las built-in no suelen setear esto. */
+  taskKind?: 'builtin' | 'declarative';
 }
 
 export interface EchoResult {
@@ -19,6 +29,24 @@ export interface EchoResult {
   message?: string;
   notified?: boolean;
   error?: string;
+}
+
+export interface EchoDiagnostics {
+  processId: number;
+  configPath: string;
+  /** TZ IANA opcional en echo.config.json para calcular próximos cron. */
+  cronTimezoneConfigured?: string;
+  /** Resumen de TZ del proceso (variable TZ o inferida). */
+  processTimezoneLabel: string;
+  utcOffsetMinutes: number;
+  /** `api` | `telegram` | `unknown` vía ENZO_RUNTIME_ROLE. */
+  runtimeRole: string;
+  /** True si hay owner o allowed users para resolver userId de Echo. */
+  echoTargetUserConfigured: boolean;
+  /** Hay callback de Orchestrator para jobs `orchestrator_message`. */
+  orchestratorBoundForDeclarative: boolean;
+  /** Si API y Telegram corren a la vez, ambos disparan Echo: conviene un solo rol con Echo. */
+  duplicateEchoWarning?: string;
 }
 
 export interface EchoEngineStatus {
@@ -31,7 +59,9 @@ export interface EchoEngineStatus {
     lastRun?: Date;
     nextRun?: Date;
     lastResult?: EchoResult;
+    taskKind?: 'builtin' | 'declarative';
   }>;
+  diagnostics: EchoDiagnostics;
 }
 
 type EchoTaskConfig = {
@@ -41,6 +71,10 @@ type EchoTaskConfig = {
 
 type EchoConfig = {
   tasks?: Record<string, EchoTaskConfig>;
+  /** Jobs declarativos (JSON); ver esquema en DeclarativeEchoJobs. */
+  declarativeJobs?: unknown[];
+  /** Zona IANA para `computeCronNextRunUtcDate` y alineación con expectativas del usuario. */
+  cronTimezone?: string;
 };
 
 interface RegisteredTask {
@@ -66,6 +100,7 @@ const DEFAULT_TEMPLATE: EchoConfig = {
     'context-refresh': { enabled: true, schedule: 'interval:120min' },
     'night-summary': { enabled: true, schedule: '30 22 * * *' },
   },
+  declarativeJobs: [],
 };
 
 function isDebugEnabled(): boolean {
@@ -83,6 +118,18 @@ function debugLog(message: string, details?: unknown): void {
   console.log(`[EchoEngine] ${message}`, details);
 }
 
+function processTimezoneLabel(): string {
+  const tz = process.env.TZ?.trim();
+  if (tz) {
+    return tz;
+  }
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'system';
+  } catch {
+    return 'system';
+  }
+}
+
 export class EchoEngine {
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly cronJobs = new Map<string, ReturnType<typeof cron.schedule>>();
@@ -95,10 +142,36 @@ export class EchoEngine {
   private processingQueue = false;
   private stopping = false;
   private reloadTimer: NodeJS.Timeout | null = null;
+  private declarativeJobIds = new Set<string>();
+  private orchestratorBinding: EchoOrchestratorBinding | null = null;
+  private diagnosticsExtras: () => Partial<Pick<EchoDiagnostics, 'echoTargetUserConfigured' | 'duplicateEchoWarning'>> =
+    () => ({});
+  private lastConfigCronTimezone: string | undefined;
 
   constructor(options: EchoEngineOptions = {}) {
     this.configPath = options.configPath ?? path.join(homedir(), '.enzo', 'echo.config.json');
     this.taskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  getConfigPath(): string {
+    return this.configPath;
+  }
+
+  /** Recarga `echo.config.json` de inmediato (p. ej. tras escribir desde la API). */
+  async reloadConfigNow(): Promise<void> {
+    await this.reloadFromConfig();
+  }
+
+  /** Enlaza Orchestrator y memoria para jobs `orchestrator_message` (llamar desde API / Telegram tras crear Orchestrator). */
+  setOrchestratorBinding(binding: EchoOrchestratorBinding | null): void {
+    this.orchestratorBinding = binding;
+    void this.reloadFromConfig();
+  }
+
+  setDiagnosticsExtras(
+    fn: () => Partial<Pick<EchoDiagnostics, 'echoTargetUserConfigured' | 'duplicateEchoWarning'>>
+  ): void {
+    this.diagnosticsExtras = fn;
   }
 
   start(): void {
@@ -122,22 +195,26 @@ export class EchoEngine {
       clearTimeout(this.reloadTimer);
       this.reloadTimer = null;
     }
-    this.queue.length = 0;
+    const pending = this.queue.splice(0, this.queue.length);
+    for (const entry of pending) {
+      entry.resolve({ success: false, error: 'Echo engine stopped' });
+    }
   }
 
-  registerTask(task: EchoTask): void {
+  registerTask(task: EchoTask, options?: { skipReload?: boolean }): void {
     const existing = this.tasks.get(task.id);
     const mergedTask: EchoTask = {
       ...task,
       lastRun: task.lastRun ?? existing?.task.lastRun,
       nextRun: task.nextRun ?? existing?.task.nextRun,
+      taskKind: task.taskKind ?? existing?.task.taskKind ?? 'builtin',
     };
     this.tasks.set(task.id, {
       task: mergedTask,
       lastResult: existing?.lastResult,
       activeSchedule: mergedTask.schedule,
     });
-    if (this.running) {
+    if (this.running && !options?.skipReload) {
       void this.reloadFromConfig();
     }
   }
@@ -160,12 +237,29 @@ export class EchoEngine {
     registered.task.enabled = true;
     if (this.running) {
       this.setupTask(id, registered);
+      this.refreshCronNextRunIfNeeded(id, registered);
     }
   }
 
   getStatus(): EchoEngineStatus {
+    const extra = this.diagnosticsExtras();
+    const diagnostics: EchoDiagnostics = {
+      processId: process.pid,
+      configPath: this.configPath,
+      cronTimezoneConfigured: this.lastConfigCronTimezone,
+      processTimezoneLabel: processTimezoneLabel(),
+      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+      runtimeRole: process.env.ENZO_RUNTIME_ROLE?.trim() || 'unknown',
+      echoTargetUserConfigured: extra.echoTargetUserConfigured ?? false,
+      orchestratorBoundForDeclarative: Boolean(
+        this.orchestratorBinding?.process && this.orchestratorBinding?.memoryService
+      ),
+      duplicateEchoWarning: extra.duplicateEchoWarning,
+    };
+
     return {
       running: this.running,
+      diagnostics,
       tasks: Array.from(this.tasks.values()).map(({ task, lastResult, activeSchedule }) => ({
         id: task.id,
         name: task.name,
@@ -174,6 +268,7 @@ export class EchoEngine {
         lastRun: task.lastRun,
         nextRun: task.nextRun,
         lastResult,
+        taskKind: task.taskKind,
       })),
     };
   }
@@ -224,8 +319,78 @@ export class EchoEngine {
     }
   }
 
+  private buildDeclarativeBinding(): EchoOrchestratorBinding {
+    const b = this.orchestratorBinding;
+    return {
+      process: b?.process,
+      memoryService: b?.memoryService,
+      resolveEchoUserId: b?.resolveEchoUserId,
+      notificationGateway: b?.notificationGateway,
+      buildRuntimeHints: b?.buildRuntimeHints,
+    };
+  }
+
+  private syncDeclarativeJobsFromConfig(config: EchoConfig): void {
+    const rawList = Array.isArray(config.declarativeJobs) ? config.declarativeJobs : [];
+    const validJobs: DeclarativeEchoJob[] = [];
+    for (const row of rawList) {
+      const parsed = declarativeJobSchema.safeParse(row);
+      if (!parsed.success) {
+        debugLog('Invalid declarativeJobs entry skipped', parsed.error.flatten());
+        continue;
+      }
+      if (RESERVED_BUILTIN_ECHO_IDS.has(parsed.data.id)) {
+        debugLog('declarativeJobs id conflicts with builtin', parsed.data.id);
+        continue;
+      }
+      validJobs.push(parsed.data);
+    }
+
+    const nextIds = new Set(validJobs.map((j) => j.id));
+    for (const id of this.declarativeJobIds) {
+      if (!nextIds.has(id)) {
+        this.teardownTask(id);
+        this.tasks.delete(id);
+      }
+    }
+    this.declarativeJobIds = nextIds;
+
+    const bind = this.buildDeclarativeBinding();
+    for (const job of validJobs) {
+      const taskOverride = config.tasks?.[job.id];
+      const enabled =
+        typeof taskOverride?.enabled === 'boolean' ? taskOverride.enabled : (job.enabled ?? true);
+      const scheduleLine = job.schedule.trim();
+
+      this.registerTask(
+        {
+          id: job.id,
+          name: job.name?.trim() || job.id,
+          schedule: scheduleLine,
+          enabled,
+          taskKind: 'declarative',
+          action: createDeclarativeOrchestratorAction(job, bind),
+        },
+        { skipReload: true }
+      );
+
+      const registered = this.tasks.get(job.id);
+      if (registered) {
+        registered.task.schedule = scheduleLine;
+        registered.activeSchedule =
+          typeof taskOverride?.schedule === 'string' && taskOverride.schedule.trim().length > 0
+            ? taskOverride.schedule.trim()
+            : scheduleLine;
+        registered.task.enabled = enabled;
+      }
+    }
+  }
+
   private async reloadFromConfig(): Promise<void> {
     const config = await this.readConfig();
+    this.lastConfigCronTimezone = config.cronTimezone?.trim() || undefined;
+    this.syncDeclarativeJobsFromConfig(config);
+
     for (const [taskId, registered] of this.tasks.entries()) {
       const override = config.tasks?.[taskId];
       if (override && typeof override.enabled === 'boolean') {
@@ -236,9 +401,23 @@ export class EchoEngine {
       } else {
         registered.activeSchedule = registered.task.schedule;
       }
+
+      if (registered.task.taskKind === 'declarative' && this.declarativeJobIds.has(taskId)) {
+        const bind = this.buildDeclarativeBinding();
+        const rawList = Array.isArray(config.declarativeJobs) ? config.declarativeJobs : [];
+        for (const r of rawList) {
+          const parsed = declarativeJobSchema.safeParse(r);
+          if (parsed.success && parsed.data.id === taskId) {
+            registered.task.action = createDeclarativeOrchestratorAction(parsed.data, bind);
+            break;
+          }
+        }
+      }
+
       this.teardownTask(taskId);
       if (this.running && registered.task.enabled) {
         this.setupTask(taskId, registered);
+        this.refreshCronNextRunIfNeeded(taskId, registered);
       } else {
         registered.task.nextRun = undefined;
       }
@@ -253,6 +432,25 @@ export class EchoEngine {
     } catch (error) {
       debugLog('Failed to read echo config, using defaults', error);
       return {};
+    }
+  }
+
+  private refreshCronNextRunIfNeeded(taskId: string, registered: RegisteredTask): void {
+    const schedule = registered.activeSchedule;
+    if (!this.running || !registered.task.enabled) {
+      return;
+    }
+    if (schedule.startsWith('interval:')) {
+      return;
+    }
+    if (!cron.validate(schedule)) {
+      return;
+    }
+    const from = registered.task.lastRun ?? new Date();
+    const tz = this.lastConfigCronTimezone;
+    const next = computeCronNextRunUtcDate(schedule, tz ? { tz, fromDate: from } : { fromDate: from });
+    if (next) {
+      registered.task.nextRun = next;
     }
   }
 
@@ -281,7 +479,7 @@ export class EchoEngine {
       void this.enqueueTask(taskId);
     });
     this.cronJobs.set(taskId, job);
-    registered.task.nextRun = undefined;
+    this.refreshCronNextRunIfNeeded(taskId, registered);
   }
 
   private teardownTask(taskId: string): void {
@@ -342,8 +540,8 @@ export class EchoEngine {
     } finally {
       this.processingQueue = false;
       while (this.queue.length > 0) {
-        const next = this.queue.shift();
-        next?.resolve({ success: false, error: 'Task did not run' });
+        const orphan = this.queue.shift();
+        orphan?.resolve({ success: false, error: this.stopping ? 'Echo engine stopped' : 'Task did not run' });
       }
     }
   }
@@ -386,6 +584,15 @@ export class EchoEngine {
       const nextDelay = this.parseIntervalMs(registered.activeSchedule);
       if (nextDelay) {
         task.nextRun = new Date(Date.now() + nextDelay);
+      }
+    } else if (task.enabled && !registered.activeSchedule.startsWith('interval:') && cron.validate(registered.activeSchedule)) {
+      const tz = this.lastConfigCronTimezone;
+      const next = computeCronNextRunUtcDate(
+        registered.activeSchedule,
+        tz ? { tz, fromDate: task.lastRun } : { fromDate: task.lastRun }
+      );
+      if (next) {
+        task.nextRun = next;
       }
     }
 

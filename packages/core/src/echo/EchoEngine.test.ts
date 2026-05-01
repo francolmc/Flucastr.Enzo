@@ -36,6 +36,7 @@ async function runTests(): Promise<void> {
       action: async () => ({ success: true, message: 'ok' }),
     });
     const statusAfterRegister = engine.getStatus();
+    assert(statusAfterRegister.diagnostics.processId === process.pid, 'expected diagnostics.processId');
     assert(
       statusAfterRegister.tasks.some((task) => task.id === 'status-task'),
       'expected task to be listed in status'

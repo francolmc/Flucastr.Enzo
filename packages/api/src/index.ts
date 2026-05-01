@@ -23,6 +23,7 @@ import {
   getEchoNotificationGateway,
   createNotificationGateway,
   createAgentRouter,
+  bindEchoDeclarativeOrchestrator,
 } from "@enzo/bootstrap";
 import { createChatRouter } from "./routes/chat.js";
 import { createMemoryRouter } from "./routes/memory.js";
@@ -35,6 +36,8 @@ import { createEchoRouter } from "./routes/echo.js";
 import { createEmailRouter } from "./routes/email.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+
+process.env.ENZO_RUNTIME_ROLE ||= "api";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,6 +142,12 @@ const orchestrator = new Orchestrator(
 const mcpRegistry = orchestrator.getMCPRegistry();
 const echoEngine = getEchoEngine({ memoryService, configService });
 const echoNotificationGateway = getEchoNotificationGateway();
+bindEchoDeclarativeOrchestrator({
+  orchestrator,
+  memoryService,
+  configService,
+  ...(echoNotificationGateway ? { notificationGateway: echoNotificationGateway } : {}),
+});
 echoEngine.start();
 
 // Initialize skills on startup; watch filesystem for SKILL.md changes

@@ -16,6 +16,8 @@ import {
   UIMemoryHistoryItem,
   EchoEngineStatus,
   EchoResult,
+  DeclarativeEchoJobDTO,
+  EchoDeclarativeJobsResponse,
   Notification,
   Project,
   EmailAccountConfigDTO,
@@ -75,6 +77,7 @@ interface ApiError {
   error?: string;
   message?: string;
   statusCode?: number;
+  details?: unknown;
 }
 
 class ApiClient {
@@ -109,8 +112,10 @@ class ApiClient {
         } catch {
           // Ignore JSON parsing errors and use HTTP status fallback.
         }
-        const detail = error.message || error.error || `HTTP ${response.status}`;
-        throw new Error(detail);
+        const base = error.message || error.error || `HTTP ${response.status}`;
+        const extra =
+          error.details !== undefined ? ` · ${typeof error.details === 'string' ? error.details : JSON.stringify(error.details)}` : '';
+        throw new Error(base + extra);
       }
 
       const bodyText = await response.text();
@@ -511,6 +516,38 @@ class ApiClient {
       },
       API_QUICK_READ_TIMEOUT_MS
     );
+  }
+
+  async getEchoDeclarativeJobs(): Promise<EchoDeclarativeJobsResponse> {
+    return this.request('/echo/declarative-jobs', undefined, API_QUICK_READ_TIMEOUT_MS);
+  }
+
+  async createEchoDeclarativeJob(job: DeclarativeEchoJobDTO): Promise<{ job: DeclarativeEchoJobDTO }> {
+    return this.request(
+      '/echo/declarative-jobs',
+      { method: 'POST', body: JSON.stringify(job) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async updateEchoDeclarativeJob(id: string, job: DeclarativeEchoJobDTO): Promise<{ job: DeclarativeEchoJobDTO }> {
+    return this.request(
+      `/echo/declarative-jobs/${encodeURIComponent(id)}`,
+      { method: 'PUT', body: JSON.stringify(job) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async deleteEchoDeclarativeJob(id: string): Promise<void> {
+    await this.request(
+      `/echo/declarative-jobs/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async patchEchoSettings(body: { cronTimezone?: string }): Promise<void> {
+    await this.request('/echo/settings', { method: 'PATCH', body: JSON.stringify(body) }, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async getRecentNotifications(userId: string): Promise<Notification[]> {

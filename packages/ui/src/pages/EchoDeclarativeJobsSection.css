@@ -1,0 +1,202 @@
+.echo-decl-section {
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.echo-decl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.echo-decl-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.echo-decl-intro {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.btn-echo-decl-new,
+.btn-echo-decl-primary,
+.btn-echo-decl-secondary {
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.btn-echo-decl-new,
+.btn-echo-decl-primary {
+  background: var(--accent, #3b6fd9);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btn-echo-decl-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.btn-echo-decl-primary:disabled,
+.btn-echo-decl-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.echo-decl-cron-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.echo-decl-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.echo-decl-cron-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.echo-decl-input {
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.echo-decl-input-tz {
+  min-width: min(100%, 280px);
+  flex: 1;
+}
+
+.echo-decl-warn {
+  font-size: 0.85rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  background: rgba(200, 150, 50, 0.12);
+  border: 1px solid rgba(200, 150, 50, 0.35);
+}
+
+.echo-decl-error {
+  margin: 0;
+}
+
+.echo-decl-table-wrap {
+  overflow-x: auto;
+}
+
+.echo-decl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.echo-decl-table th,
+.echo-decl-table td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.echo-decl-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link, var(--accent, #5b8cff));
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.linklike.danger {
+  color: var(--error, #c44);
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  padding: 0.85rem 0.5rem;
+}
+
+.echo-decl-form-panel {
+  margin-top: 0.25rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.echo-decl-form-title {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.echo-decl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.65rem 0.85rem;
+}
+
+.echo-decl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.echo-decl-field-wide {
+  grid-column: 1 / -1;
+}
+
+.echo-decl-field-full {
+  grid-column: 1 / -1;
+}
+
+.echo-decl-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+  color: var(--text-primary);
+}
+
+.echo-decl-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 100px;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+
+.echo-decl-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

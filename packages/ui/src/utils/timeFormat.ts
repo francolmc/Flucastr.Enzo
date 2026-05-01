@@ -65,7 +65,11 @@ export function summarizeEchoResult(r?: EchoResult): string {
   if (!r) return '';
   if (!r.success) return r.error ? `❌ ${r.error}` : '❌ error';
   if (r.notified) return '✅ enviado';
-  if (r.message?.toLowerCase().includes('novedad') || r.message?.toLowerCase().includes('sin novedad')) {
+  const ml = r.message?.toLowerCase() ?? '';
+  if (ml.includes('no relevant context') || ml.includes('sin notificaci')) {
+    return '✅ sin aviso (condiciones no cumplidas)';
+  }
+  if (ml.includes('novedad') || ml.includes('sin novedad')) {
     return '✅ sin novedad';
   }
   if (r.message) return `✅ ${r.message}`;
@@ -119,11 +123,13 @@ function summarizeEchoResultFull(r?: EchoResult): string {
   if (r.notified) return '✅ Enviado por Telegram';
   if (r.message) {
     const m = r.message.trim();
+    if (/no relevant context|sin notificaciones relevantes/i.test(m))
+      return '✅ Ejecutado; sin aviso Telegram (sin condiciones)';
     if (/sin novedad/i.test(m)) return '✅ Sin novedades';
     if (/resumen|guardado/i.test(m)) return '✅ Resumen guardado';
     return `✅ ${m}`;
   }
-  return '✅ Completado';
+  return '✅ Completado (sin mensaje)';
 }
 
 export function formatNextRunEchoLine(iso?: string): string {

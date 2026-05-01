@@ -70,7 +70,14 @@ import {
   OllamaVisionService,
   MarkItDownConverter,
 } from '@enzo/core';
-import { createDefaultToolRegistry, getEchoEngine, createNotificationGateway, createAgentRouter } from '@enzo/bootstrap';
+import {
+  bindEchoDeclarativeOrchestrator,
+  createDefaultToolRegistry,
+  getEchoEngine,
+  getEchoNotificationGateway,
+  createNotificationGateway,
+  createAgentRouter,
+} from '@enzo/bootstrap';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
@@ -187,8 +194,6 @@ async function main() {
       configService,
       { fileHandler, sendFileFn: sendTelegramFile }
     );
-    const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
-    echoEngine.start();
     const transcriptionService = new WhisperTranscriptionService(configService);
     const ttsService = new EdgeTTSService({ configService });
     const visionService = new OllamaVisionService(configService);
@@ -201,6 +206,18 @@ async function main() {
       { skillRegistry, configService, toolRegistry, agentRouter }
     );
     console.log('[Telegram] Orchestrator initialized');
+
+    process.env.ENZO_RUNTIME_ROLE = process.env.ENZO_RUNTIME_ROLE?.trim() || 'telegram';
+
+    const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
+    const echoNg = getEchoNotificationGateway();
+    bindEchoDeclarativeOrchestrator({
+      orchestrator,
+      memoryService,
+      configService,
+      ...(echoNg ? { notificationGateway: echoNg } : {}),
+    });
+    echoEngine.start();
 
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;

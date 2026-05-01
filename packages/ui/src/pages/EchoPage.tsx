@@ -6,6 +6,7 @@ import {
   formatNextRunEchoLine,
   formatScheduleSpanish,
 } from '../utils/timeFormat';
+import { EchoDeclarativeJobsSection } from './EchoDeclarativeJobsSection';
 import './EchoPage.css';
 
 const POLL_MS = 30_000;
@@ -120,7 +121,10 @@ export default function EchoPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Echo</h1>
-          <p className="page-subtitle">Tareas programadas y ejecución manual. Actualización cada 30 s.</p>
+          <p className="page-subtitle">
+            Tareas en el proceso de la API o el bot; podés gestionar tareas autónomas desde acá o editar el JSON en
+            disco. Actualización de estado cada 30 s.
+          </p>
         </div>
         <button type="button" className="btn-refresh-echo" onClick={() => void load()}>
           Actualizar ahora
@@ -128,6 +132,47 @@ export default function EchoPage() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {status?.diagnostics && (
+        <div className="surface-card echo-diagnostics">
+          <h3 className="echo-diag-title">Estado del programador</h3>
+          <ul className="echo-diag-list">
+            <li>
+              Rol: <code>{status.diagnostics.runtimeRole}</code> · PID <code>{status.diagnostics.processId}</code>
+            </li>
+            <li>
+              TZ proceso: <code>{status.diagnostics.processTimezoneLabel}</code>
+              {status.diagnostics.cronTimezoneConfigured && (
+                <>
+                  {' '}
+                  · TZ cron configurada: <code>{status.diagnostics.cronTimezoneConfigured}</code>
+                </>
+              )}
+            </li>
+            <li>
+              Usuario objetivo Echo (owner / allowed):{' '}
+              {status.diagnostics.echoTargetUserConfigured ? '✅ configurado' : '❌ falta telegramAgentOwnerUserId o allowed users'}
+            </li>
+            <li>
+              Orchestrator para tareas declarativas:{' '}
+              {status.diagnostics.orchestratorBoundForDeclarative ? '✅ enlazado' : '❌ no enlazado'}
+            </li>
+            <li className="muted">
+              Config: <code className="echo-diag-path">{status.diagnostics.configPath}</code>
+            </li>
+          </ul>
+          {status.diagnostics.duplicateEchoWarning && (
+            <p className="echo-diag-warning">{status.diagnostics.duplicateEchoWarning}</p>
+          )}
+          <p className="muted echo-diag-foot">
+            Agenda y cron viven mientras la API (o Telegram) siguen corriendo. Podés configurar{' '}
+            <code>cronTimezone</code> y <code>declarativeJobs</code> desde la sección “Tareas autónomas” arriba o editando{' '}
+            el JSON en disco.
+          </p>
+        </div>
+      )}
+
+      <EchoDeclarativeJobsSection onConfigChanged={() => void load()} />
 
       <div className="echo-task-list">
         {tasks.length === 0 ? (
@@ -138,6 +183,12 @@ export default function EchoPage() {
               <div className="echo-task-head">
                 <h2 className="echo-task-title">
                   <span aria-hidden>{taskEmoji(task.id)}</span> {task.name}
+                  {task.taskKind === 'declarative' && (
+                    <span className="echo-task-kind" title="Declarada en echo.config.json">
+                      {' '}
+                      · autónomo
+                    </span>
+                  )}
                 </h2>
                 <div className="echo-task-controls">
                   <button
