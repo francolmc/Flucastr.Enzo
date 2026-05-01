@@ -36,6 +36,7 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
+import { messageIndicatesPersistedWriteToAbsolutePath } from '../Classifier.js';
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
   classifiedLevel: ComplexityLevel;
@@ -163,9 +164,13 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
 
   const exactAllowlist = mergedToolDefs.map((t) => t.name).join(', ');
 
+  const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
+
   const toolUsageRule = isModerate
-    ? `MODERATE ROUTING: If the user needs disk/shell, web search, memory, email, MCP, or any side effect on this host, respond with exactly ONE JSON tool call; "tool" MUST be one of: ${exactAllowlist}. If the message is only casual chat, a greeting, math, your identity, or conceptual talk with no need for tools, respond in plain text only (no JSON). Never invent tool names.`
-    : `If you can answer directly without tools, respond with plain text.`;
+    ? `MODERATE ROUTING: If the user needs disk/shell, web search, memory, email, MCP, or any side effect on this host, respond with exactly ONE JSON tool call; "tool" MUST be one of: ${exactAllowlist}. If the message is only casual chat, a greeting, math, your identity, or conceptual talk with no need for tools, respond in plain text only (no JSON). Never invent tool names.${persistToPathRequested ? ` The user named an absolute FILE path AND asked to CREATE/SAVE/WRITE content there → you MUST use write_file in this response (verbatim path + full content); do not claim success in prose alone.` : ''}`
+    : persistToPathRequested
+      ? `The user expects a REAL file written on disk at the path they gave. Respond with exactly ONE {"action":"tool","tool":"write_file","input":{"path":"…","content":"…"}} JSON (verbatim path + full body). Plain text claiming the file "was created/saved/already exists" without that JSON would be dishonest — if unsure, omit false claims or ask briefly; never pretend disk I/O ran.`
+      : `If you can answer directly without tools, respond with plain text.`;
 
   const moderateToolJsonOnly = isModerate
     ? `
@@ -210,11 +215,13 @@ Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"execute_command","input":{"command":"uname -a"}}
 {"action":"tool","tool":"web_search","input":{"query":"search terms"}}
 {"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
+{"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\\n\\nFull file body the user asked for — never empty unless they asked for an empty file."}}
 {"action":"tool","tool":"remember","input":{"userId":"${input.userId}","key":"key_name","value":"value"}}
 
 ${toolUsageRule}
 
 TOOL SELECTION — CRITICAL:
+- Create or overwrite a FILE with new content at a path the user gave → write_file with {"path":"verbatim absolute path","content":"full text"} — NOT execute_command for the file body (same policy as task decomposition)
 - List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
 - Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
 - Search the internet for information → web_search
@@ -240,7 +247,15 @@ SEARCH BEFORE ANSWERING:
 - Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
 - One tool call per response, no extra fields in the JSON input
 - web_search input must be ONLY: {"query": "search terms"} — nothing else
-
+${
+  persistToPathRequested
+    ? `
+PERSISTENCE / HONESTY (user asked to write to a concrete absolute path):
+- Do NOT say the file "ya está creado", "already exists on disk", "guardado", "listo en el disco", or equivalent unless this same turn includes a write_file tool JSON that will be executed.
+- If you output only prose with the story or text and no write_file, state clearly that nothing was written to disk yet, or emit write_file with path + content.
+`
+    : ''
+}
 ${
   input.userLanguage && input.userLanguage !== 'es'
     ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. NOT in Spanish. NOT in any other language.`

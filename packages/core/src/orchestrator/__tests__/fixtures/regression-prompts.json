@@ -18,5 +18,9 @@
   {
     "message": "remember that my favorite color is blue",
     "expectedLevel": "MODERATE"
+  },
+  {
+    "message": "crear archivo con una mini historia en /tmp/enzo-regression-story.md",
+    "expectedLevel": "MODERATE"
   }
 ]

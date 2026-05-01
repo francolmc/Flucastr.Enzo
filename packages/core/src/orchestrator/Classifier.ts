@@ -10,6 +10,7 @@
  *    - abstract life planning without filesystem path (`isLikelyAbstractLifePlanningWithoutPaths`) → SIMPLE
  *    - explicit chain phrases (`isLikelyChainedTask`) → COMPLEX
  *    - implicit multi-tool patterns (`impliesMultiToolWorkflow` from taskRoutingHints) → COMPLEX
+ *    - persist file at absolute path (`messageIndicatesPersistedWriteToAbsolutePath`) → MODERATE + classifierBranch `write_file_lexical_hint`
  *    - factual / temporal lexical lists (`isLikelyFactualQuery`) → MODERATE + suggestedTool web_search
  *    - single-tool lexical cues (`isLikelySingleToolTask`) → MODERATE
  *
@@ -34,6 +35,50 @@ import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+}
+
+/** True if the message likely contains a concrete absolute path the shell should use. */
+export function messageContainsLikelyAbsolutePath(message: string): boolean {
+  if (/(?:^|\s|["'])(\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|usr|root)\b\/[\S]*)/i.test(message)) {
+    return true;
+  }
+  if (/(?:^|\s|["'])([A-Za-z]:\\[^\s]+)/.test(message)) {
+    return true;
+  }
+  if (/(?:^|\s|["'])(\/[\w.-]+(?:\/[\w.-]+)+)(?:\s|$|[,'"`])/m.test(message)) {
+    return true;
+  }
+  return false;
+}
+
+/** JS \\w / \\b do not treat letters with diacritics as word chars — match creá with explicit delimiters when needed. */
+function messageHasLikelyPersistWriteIntentLexical(text: string): boolean {
+  const delimiterStart = '(?:^|[\\s.,;:!?¿¡(\'"«])';
+  if (
+    new RegExp(`${delimiterStart}c[rR]e[ÁáAa](?=\\s|[.,!?;:]|$|\\))`, 'u').test(text) ||
+    new RegExp(`${delimiterStart}c[rR]ea(?=\\s|[.,!?;:]|$|\\))`, 'u').test(text)
+  ) {
+    return true;
+  }
+  return /\b(?:crear|crea\b|cré(?:e|a)me|create|creating|writes?\b|write|writing|guardar|guarda|save|saving|overwrite|touch|escrib(?:e|í|íbeme|imos|iendo)?|guárdalo|guardalo|save\s+to|write\s+to|generar\s+(?:un\s+)?archivo|nuevo\s+archivo)\b/i.test(
+    text
+  );
+}
+
+function messageLooksReadOnlyNoWriteIntentLexical(text: string): boolean {
+  return /\b(?:leer|lee(?:r|me)?|read(?:ing)?|muestra(?:me)?|show\s+me\s+the|contenido\s+de|cat\s+)\b/i.test(text) && !messageHasLikelyPersistWriteIntentLexical(text);
+}
+
+/** True when the message likely asks to CREATE/WRITE/SAVE file content at that path (lexical ES/EN). Exported for AmplifierLoop / fast path. */
+export function messageIndicatesPersistedWriteToAbsolutePath(message: string): boolean {
+  const trimmed = message.trim();
+  if (!messageContainsLikelyAbsolutePath(trimmed)) {
+    return false;
+  }
+  if (messageLooksReadOnlyNoWriteIntentLexical(trimmed)) {
+    return false;
+  }
+  return messageHasLikelyPersistWriteIntentLexical(trimmed);
 }
 
 export class Classifier {
@@ -82,6 +127,15 @@ export class Classifier {
     if (impliesMultiToolWorkflow(normalizedMessage)) {
       logClassifierRouting('multi_tool_implicit_classifier', ComplexityLevel.COMPLEX);
       return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow', classifierBranch: 'multi_tool_implicit_classifier' };
+    }
+    if (messageIndicatesPersistedWriteToAbsolutePath(normalizedMessage)) {
+      logClassifierRouting('write_file_lexical_hint', ComplexityLevel.MODERATE);
+      return {
+        level: ComplexityLevel.MODERATE,
+        reason:
+          'create or persist file content at an absolute host path — requires write_file (never plain chat claiming the file exists)',
+        classifierBranch: 'write_file_lexical_hint',
+      };
     }
     if (this.isLikelyFactualQuery(normalizedMessage)) {
       console.log('[Classifier] Fast-path factual query → MODERATE');
@@ -153,6 +207,7 @@ MODERATE — needs exactly ONE tool:
 - Real-world facts that may be outdated or require verification: current prices, exchange rates, weather, news, recent events, status of a person/company/project, sports results, release dates, any question about "now", "today", "currently", "latest", "recent"
 - Factual questions where being wrong would mislead the user: "who is the CEO of X", "what is the population of Y", "how much does Z cost", "what happened with W"
 - File operations: "read file...", "show contents of...", "list folder...", "create file..."
+- **CRITICAL — never SIMPLE:** If the user asks to create, overwrite, or save **new/original content** to a **concrete absolute file path** on this machine (e.g. \`/home/.../file.md\`, \`/Users/.../x.txt\`, \`C:\\\\...\\\\out.md\`), that is **always MODERATE** — it requires \`write_file\` (a side effect on disk), even when the content is creative (a story, poem, invented text). Never classify that as SIMPLE.
 - Sending or sharing an existing file to the user via Telegram: "mandame el archivo...", "compartí el reporte", "enviame lo que generaste", "send me the file..." — needs send_file
 - Single command execution
 - Personal statements to remember: "my name is...", "I am a...", "I live in...", "soy..."
@@ -176,6 +231,7 @@ COMPLEX — when there are 2 or more chained actions, OR when reorganizing/movin
   "I am a developer and I live in X" = MODERATE (two facts to remember, not chained actions)
 
 CRITICAL RULES:
+- Creating or overwriting a file at a path the user specified = MODERATE (\`write_file\`), **never** SIMPLE — do not treat it as "just chat" because the model could output the text in prose without writing disk
 - Decide from meaning: SIMPLE when no single tool-backed action fits; MODERATE when exactly one such action fits; COMPLEX when multiple chained actions fit
 - When truly in doubt with nothing that requires tools → SIMPLE
 - A greeting is ALWAYS SIMPLE, never MODERATE or COMPLEX
@@ -208,29 +264,17 @@ Examples:
 "llama a https://api.x.com/data y guárdalo en un archivo" → {"level":"COMPLEX","reason":"chained: curl API call then write file"}
 "necesito gestionar tareas personales y de todos mis trabajos" → {"level":"SIMPLE","reason":"planning conversation, no concrete paths or file ops"}
 "ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
+"creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
+"please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
 ONLY JSON. NOTHING ELSE.`;
-  }
-
-  /** True if the message likely contains a concrete absolute path the shell should use. */
-  private messageContainsLikelyAbsolutePath(message: string): boolean {
-    if (/(?:^|\s|["'])(\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|usr|root)\b\/[\S]*)/i.test(message)) {
-      return true;
-    }
-    if (/(?:^|\s|["'])([A-Za-z]:\\[^\s]+)/.test(message)) {
-      return true;
-    }
-    if (/(?:^|\s|["'])(\/[\w.-]+(?:\/[\w.-]+)+)(?:\s|$|[,'"`])/m.test(message)) {
-      return true;
-    }
-    return false;
   }
 
   /**
    * Task/life planning in natural language without a filesystem path — should stay conversational (SIMPLE).
    */
   private isLikelyAbstractLifePlanningWithoutPaths(message: string): boolean {
-    if (this.messageContainsLikelyAbsolutePath(message)) {
+    if (messageContainsLikelyAbsolutePath(message)) {
       return false;
     }
     const n = message.toLowerCase();

@@ -105,12 +105,18 @@ CRITICAL RULES:
 - Never use execute_command to create a file with content — use write_file instead
 - Never add a read_file step after a web_search — the search result is already in context
 - NEVER use relative paths — always use the absolute path from the user's message
+
+COMPOSE NEW CONTENT + SAVE TO A FIXED ABSOLUTE FILE PATH (story, poem, invented prose, fresh summary to write, etc.):
+- When the user gives a concrete absolute FILE path (e.g. .md, .txt, .json) AND wants NEW content written there (not just reading an existing file): prefer EXACTLY ONE step: write_file with "input" as a clear natural-language instruction that includes the VERBATIM path and what to write (full text or generate per user). "dependsOn": null.
+- NEVER return a plan where the last step is missing write_file when persistence to that path was requested — do not assume "the model will paste the text in chat instead".
+- If you must split (e.g. read another file first, then write): the final step MUST still be write_file to the user's path; do not stop after generation-only steps.
 ${hasPdfMcpTools ? `- If the user asks to read/summarize/extract a .pdf, DO NOT use read_file for that PDF. Prefer MCP PDF tools (mcp_*_display_pdf + mcp_*_interact or other mcp_*_pdf tools).` : ''}
 
 ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this block; only use paths the user or context actually provides):
 - Pattern A — search then write: Step 1 web_search for the topic; Step 2 write_file for the output file the user asked for. Total: 2 steps, no extra steps.
 - Pattern B — list one folder the user named with a real absolute path: Step 1 execute_command with ls -la (or ls -Fa) on exactly that path from their message. Total: 1 step.
-- Pattern C — organize one folder they named, listing not in context yet: Step 1 ls -la on their path; Step 2 shell step that uses step 1 output. Total: 2 steps.`;
+- Pattern C — organize one folder they named, listing not in context yet: Step 1 ls -la on their path; Step 2 shell step that uses step 1 output. Total: 2 steps.
+- Pattern D — compose new text (story, summary, etc.) and save ONLY to a file path the user gave: Step 1 write_file with "dependsOn": null; "input" must name the verbatim path and what to write. Total: 1 step — no separate "generate in chat" step.`;
 
     try {
       const messages: Message[] = [

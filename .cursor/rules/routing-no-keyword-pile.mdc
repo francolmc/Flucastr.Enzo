@@ -1,0 +1,13 @@
+---
+description: Preferir clasificación y routing sin acumular keywords/regex léxicos como solución principal
+alwaysApply: true
+---
+
+# Routing y clasificación: evitar depender de keywords
+
+- **No ampliar heurísticas solo añadiendo más palabras clave o patrones regex** como camino “correcto” para nuevo comportamiento (idiomas, variantes de imperativo, sinónimos, etc.). Eso no escala y deja huecos multilingües/manifiestos.
+- Para nuevos requisitos de intención (**crear archivo**, encadenar herramientas, etc.), orientar el diseño hacia:
+  - **Clasificador LLM** con reglas de prompt estables y ejemplos few-shot, o
+  - **Extracción estructurada** (JSON / campos) cuando aplique, o
+  - Otros mecanismos **semánticos** antes que listas léxicas cada vez mayores.
+- Las heurísticas léxicas que ya existan en el código pueden seguir como **fallback** o optimización local; al tocarlas o añadir rutas, **priorizar reducir dependencia de keywords en el largo plazo**, no acumular más listas salvo acuerdo explícito del equipo.

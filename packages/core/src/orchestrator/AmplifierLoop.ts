@@ -43,6 +43,7 @@ import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+import { messageIndicatesPersistedWriteToAbsolutePath } from './Classifier.js';
 import type { MemoryService } from '../memory/MemoryService.js';
 
 export type AmplifierLoopOptions = {
@@ -319,15 +320,35 @@ No markdown. No prose.`;
       );
     }
 
+    let fastPathLevel = input.classifiedLevel;
     if (
-      (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) &&
+      fastPathLevel === ComplexityLevel.SIMPLE &&
+      messageIndicatesPersistedWriteToAbsolutePath(input.message)
+    ) {
+      fastPathLevel = ComplexityLevel.MODERATE;
+      this.log.info(
+        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (persist-to-disk lexical hint; write_file expected)'
+      );
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          reclassifiedTo: 'MODERATE',
+          reason: 'write_file_lexical_hint',
+          priorLevel: input.classifiedLevel,
+        })
+      );
+    }
+
+    if (
+      (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
       !hasMultiStepSkillRequirement &&
       !skipFastPathForMultiTool &&
       !input.imageContext
     ) {
       return runSimpleModerateFastPath({
         input,
-        classifiedLevel: input.classifiedLevel,
+        classifiedLevel: fastPathLevel,
         stageMetrics,
         modelsUsed,
         toolsUsed,
@@ -386,14 +407,15 @@ No markdown. No prose.`;
         this.log.info(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
 
         // DIRECT EXECUTION: Si la subtarea tiene dependencia Y una tool definida por el Decomposer,
-        // ejecutar directamente sin loop ReAct — el modelo solo genera el contenido
+        // ejecutar directamente sin loop ReAct — el modelo solo genera el contenido.
+        // write_file con dependsOn: null no entra aquí: el bucle ReAct de más abajo ejecuta la tool en contexto.
         if (subtask.dependsOn !== null && subtask.tool !== 'none' && accumulatedContext) {
           const tool = this.executableTools.find(t => t.name === subtask.tool);
 
           if (tool) {
             this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution of "${subtask.tool}"`);
 
-            // Para write_file: el modelo genera el contenido, nosotros ejecutamos la tool
+            // Para write_file (tras otro paso): el modelo genera el contenido, nosotros ejecutamos la tool
             if (subtask.tool === 'write_file') {
               const originalMsg = input.originalMessage ?? input.message;
               let filePath = extractFilePath(originalMsg) ?? 'output.md';

@@ -84,6 +84,19 @@ async function runTests() {
   assertEq(r6.level, ComplexityLevel.MODERATE, 'clima Santiago should be MODERATE');
   console.log('✓ "busca el clima de Santiago" → MODERATE (factual/bundle fast path)');
 
+  const cWritePath = new Classifier(new QueueProvider([]));
+  const rWrite = await cWritePath.classify(
+    'creá el archivo /home/franco/historia.md con una historia corta',
+    []
+  );
+  assertEq(rWrite.level, ComplexityLevel.MODERATE, 'create file at absolute path should be MODERATE');
+  assertEq(
+    rWrite.classifierBranch,
+    'write_file_lexical_hint',
+    'persist-to-path intent should use write_file_lexical_hint branch'
+  );
+  console.log('✓ "creá … /home/franco/historia.md …" → MODERATE (write_file lexical hint)');
+
   const cDash = new Classifier(new QueueProvider([]));
   const r7 = await cDash.classify('qué tengo pendiente de Dash?', []);
   assertEq(r7.level, ComplexityLevel.MODERATE, 'Dash pending should be MODERATE');
