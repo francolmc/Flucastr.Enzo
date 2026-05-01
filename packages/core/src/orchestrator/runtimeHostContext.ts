@@ -1,6 +1,134 @@
 import os from 'os';
 import type { AmplifierInput } from './types.js';
 
+function localCalendarYyyymmddFromUtcMs(ms: number, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  let y = 0;
+  let m = 0;
+  let d = 0;
+  for (const part of formatter.formatToParts(new Date(ms))) {
+    if (part.type === 'year') {
+      y = Number(part.value);
+    } else if (part.type === 'month') {
+      m = Number(part.value);
+    } else if (part.type === 'day') {
+      d = Number(part.value);
+    }
+  }
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return 0;
+  }
+  return y * 10000 + m * 100 + d;
+}
+
+/** Binary search: earliest UTC ms in a neighborhood of `anchorMs` whose local calendar day is `yyyymmdd` in `timeZone`. */
+function utcFirstInstantOfLocalYyyymmdd(anchorMs: number, timeZone: string, targetYyyymmdd: number): number {
+  let lo = anchorMs - 96 * 3600 * 1000;
+  let hi = anchorMs + 96 * 3600 * 1000;
+  let guard = 0;
+  while (guard++ < 32 && localCalendarYyyymmddFromUtcMs(lo, timeZone) >= targetYyyymmdd) lo -= 24 * 3600 * 1000;
+  guard = 0;
+  while (guard++ < 32 && localCalendarYyyymmddFromUtcMs(hi, timeZone) < targetYyyymmdd) hi += 24 * 3600 * 1000;
+  guard = 0;
+  while (guard++ < 64 && hi - lo > 120_000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localCalendarYyyymmddFromUtcMs(mid, timeZone) < targetYyyymmdd) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+}
+
+function utcInclusiveEndMsOfSameLocalCalendarDay(dayStartUtcMs: number, timeZone: string): number {
+  const dayKey = localCalendarYyyymmddFromUtcMs(dayStartUtcMs, timeZone);
+  let lo = dayStartUtcMs;
+  let hi = dayStartUtcMs + 96 * 3600 * 1000;
+  let guard = 0;
+  while (guard++ < 32 && localCalendarYyyymmddFromUtcMs(hi, timeZone) <= dayKey) hi += 12 * 3600 * 1000;
+  while (hi - lo > 120_000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localCalendarYyyymmddFromUtcMs(mid, timeZone) <= dayKey) lo = mid;
+    else hi = mid;
+  }
+  return hi - 1;
+}
+
+/**
+ * Inclusive `[from_iso, to_iso]` UTC range covering the persisted calendar user's asked window
+ * (`hoy`, `mañana`, `esta semana`) resolved in their profile timezone defaults.
+ *
+ * Exported for tests — do not widen without updating calendar list locked prompt callers.
+ */
+export function computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(
+  message: string,
+  hints?: AmplifierInput['runtimeHints']
+): { from_iso: string; to_iso: string } {
+  const tz = hints?.timeZone ?? 'America/Santiago';
+  const normalized = message.toLowerCase();
+  const anchorNow = Date.now();
+
+  const hasWeek = /\besta\s+semana\b/u.test(normalized) || /\bthis\s+week\b/u.test(normalized);
+
+  let includeToday =
+    /\b(hoy|today|este\s+d[ií]a|el\s+d[ií]a\s+de\s+hoy|d[ií]a\s+de\s+hoy)\b/u.test(normalized);
+  let includeTomorrow =
+    /\b(mañana|tomorrow)\b/u.test(normalized) &&
+    !/\bpasado\s+mañana\b/u.test(normalized) &&
+    !/\bday\s+after\s+tomorrow\b/u.test(normalized);
+
+  if (!includeToday && !includeTomorrow && !hasWeek) {
+    includeToday = true;
+  }
+
+  if (hasWeek) {
+    const todayStart = utcFirstInstantOfLocalYyyymmdd(
+      anchorNow,
+      tz,
+      localCalendarYyyymmddFromUtcMs(anchorNow, tz)
+    );
+    let fromMs = todayStart;
+    let toMs = utcInclusiveEndMsOfSameLocalCalendarDay(todayStart, tz);
+    for (let d = 1; d <= 6; d += 1) {
+      const probe = todayStart + d * 26 * 3600 * 1000;
+      const dayStart = utcFirstInstantOfLocalYyyymmdd(probe, tz, localCalendarYyyymmddFromUtcMs(probe, tz));
+      const dayEnd = utcInclusiveEndMsOfSameLocalCalendarDay(dayStart, tz);
+      fromMs = Math.min(fromMs, dayStart);
+      toMs = Math.max(toMs, dayEnd);
+    }
+    return { from_iso: new Date(fromMs).toISOString(), to_iso: new Date(toMs).toISOString() };
+  }
+
+  const spans: Array<{ lo: number; hi: number }> = [];
+
+  if (includeToday) {
+    const ks = localCalendarYyyymmddFromUtcMs(anchorNow, tz);
+    const s = utcFirstInstantOfLocalYyyymmdd(anchorNow, tz, ks);
+    spans.push({ lo: s, hi: utcInclusiveEndMsOfSameLocalCalendarDay(s, tz) });
+  }
+  if (includeTomorrow) {
+    const tomorrowProbe = utcFirstInstantOfLocalYyyymmdd(
+      anchorNow + 28 * 3600 * 1000,
+      tz,
+      localCalendarYyyymmddFromUtcMs(anchorNow + 28 * 3600 * 1000, tz)
+    );
+    const kt = localCalendarYyyymmddFromUtcMs(tomorrowProbe, tz);
+    const s = utcFirstInstantOfLocalYyyymmdd(tomorrowProbe, tz, kt);
+    spans.push({ lo: s, hi: utcInclusiveEndMsOfSameLocalCalendarDay(s, tz) });
+  }
+
+  let fromMs = spans[0]!.lo;
+  let toMs = spans[0]!.hi;
+  for (const r of spans) {
+    fromMs = Math.min(fromMs, r.lo);
+    toMs = Math.max(toMs, r.hi);
+  }
+  return { from_iso: new Date(fromMs).toISOString(), to_iso: new Date(toMs).toISOString() };
+}
+
 /**
  * Compact wall-clock hint for prompts (timezone from profile/runtimeHints preferred over server-local).
  */

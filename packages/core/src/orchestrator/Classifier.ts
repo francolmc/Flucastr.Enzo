@@ -6,8 +6,9 @@
  *
  * 2. Heuristic ordered fast-paths (cheap; ESLint many are ES/EN-lexical — multilingual gap, see multilingual audit below):
  *    - trivial greeting / short acknowledgement (`trivialPattern`)
+ *    - listing Enzo persisted agenda (`messageLooksLikeCalendarListQuery`) → MODERATE + calendar list
  *    - recall / pending wording (`isLikelyRecallQuery`) → MODERATE
- *    - persisted agenda / scheduled event (`isLikelyPersistedAgendaOrScheduleIntent`) → MODERATE (narrow ES/EN lexical)
+ *    - persisted agenda / scheduled event (`messageLooksLikePersistedAgendaScheduleRequest`) → MODERATE (narrow ES/EN lexical)
  *    - abstract life planning without filesystem path (`isLikelyAbstractLifePlanningWithoutPaths`) → SIMPLE
  *    - explicit chain phrases (`isLikelyChainedTask`) → COMPLEX
  *    - implicit multi-tool patterns (`impliesMultiToolWorkflow` from taskRoutingHints) → COMPLEX
@@ -72,6 +73,38 @@ export function messageLooksLikePersistedAgendaScheduleRequest(raw: string): boo
     /\bun\s+evento\s+para\b/u.test(n) ||
     /\b(?:añad(?:eme|ir)|pon(?:eme|é)?)\s+.+\s+(?:en\s+(?:mi|el|tu|su)\s+)?(?:calend(?:ario)?|agenda)\b/u.test(n)
   );
+}
+
+/**
+ * Listing the user's persisted Enzo agenda (not web news "eventos del día").
+ */
+export function messageLooksLikeCalendarListQuery(raw: string): boolean {
+  const n = raw.trim().toLowerCase();
+  if (!n) {
+    return false;
+  }
+  if (
+    /\b(noticias|news|deportes|f[uú]tbol|mundial|precio|clima|cotizaci[oó]n|bolsa|temblor|terremoto)\b/u.test(n) &&
+    !/\b(mi|mis|tengo|personal|enzo|mi\s+agenda|en\s+mi)\b/u.test(n)
+  ) {
+    return false;
+  }
+
+  const temporal = /\b(hoy|today|mañana|tomorrow|pasado\s+mañana|esta\s+(?:tarde|noche|semana)|este\s+mes|(?:el|del)\s+d[ií]a\s+de\s+hoy|dia\s+de\s+hoy|\d{1,2}\s+de\s+[a-záéíóú]+(?:\s+\d{4})?|\d{4}-\d{2}-\d{2})\b/u.test(
+    raw
+  );
+
+  const agendaNoun = /\b(eventos?\b|citas?\b|compromisos?\b|\bagenda\b|calend(?:ario)?\b|reuniones?\b|meetings?\b|appointments?\b)/u.test(
+    n
+  );
+
+  const listShape =
+    /\b(qu[eé]|cu[aá]les|list(?:a|ado|ar)?|mu[eé]str(?:ame|ar)?|ver|consult(?:ar|e)|mostrar|dime|decime|tell\s+me|show|what\s+('?s|do\s+i|are\s+my|is\s+on\s+my))\b/u.test(n) ||
+    /\btengo\b/u.test(n) ||
+    /\bdo\s+i\s+have\b/u.test(n) ||
+    /\bhay\s+(?:algo|algún|alguna)\s+(?:en\s+)?(?:mi\s+)?(?:agenda|calend)/u.test(n);
+
+  return temporal && agendaNoun && listShape;
 }
 
 /** True if the message likely contains a concrete absolute path the shell should use. */
@@ -142,6 +175,16 @@ export class Classifier {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
       logClassifierRouting('trivial', ComplexityLevel.SIMPLE);
       return { level: ComplexityLevel.SIMPLE, reason: 'trivial message', classifierBranch: 'trivial' };
+    }
+    if (messageLooksLikeCalendarListQuery(normalizedMessage)) {
+      console.log('[Classifier] Fast-path Enzo calendar listing → MODERATE');
+      logClassifierRouting('calendar_list_lexical', ComplexityLevel.MODERATE);
+      return {
+        level: ComplexityLevel.MODERATE,
+        reason: 'query Enzo persisted agenda / events for a day — must use calendar tool list (never web_search)',
+        suggestedTool: 'calendar',
+        classifierBranch: 'calendar_list_lexical',
+      };
     }
     if (this.isLikelyRecallQuery(normalizedMessage.toLowerCase())) {
       console.log('[Classifier] Fast-path recall query → MODERATE');
@@ -250,6 +293,7 @@ SIMPLE — direct conversation, no tools needed:
 - Spanish: abstract "gestión del día a día", "necesito organizar mi tiempo" **without** agendar/programar/recording a concrete slot — still SIMPLE only if purely conversational tips
 
 MODERATE — needs exactly ONE tool:
+- **Listing this user's own Enzo persisted agenda** for a named day or span (e.g. "mis eventos/citas hoy", "qué tengo en mi agenda mañana") → **calendar** \`list\` against the local SQLite agenda — **never** web_search, **never** answer "I have no access to your personal/Google calendar" (the data model is Enzo's \`calendar\` tool, not an external provider)
 - **Persisted agenda / reminders with a concrete time or day:** phrasing such as scheduling an appointment, adding to calendar/agenda/cita, programming a timed reminder/reminder at HH:MM, “un evento para las … hoy”. That **always requires the calendar tool** (SQLite) so it appears in the Enzo web agenda — never SIMPLE with prose pretending it was scheduled
 - Spanish: **agendar/programar/añadir al calendario** + concrete time (**15:55**, **hoy**, etc.) → MODERATE
 - Web search: "search for...", "look up...", "what does the web say about...", "busca..."
@@ -315,6 +359,7 @@ Examples:
 "ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
 "¿podemos agendar un evento para las 15:55 horas del día de hoy? Es tomar medicamento." → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
 "schedule a dentist appointment tomorrow at 9:30" → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
+"¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list"}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 

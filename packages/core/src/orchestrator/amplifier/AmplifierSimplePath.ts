@@ -20,6 +20,7 @@ import {
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
 import {
+  computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt,
   describeHostForExecuteCommandPrompt,
   describeLocalWallClockPromptLine,
   humanOsLabel,
@@ -43,6 +44,7 @@ import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
+  messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
 } from '../Classifier.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
@@ -399,6 +401,16 @@ If you include any text outside the JSON, the tool will not execute.
     executableTools.some((t) => t.name === 'calendar') &&
     messageLooksLikePersistedAgendaScheduleRequest(schedulePersistCorpus);
 
+  const lexicalCalendarList =
+    isModerate &&
+    !lexicalSchedulePersist &&
+    executableTools.some((t) => t.name === 'calendar') &&
+    messageLooksLikeCalendarListQuery(schedulePersistCorpus);
+
+  const listWindowIso = lexicalCalendarList
+    ? computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(schedulePersistCorpus, input.runtimeHints)
+    : null;
+
   const mandatoryCalendarBlock =
     lexicalSchedulePersist
       ? `
@@ -406,7 +418,18 @@ If you include any text outside the JSON, the tool will not execute.
 ━━━ SCHEDULE_PERSIST_LOCKED ━━━
 The user explicitly asked to save a timed entry to Enzo persisted agenda (SQLite; visible in web UI Agenda). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no greetings, no "listo").
 {"action":"tool","tool":"calendar","input":{"action":"add","title":"<short>","start_iso":"<ISO8601>","notes":"<detail>","end_iso":""}}
-Interpret "today/tomorrow" plus any clock HH:MM using the **User local wall clock** line below. Omit end_iso entirely if absent (or use ""). Title should reflect what to do ("tomar medicamento"). Prose confirmations without this JSON leave the agenda empty — forbidden here.
+CLOCK LOCK — **no invented offset:** combine the civil **date** from the **User local time** line with the user's wall-clock **HH:MM** (24h unless they wrote am/pm). Build **start_iso** as that exact local instant encoded in ISO8601 with a real **Z / numeric offset**, not a guessed +3h "correction". If they said **hoy/today** with 15:50, **start_iso** MUST land on **the same calendar day** as that line — never silently roll to **tomorrow** unless they asked for tomorrow/mañana. Omit end_iso entirely if absent (or use ""). Title should reflect what to do (e.g. "Tomar medicamento"). Prose confirmations without this JSON leave the agenda empty — forbidden here.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      : '';
+
+  const mandatoryCalendarListBlock =
+    lexicalCalendarList && listWindowIso
+      ? `
+
+━━━ CALENDAR_LIST_LOCKED ━━━
+The user asked to **list** entries from their **Enzo persisted agenda** (same SQLite DB as the web UI Agenda — not Google Calendar). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "no tengo acceso a tu calendario", no web_search).
+{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"${listWindowIso.from_iso}","to_iso":"${listWindowIso.to_iso}"}}
+Ranges are UTC instants inclusive; the window matches the user's asked day scope (today / mañana / esta semana) in their **User local time** zone. Plain text answers without this JSON are blocked here.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
       : '';
 
@@ -414,7 +437,7 @@ Interpret "today/tomorrow" plus any clock HH:MM using the **User local wall cloc
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
 ${toolsPrompt}
@@ -466,7 +489,9 @@ SEARCH BEFORE ANSWERING:
   always verify with web_search before responding
 - Never answer factual questions from memory alone — memory can be outdated
 - The rule is: when in doubt → web_search. Only skip search for math, greetings,
-  and questions explicitly about your capabilities or identity
+  questions explicitly about your capabilities or identity,
+  and **the user's own Enzo agenda / meetings / reminders for a named day or week**
+  ("hoy", "mañana", "mis eventos", "esta semana") → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to "their personal Google Calendar"
 - Never invent search results — use web_search
 - Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
 - One tool call per response, no extra fields in the JSON input

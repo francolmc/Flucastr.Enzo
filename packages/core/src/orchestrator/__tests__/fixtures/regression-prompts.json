@@ -26,5 +26,9 @@
   {
     "message": "¿podemos agendar un recordatorio mañana a las 09:30 para llamar al dentista?",
     "expectedLevel": "MODERATE"
+  },
+  {
+    "message": "¿qué eventos tengo el día de hoy?",
+    "expectedLevel": "MODERATE"
   }
 ]

@@ -119,6 +119,13 @@ async function runTests() {
     '✓ "podemos agendar … 15:55 … hoy … medicamento …" → MODERATE + schedule_persist_lexical + calendar hint'
   );
 
+  const cAgendaList = new Classifier(new QueueProvider([]));
+  const rList = await cAgendaList.classify('¿qué eventos tengo el día de hoy?', []);
+  assertEq(rList.level, ComplexityLevel.MODERATE, 'persisted agenda list-for-today should be MODERATE');
+  assertEq(rList.classifierBranch, 'calendar_list_lexical', 'agenda list should hit calendar_list_lexical branch');
+  assertEq(rList.suggestedTool, 'calendar', 'agenda list path should hint calendar tool');
+  console.log('✓ "¿qué eventos tengo el día de hoy?" → MODERATE + calendar_list_lexical + calendar hint');
+
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
   process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
   try {

@@ -1,6 +1,7 @@
 export { Orchestrator } from './Orchestrator.js';
 export {
   Classifier,
+  messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
 } from './Classifier.js';
 export { ModelSelector } from './ModelSelector.js';
