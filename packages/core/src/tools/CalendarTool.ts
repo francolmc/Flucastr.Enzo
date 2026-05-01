@@ -3,6 +3,8 @@ import { ExecutableTool, ToolResult } from './types.js';
 import type { CalendarService } from '../calendar/CalendarService.js';
 
 const SERVER_USER_KEY = '__enzoScopedUserId';
+const DISPLAY_TZ_KEY = '__enzoDisplayTimeZone';
+const DISPLAY_LOC_KEY = '__enzoDisplayLocale';
 
 function parseIsoToMs(raw: unknown, label: string): { ms: number } | { error: string } {
   const s = typeof raw === 'string' ? raw.trim() : '';
@@ -16,15 +18,49 @@ function parseIsoToMs(raw: unknown, label: string): { ms: number } | { error: st
   return { ms };
 }
 
-function linesForEvents(rows: CalendarEventRow[]): string {
+function readDisplayClock(input: Record<string, unknown>): { tz: string; loc: string } | null {
+  const tzRaw = input[DISPLAY_TZ_KEY];
+  const tz = typeof tzRaw === 'string' ? tzRaw.trim() : '';
+  if (!tz) {
+    return null;
+  }
+  const locRaw = input[DISPLAY_LOC_KEY];
+  const loc =
+    typeof locRaw === 'string' && locRaw.trim()
+      ? locRaw.trim()
+      : 'es-CL';
+  return { tz, loc };
+}
+
+function formatStoredInstant(ms: number, clock: { tz: string; loc: string } | null): string {
+  const utc = new Date(ms).toISOString();
+  if (!clock) {
+    return utc;
+  }
+  try {
+    const local = new Intl.DateTimeFormat(clock.loc, {
+      timeZone: clock.tz,
+      dateStyle: 'short',
+      timeStyle: 'short',
+      hour12: false,
+    }).format(ms);
+    return `${utc} (local ${clock.tz}: ${local})`;
+  } catch {
+    return utc;
+  }
+}
+
+function linesForEvents(rows: CalendarEventRow[], clock: { tz: string; loc: string } | null): string {
   if (rows.length === 0) {
     return 'No hay eventos en el rango solicitado.';
   }
   return rows
     .map((e) => {
-      const tail = e.endAt ? `–${new Date(e.endAt).toISOString()}` : '';
+      const startLine = formatStoredInstant(e.startAt, clock);
+      const tail =
+        e.endAt != null ? ` – fin ${formatStoredInstant(e.endAt, clock)}` : '';
       const note = e.notes ? ` | ${e.notes}` : '';
-      return `- [${e.id}] ${e.title} @ ${new Date(e.startAt).toISOString()}${tail}${note}`;
+      return `- [${e.id}] ${e.title} @ ${startLine}${tail}${note}`;
     })
     .join('\n');
 }
@@ -55,6 +91,7 @@ export class CalendarTool implements ExecutableTool {
   constructor(private readonly calendar: CalendarService) {}
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const clock = readDisplayClock(input);
     const userIdRaw = input[SERVER_USER_KEY];
     const userId = typeof userIdRaw === 'string' ? userIdRaw.trim() : '';
     if (!userId) {
@@ -99,7 +136,10 @@ export class CalendarTool implements ExecutableTool {
         });
         return {
           success: true,
-          output: `Created event ${created.id}: "${created.title}" at ${new Date(created.startAt).toISOString()}`,
+          output: `Created event ${created.id}: "${created.title}" at ${formatStoredInstant(
+            created.startAt,
+            clock
+          )}`,
         };
       }
 
@@ -116,7 +156,7 @@ export class CalendarTool implements ExecutableTool {
           return { success: false, output: '', error: 'to_iso must be >= from_iso' };
         }
         const rows = await this.calendar.listInRange(userId, from.ms, to.ms);
-        return { success: true, output: linesForEvents(rows) };
+        return { success: true, output: linesForEvents(rows, clock) };
       }
 
       if (action === 'update') {
@@ -191,7 +231,7 @@ export class CalendarTool implements ExecutableTool {
         }
         return {
           success: true,
-          output: `Updated ${updated.id}: "${updated.title}" @ ${new Date(updated.startAt).toISOString()}`,
+          output: `Updated ${updated.id}: "${updated.title}" @ ${formatStoredInstant(updated.startAt, clock)}`,
         };
       }
 

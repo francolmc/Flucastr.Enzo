@@ -4,7 +4,11 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { Step, ResolvedAction } from '../types.js';
 import { normalizeError } from '../NormalizedError.js';
-import { attachToolScopedUserId, validateToolInput } from './AmplifierLoopFastPathTools.js';
+import {
+  attachCalendarDisplayClock,
+  attachToolScopedUserId,
+  validateToolInput,
+} from './AmplifierLoopFastPathTools.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import type { ThinkPhaseDeps } from './AmplifierThinkPhase.js';
 
@@ -30,7 +34,9 @@ export async function runActPhase(
   modelsUsed: Set<string>,
   toolsUsed: Set<string>,
   userId?: string,
-  requestId?: string
+  requestId?: string,
+  /** Wall clock for calendar tool output (optional). */
+  calendarDisplayClock?: { timeZone?: string; timeLocale?: string }
 ): Promise<ActPhaseResult> {
   const { baseProvider, executableTools, mcpRegistry, skillRegistry, log } = deps;
   const startTime = Date.now();
@@ -114,7 +120,8 @@ export async function runActPhase(
             toolInput as Record<string, unknown>,
             userId
           );
-          const result = await tool.execute(scoped);
+          const withClock = attachCalendarDisplayClock(resolvedAction.target, scoped, calendarDisplayClock);
+          const result = await tool.execute(withClock);
           if (!result.success) {
             output = `Error [TOOL_EXECUTION_ERROR]: ${result.error}`;
           } else {

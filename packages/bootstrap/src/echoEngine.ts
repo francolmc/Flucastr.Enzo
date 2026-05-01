@@ -1,5 +1,6 @@
 import https from 'node:https';
 import {
+  CalendarService,
   EchoEngine,
   NotificationGateway,
   Orchestrator,
@@ -8,6 +9,7 @@ import {
   createContextRefreshTask,
   createNightSummaryTask,
   EmailService,
+  type AmplifierInput,
   type ConfigService,
   type MemoryService,
 } from '@enzo/core';
@@ -170,12 +172,16 @@ export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
       });
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
       const emailService = new EmailService(configService);
+      const calendarService = new CalendarService();
       sharedEchoEngine.registerTask(
         createMorningBriefingTask({
           memoryService,
           notificationGateway,
           resolveUserId,
           emailService,
+          calendarService,
+          buildRuntimeHints: () =>
+            buildEchoRuntimeHints(configService) as NonNullable<AmplifierInput['runtimeHints']>,
         })
       );
       sharedEchoEngine.registerTask(

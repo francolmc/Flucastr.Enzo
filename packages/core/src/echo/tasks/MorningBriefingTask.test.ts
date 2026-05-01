@@ -1,6 +1,7 @@
 import {
   buildMorningBriefingMessage,
   createMorningBriefingTask,
+  formatAgendaTodaySection,
 } from './MorningBriefingTask.js';
 import type { Memory } from '../../memory/types.js';
 
@@ -32,6 +33,28 @@ async function runTests(): Promise<void> {
   assert(message.includes('💡 Captura algo antes de arrancar el dia.'), 'expected capture reminder');
   console.log('✓ Pass\n');
 
+  console.log('Test: agenda today section renders local HH:MM');
+  const tz = 'America/Santiago';
+  const agendaFmt = formatAgendaTodaySection(
+    [
+      {
+        id: 'e1',
+        userId: 'franco',
+        title: 'Tomar medicamento',
+        startAt: Date.parse('2026-05-01T18:50:00.000Z'),
+        endAt: null,
+        notes: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    'es-CL',
+    tz
+  );
+  assert(agendaFmt.includes('Tomar medicamento'), 'title in agenda section');
+  assert(agendaFmt.includes(':'), 'expects a clock fragment');
+  console.log('✓ Pass\n');
+
   console.log('Test: task sends urgent notification with generated briefing');
   let notifiedPriority: string | undefined;
   let notifiedMessage = '';
@@ -57,6 +80,47 @@ async function runTests(): Promise<void> {
   assert(notifiedMessage.includes('Buenos dias Franco'), 'expected generated briefing to be sent');
   assert(notifiedDedupKey.includes('morning-briefing-2026-04-27'), 'expected dedup key by date');
   console.log('✓ Pass\n');
+
+  console.log('Test: morning briefing includes persisted calendar when wired');
+  let briefingWithCalendar = '';
+  const taskEcho = createMorningBriefingTask({
+    memoryService: {
+      recall: async () => memories,
+    },
+    notificationGateway: {
+      notify: async (_userId, message) => {
+        briefingWithCalendar = message;
+      },
+    },
+    resolveUserId: async () => 'franco',
+    now: () => now,
+    locale: 'es-AR',
+    calendarService: {
+      listInRange: async () => [
+        {
+          id: 'rx',
+          userId: 'franco',
+          title: 'Revisar PR',
+          startAt: Date.parse('2026-04-27T14:00:00.000Z'),
+          endAt: null,
+          notes: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    },
+    buildRuntimeHints: () => ({
+      timeZone: 'America/Santiago',
+      timeLocale: 'es-CL',
+      osLabel: 'macOS',
+      homeDir: '/tmp',
+      posixShell: true,
+      hostPlatform: 'darwin',
+    }),
+  });
+  await taskEcho.action();
+  assert(briefingWithCalendar.includes('📅 Agenda hoy'), 'calendar section header');
+  assert(briefingWithCalendar.includes('Revisar PR'), 'calendar event title in briefing');
 
   console.log('MorningBriefingTask tests passed.');
 }

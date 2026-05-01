@@ -19,6 +19,7 @@ export {
 export {
   createMorningBriefingTask,
   buildMorningBriefingMessage,
+  formatAgendaTodaySection,
   type MorningBriefingTaskOptions,
 } from './tasks/MorningBriefingTask.js';
 export {

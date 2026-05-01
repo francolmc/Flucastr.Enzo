@@ -63,6 +63,20 @@ export function attachToolScopedUserId(
   return { ...toolInput, __enzoScopedUserId: uid };
 }
 
+/** Optional hints so calendar tool output can mirror the user's wall clock (not only UTC). */
+export function attachCalendarDisplayClock(
+  toolName: string,
+  scoped: Record<string, unknown>,
+  clock?: { timeZone?: string; timeLocale?: string }
+): Record<string, unknown> {
+  const tz = clock?.timeZone?.trim();
+  if (toolName !== 'calendar' || !tz) {
+    return scoped;
+  }
+  const loc = clock?.timeLocale?.trim() || 'es-CL';
+  return { ...scoped, __enzoDisplayTimeZone: tz, __enzoDisplayLocale: loc };
+}
+
 /** Shallow copy of tool input with optional host/runtime fields applied before validation and execute. */
 export function applyExecutableToolContext(
   toolName: string,
@@ -76,6 +90,87 @@ export function applyExecutableToolContext(
   void toolName;
   void executableTools;
   return base;
+}
+
+const CALENDAR_FIELD_SYNONYMS: Record<string, string> = {
+  acción: 'action',
+  accion: 'action',
+  titulo: 'title',
+  título: 'title',
+  notas: 'notes',
+  inicio_iso: 'start_iso',
+  fin_iso: 'end_iso',
+  desde_iso: 'from_iso',
+  hasta_iso: 'to_iso',
+  id_evento: 'event_id',
+};
+
+function isCalendarSemanticKey(key: string): boolean {
+  const canon = CALENDAR_FIELD_SYNONYMS[key] ?? CALENDAR_FIELD_SYNONYMS[key.toLowerCase()] ?? key;
+  return (
+    canon === 'action' ||
+    canon === 'title' ||
+    canon === 'notes' ||
+    canon === 'start_iso' ||
+    canon === 'end_iso' ||
+    canon === 'from_iso' ||
+    canon === 'to_iso' ||
+    canon === 'event_id'
+  );
+}
+
+/**
+ * LLMs / native tool callers sometimes flatten calendar fields next to the envelope keys
+ * (`tool` / `action:"tool"`) instead of nesting under `input`. Merge + ES aliases + infer `action:list`.
+ */
+export function coerceCalendarFastPathEnvelope(
+  envelope: Record<string, unknown>,
+  inner: Record<string, unknown>
+): Record<string, unknown> {
+  const ENVELOPE_SHAPE = new Set(['tool', 'herramienta', 'input', 'entrada']);
+
+  const applySynonyms = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const nk = CALENDAR_FIELD_SYNONYMS[k] ?? CALENDAR_FIELD_SYNONYMS[k.toLowerCase()] ?? k;
+      next[nk] = v;
+    }
+    return next;
+  };
+
+  let merged = applySynonyms({ ...inner });
+
+  for (const [rawKey, rawVal] of Object.entries(envelope)) {
+    if (ENVELOPE_SHAPE.has(rawKey)) continue;
+    const keyCanon = CALENDAR_FIELD_SYNONYMS[rawKey] ?? CALENDAR_FIELD_SYNONYMS[rawKey.toLowerCase()] ?? rawKey;
+    if (keyCanon === 'action') {
+      const marker = String(rawVal ?? '').toLowerCase();
+      if (marker === 'tool' || marker === 'herramienta') continue;
+    }
+    if (!isCalendarSemanticKey(rawKey)) continue;
+    const slot = keyCanon !== rawKey ? keyCanon : rawKey;
+    if (merged[slot] === undefined) merged[slot] = rawVal;
+  }
+
+  merged = applySynonyms(merged);
+
+  const actionStr = String(merged.action ?? '').trim().toLowerCase();
+  if (!actionStr) {
+    if (merged.from_iso && merged.to_iso) {
+      merged.action = 'list';
+    } else if (merged.start_iso && merged.title) {
+      merged.action = 'add';
+    } else if (merged.event_id) {
+      const hasPatch =
+        merged.title !== undefined ||
+        merged.start_iso !== undefined ||
+        merged.end_iso !== undefined ||
+        merged.notes !== undefined;
+      merged.action = hasPatch ? 'update' : 'delete';
+    }
+  }
+
+  return merged;
 }
 
 export function normalizeFastPathToolCall(
@@ -96,7 +191,21 @@ export function normalizeFastPathToolCall(
   }
 
   let toolName = String(normalized.tool ?? normalized.action ?? '').toLowerCase();
-  let toolInput = normalized.input ?? {};
+
+  let toolInput: Record<string, unknown> = {};
+  const rawIn = normalized.input;
+  if (typeof rawIn === 'string') {
+    try {
+      const p = JSON.parse(rawIn) as unknown;
+      if (p && typeof p === 'object' && !Array.isArray(p)) {
+        toolInput = { ...(p as Record<string, unknown>) };
+      }
+    } catch {
+      toolInput = {};
+    }
+  } else if (rawIn && typeof rawIn === 'object' && !Array.isArray(rawIn)) {
+    toolInput = { ...(rawIn as Record<string, unknown>) };
+  }
 
   const knownToolNames = new Set<string>();
   for (const tool of executableTools) {
@@ -111,6 +220,10 @@ export function normalizeFastPathToolCall(
   }
 
   toolName = canonicalizeToolNameLower(toolName, executableTools);
+
+  if (toolName === 'calendar') {
+    toolInput = coerceCalendarFastPathEnvelope(normalized as Record<string, unknown>, toolInput);
+  }
 
   return { toolName, toolInput };
 }

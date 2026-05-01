@@ -845,7 +845,13 @@ Do NOT search for more information. Use what is provided.`;
             modelsUsed,
             toolsUsed,
             input.userId,
-            requestId
+            requestId,
+            input.runtimeHints
+              ? {
+                  timeZone: input.runtimeHints.timeZone,
+                  timeLocale: input.runtimeHints.timeLocale,
+                }
+              : undefined
           );
           if (actResult.kind === 'delegate') {
             recordStageMetric(stageMetrics, 'act', Date.now() - subActStart, true);
@@ -1105,7 +1111,13 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         toolsUsed,
         input.userId,
-        requestId
+        requestId,
+        input.runtimeHints
+          ? {
+              timeZone: input.runtimeHints.timeZone,
+              timeLocale: input.runtimeHints.timeLocale,
+            }
+          : undefined
       );
       if (actResult.kind === 'delegate') {
         recordStageMetric(stageMetrics, 'act', Date.now() - actStart, true);

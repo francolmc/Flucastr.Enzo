@@ -27,6 +27,7 @@ import {
 } from '../runtimeHostContext.js';
 import {
   applyExecutableToolContext,
+  attachCalendarDisplayClock,
   attachToolScopedUserId,
   extractFirstJsonObject,
   mergeAvailableToolDefinitions,
@@ -734,7 +735,8 @@ Never invent tool names.`;
                 setupError = `Herramienta interna no encontrada: ${execName}`;
               } else {
                 const scoped = attachToolScopedUserId(execName, preparedToolInput, input.userId);
-                const result = await tool.execute(scoped);
+                const withClock = attachCalendarDisplayClock(execName, scoped, input.runtimeHints);
+                const result = await tool.execute(withClock);
                 rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
               }
             } else if (mcpRegistry) {
