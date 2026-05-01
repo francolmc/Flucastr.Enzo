@@ -37,6 +37,7 @@ Write a response to the user:
 - Be direct — the user wants results, not process descriptions
 - If REQUIRED OUTPUT TEMPLATES are present, follow one template exactly (strict precedence)
 - If a required template field is missing in the context, keep format and write "N/D"
+- If the context includes calendar/agenda lines: timestamps ending in "Z" or after "UTC persistido" are storage UTC only, not wall time; the user's civil time is the "civil (…):" segment. Never call a …Z timestamp "local time" or give two different hours as local for the same event.
 
 RESPONSE LANGUAGE: ${userLanguage === 'es' ? 'SPANISH' : userLanguage.toUpperCase()}
 Your response MUST be in this language. This is mandatory.

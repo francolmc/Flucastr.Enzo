@@ -150,6 +150,24 @@ async function synthesizeFastPathToolOutput(params: {
     recordStageMetric(params.stageMetrics, 'verify', Date.now() - verifyStart, true);
   }
   const evidenceForSynth = verified.context;
+  const synthLang = (params.input.userLanguage ?? 'es').toLowerCase();
+  const calendarSynthRules =
+    params.execName === 'calendar'
+      ? synthLang.startsWith('es')
+        ? `
+AGENDA / CALENDARIO (obligatorio):
+- Cualquier instante terminado en "Z" o rotulado "UTC persistido" es solo tiempo UTC de almacenamiento — NO es tu hora en la pared ni "hora local" del usuario.
+- La hora que debés mencionar al usuario es únicamente la que aparece en "civil (…): fecha, HH:MM" (antes del "—").
+- Prohibido decir que 18:50 u otra hora tomada del tramo UTC es "tu hora local" si ya diste otra hora civil. Una sola hora civil por evento, sin contradicciones.
+`
+        : `
+CALENDAR OUTPUT (mandatory):
+- Any timestamp ending in "Z" or labeled UTC is stored UTC only — never describe it as the user's wall/local time or "your timezone".
+- The user's civil wall time is ONLY the part after "civil ("…"):" before the em dash — use that HH:MM in your wording.
+- Do not give contradictory local times (e.g. 15:50 and 18:50 both as local). Mention a single civil time per event.
+`
+      : '';
+
   const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
 ${params.relevantSkillsSection}
 ${params.requiredTemplateSection}
@@ -159,6 +177,7 @@ TOOL: ${params.execName}
 RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${evidenceForSynth}
 
+${calendarSynthRules}
 Write a response to the user based on this real result.
 Do NOT invent or add information not present in the result.
 If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
@@ -177,12 +196,12 @@ ${
   const synthStart = Date.now();
   try {
     const synthesisResponse = await params.withTimeout(
-      params.baseProvider.complete({
+      params.      baseProvider.complete({
         messages: [
           { role: 'system', content: synthesisPrompt },
           { role: 'user', content: params.input.message },
         ],
-        temperature: 0.7,
+        temperature: params.execName === 'calendar' ? 0.35 : 0.7,
         maxTokens: 512,
       }),
       180_000,

@@ -44,7 +44,8 @@ function formatStoredInstant(ms: number, clock: { tz: string; loc: string } | nu
       timeStyle: 'short',
       hour12: false,
     }).format(ms);
-    return `${utc} (local ${clock.tz}: ${local})`;
+    // Civil time first — models often mistake …Z as "local"; UTC is labeled explicitly.
+    return `civil (${clock.tz}): ${local} — UTC persistido: ${utc}`;
   } catch {
     return utc;
   }
@@ -54,7 +55,13 @@ function linesForEvents(rows: CalendarEventRow[], clock: { tz: string; loc: stri
   if (rows.length === 0) {
     return 'No hay eventos en el rango solicitado.';
   }
-  return rows
+  const head =
+    clock != null
+      ? 'Interpretación: cada "civil (…)" es la hora en la pared del usuario; "UTC persistido:" es solo almacenamiento interno.\n'
+      : '';
+  return (
+    head +
+    rows
     .map((e) => {
       const startLine = formatStoredInstant(e.startAt, clock);
       const tail =
@@ -62,7 +69,8 @@ function linesForEvents(rows: CalendarEventRow[], clock: { tz: string; loc: stri
       const note = e.notes ? ` | ${e.notes}` : '';
       return `- [${e.id}] ${e.title} @ ${startLine}${tail}${note}`;
     })
-    .join('\n');
+      .join('\n')
+  );
 }
 
 export class CalendarTool implements ExecutableTool {
