@@ -7,6 +7,7 @@
  * 2. Heuristic ordered fast-paths (cheap; ESLint many are ES/EN-lexical — multilingual gap, see multilingual audit below):
  *    - trivial greeting / short acknowledgement (`trivialPattern`)
  *    - recall / pending wording (`isLikelyRecallQuery`) → MODERATE
+ *    - persisted agenda / scheduled event (`isLikelyPersistedAgendaOrScheduleIntent`) → MODERATE (narrow ES/EN lexical)
  *    - abstract life planning without filesystem path (`isLikelyAbstractLifePlanningWithoutPaths`) → SIMPLE
  *    - explicit chain phrases (`isLikelyChainedTask`) → COMPLEX
  *    - implicit multi-tool patterns (`impliesMultiToolWorkflow` from taskRoutingHints) → COMPLEX
@@ -19,7 +20,8 @@
  * 4. On LLM JSON parse failure → `fallbackClassification` uses `hasActionVerb` → logs `fallback`.
  *
  * Multilingual audit (high level — lexical heuristics do not adapt to PT/FR/de/zh/…):
- * - Classifier: trivialPattern; isLikelyRecallQuery; isLikelyAbstractLifePlanningWithoutPaths; isLikelyChainedTask;
+ * - Classifier: trivialPattern; isLikelyRecallQuery; isLikelyPersistedAgendaOrScheduleIntent;
+ *   isLikelyAbstractLifePlanningWithoutPaths; isLikelyChainedTask;
  *   isLikelyFactualQuery word lists; isLikelySingleToolTask; hasActionVerb.
  * - taskRoutingHints.impliesMultiToolWorkflow: ES/EN chain + web/read/write combinators only.
  * - More locale-agnostic cues (used only inside helpers): absolute path shapes in messageContainsLikelyAbsolutePath,
@@ -111,6 +113,16 @@ export class Classifier {
       logClassifierRouting('recall_lexical', ComplexityLevel.MODERATE);
       return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool', classifierBranch: 'recall_lexical' };
     }
+    if (this.isLikelyPersistedAgendaOrScheduleIntent(normalizedMessage)) {
+      console.log('[Classifier] Fast-path persisted agenda / schedule → MODERATE');
+      logClassifierRouting('schedule_persist_lexical', ComplexityLevel.MODERATE);
+      return {
+        level: ComplexityLevel.MODERATE,
+        reason: 'persisted calendar or timed reminder — must use calendar tool (never plain-chat “already scheduled”)',
+        suggestedTool: 'calendar',
+        classifierBranch: 'schedule_persist_lexical',
+      };
+    }
     if (this.isLikelyAbstractLifePlanningWithoutPaths(normalizedMessage)) {
       console.log('[Classifier] Fast-path life/task planning (no paths) → SIMPLE');
       logClassifierRouting('life_planning_no_path', ComplexityLevel.SIMPLE);
@@ -199,10 +211,12 @@ SIMPLE — direct conversation, no tools needed:
 - Casual conversation, confirmations, thank you, follow-ups — when the user does not ask for filesystem work, URLs, searches, measurable facts about the outside world, system metrics, persistent memory/recall, or other tool-backed actions on this machine
 - Conceptual or math without external or verifiable data: "how does Y work" (in general), "2+2", "what is 15% of 200" — not real-world facts that may be wrong if outdated (those are MODERATE, web search)
 - Anything answerable without tools, file access, or up-to-date web facts
-- Planning / coaching / lists: "help me manage my day", "daily routine tips", "how should I organize my tasks" when the user did NOT give a concrete absolute folder path to operate on
-- Spanish: "gestión del día a día", "gestionar tareas personales", "necesito organizar mi tiempo" without a path like /home/... or /Users/...
+- Planning / coaching / lists: "help me manage my day", "daily routine tips", "how should I organize my tasks" when the user did NOT ask to persist a timed entry to Enzo agenda/calendar (\`calendar\` tool)
+- Spanish: abstract "gestión del día a día", "necesito organizar mi tiempo" **without** agendar/programar/recording a concrete slot — still SIMPLE only if purely conversational tips
 
 MODERATE — needs exactly ONE tool:
+- **Persisted agenda / reminders with a concrete time or day:** phrasing such as scheduling an appointment, adding to calendar/agenda/cita, programming a timed reminder/reminder at HH:MM, “un evento para las … hoy”. That **always requires the calendar tool** (SQLite) so it appears in the Enzo web agenda — never SIMPLE with prose pretending it was scheduled
+- Spanish: **agendar/programar/añadir al calendario** + concrete time (**15:55**, **hoy**, etc.) → MODERATE
 - Web search: "search for...", "look up...", "what does the web say about...", "busca..."
 - Real-world facts that may be outdated or require verification: current prices, exchange rates, weather, news, recent events, status of a person/company/project, sports results, release dates, any question about "now", "today", "currently", "latest", "recent"
 - Factual questions where being wrong would mislead the user: "who is the CEO of X", "what is the population of Y", "how much does Z cost", "what happened with W"
@@ -264,10 +278,39 @@ Examples:
 "llama a https://api.x.com/data y guárdalo en un archivo" → {"level":"COMPLEX","reason":"chained: curl API call then write file"}
 "necesito gestionar tareas personales y de todos mis trabajos" → {"level":"SIMPLE","reason":"planning conversation, no concrete paths or file ops"}
 "ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
+"¿podemos agendar un evento para las 15:55 horas del día de hoy? Es tomar medicamento." → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
+"schedule a dentist appointment tomorrow at 9:30" → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
 ONLY JSON. NOTHING ELSE.`;
+  }
+
+  /**
+   * User wants a persisted calendar/agenda entry with a concrete slot (not abstract planning tips).
+   * Routed before {@link isLikelyAbstractLifePlanningWithoutPaths} so small models are not allowed to answer in prose-only SIMPLE.
+   */
+  private isLikelyPersistedAgendaOrScheduleIntent(message: string): boolean {
+    const m = message.trim();
+    const n = m.toLowerCase();
+    const timeCue =
+      /\d{1,2}\s*[:h.]\s*\d{2}/.test(m) ||
+      /\b\d{1,2}\s*(?:hrs?\b|h\b|am\b|pm\b)\b/i.test(n) ||
+      /\b(?:hoy|mañana|pasado\s+mañana|today|tomorrow|tonight|esta\s+(?:tarde|mañana|noche)|this\s+(?:morning|afternoon|evening))\b/u.test(
+        n
+      );
+    if (!timeCue) {
+      return false;
+    }
+    return (
+      /\bagendar\b/u.test(m) ||
+      /\bcalendariz(?:ar|cación)\b/u.test(n) ||
+      /\b(?:programar|programemos|programame)\s+(?:un\s+|una\s+)?(?:evento|recordatorio|cita|alarma)\b/u.test(n) ||
+      /\bschedule\s+(?:an?\s+)?(?:event|reminder|appointment)\b/u.test(n) ||
+      /\b(?:crear|creá|crea)\s+(?:un\s+|una\s+)?(?:evento|cita)\b/u.test(n) ||
+      /\bun\s+evento\s+para\b/u.test(n) ||
+      /\b(?:añad(?:eme|ir)|pon(?:eme|é)?)\s+.+\s+(?:en\s+(?:mi|el|tu|su)\s+)?(?:calend(?:ario)?|agenda)\b/u.test(n)
+    );
   }
 
   /**

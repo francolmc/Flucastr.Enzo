@@ -107,6 +107,18 @@ async function runTests() {
   );
   console.log('✓ "qué tengo pendiente de Dash?" → MODERATE (recall fast path)');
 
+  const cAgenda = new Classifier(new QueueProvider([]));
+  const rAgenda = await cAgenda.classify(
+    '¡Hola! ¿podemos agendar un evento para las 15:55 horas del día de hoy? El evento es tomar medicamento.',
+    []
+  );
+  assertEq(rAgenda.level, ComplexityLevel.MODERATE, 'persisted timed agenda should be MODERATE');
+  assertEq(rAgenda.classifierBranch, 'schedule_persist_lexical', 'agenda persist should hit schedule lexical branch');
+  assertEq(rAgenda.suggestedTool, 'calendar', 'agenda lexical path should hint calendar tool');
+  console.log(
+    '✓ "podemos agendar … 15:55 … hoy … medicamento …" → MODERATE + schedule_persist_lexical + calendar hint'
+  );
+
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
   process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
   try {

@@ -209,7 +209,7 @@ export interface ClassificationResult {
   level: ComplexityLevel;
   reason: string;
   /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
-  suggestedTool?: 'web_search';
+  suggestedTool?: 'web_search' | 'calendar';
   /**
    * How complexity was determined: heuristic name, llm, llm_always bypass, fallback, or pre-classified caller.
    * Logged by orchestrator for observability (see ENZO routing plan).

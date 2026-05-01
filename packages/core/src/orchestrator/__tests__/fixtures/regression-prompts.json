@@ -22,5 +22,9 @@
   {
     "message": "crear archivo con una mini historia en /tmp/enzo-regression-story.md",
     "expectedLevel": "MODERATE"
+  },
+  {
+    "message": "¿podemos agendar un recordatorio mañana a las 09:30 para llamar al dentista?",
+    "expectedLevel": "MODERATE"
   }
 ]
