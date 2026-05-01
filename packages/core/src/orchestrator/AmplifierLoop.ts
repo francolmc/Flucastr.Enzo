@@ -45,6 +45,7 @@ import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyP
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 import { messageIndicatesPersistedWriteToAbsolutePath } from './Classifier.js';
 import type { MemoryService } from '../memory/MemoryService.js';
+import { MemoryLessonExtractor } from '../memory/MemoryLessonExtractor.js';
 
 export type AmplifierLoopOptions = {
   maxIterations?: number;
@@ -1213,9 +1214,25 @@ Do NOT search for more information. Use what is provided.`;
             `[AmplifierLoop] Algorithm tool error ${consecutiveAlgorithmToolErrors}/2 at iteration ${iteration}`
           );
           if (consecutiveAlgorithmToolErrors >= 2) {
-            currentContext = this.contextSynthesizer.compress(steps) +
+            currentContext =
+              this.contextSynthesizer.compress(steps) +
               '\n\nAlgorithm terminated early due to repeated tool errors. ' +
               'Do not continue looping. Report failure and ask user to retry with city/country.';
+            if (process.env.ENZO_MEMORY_LESSONS_ON_TOOL_FAILURE === 'true' && this.memoryService) {
+              const lessonExtractor = new MemoryLessonExtractor(this.baseProvider, this.memoryService);
+              void lessonExtractor
+                .extractAndSaveFromAlgorithmFailure({
+                  userId: input.userId,
+                  conversationId: input.conversationId,
+                  requestId: input.requestId,
+                  userMessage: input.message,
+                  observeSnippet: observeStep.output ?? '',
+                  stepsCompressed: this.contextSynthesizer.compress(steps),
+                })
+                .catch((err: unknown) =>
+                  this.log.warn('[AmplifierLoop] lesson persistence failed:', err)
+                );
+            }
             hasEnoughInfo = true;
             break;
           }

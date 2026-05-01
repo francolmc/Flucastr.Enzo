@@ -1,3 +1,6 @@
+/** How a profile memory row entered the store (SQLite memory_entries.source). */
+export type MemoryEntrySource = 'extractor' | 'tool' | 'api' | 'migrated';
+
 export interface Memory {
   id: string;
   userId: string;
@@ -5,6 +8,47 @@ export interface Memory {
   value: string;
   createdAt: number;
   updatedAt: number;
+  /** Present when backed by memory_entries; omitted for legacy rows. */
+  source?: MemoryEntrySource;
+  confidence?: number;
+}
+
+export type MemoryLessonSource = 'tool_failure' | 'user_correction';
+
+/** Durable correction pattern after failures (memory_lessons). */
+export interface MemoryLesson {
+  id: string;
+  userId: string;
+  situation: string;
+  avoid: string;
+  prefer: string;
+  source: MemoryLessonSource;
+  confidence: number;
+  conversationId?: string;
+  requestId?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemoryHistoryItem extends Memory {
+  isCurrent: boolean;
+}
+
+export interface SaveMemoryLessonInput {
+  userId: string;
+  situation: string;
+  avoid: string;
+  prefer: string;
+  source: MemoryLessonSource;
+  confidence: number;
+  conversationId?: string;
+  requestId?: string;
+}
+
+export interface RememberOptions {
+  source?: MemoryEntrySource;
+  confidence?: number;
 }
 
 export interface UsageStat {

@@ -157,6 +157,7 @@ export class Orchestrator {
       getMemoryExtractor: () => this.memoryExtractor,
       sanitizeMemoryBlock: (m, n) => this.sanitizeMemoryBlock(m, n),
       buildUserProfileBlock: (u, p) => this.buildUserProfileBlock(u, p),
+      buildLessonsBlock: (uid, msg) => this.memoryService.buildLessonsBlock(uid, msg),
     };
   }
 
@@ -197,10 +198,7 @@ export class Orchestrator {
       buildUserProfileBlock: (u, p) => this.buildUserProfileBlock(u, p),
       sanitizeMemoryBlock: (m, n) => this.sanitizeMemoryBlock(m, n),
       getMemoryExtractor: () => this.memoryExtractor,
-      recallUserMemories: async (userId) => {
-        const rows = await this.memoryService.recall(userId);
-        return rows.map((m) => ({ key: m.key, value: m.value }));
-      },
+      buildLessonsBlock: (uid, msg) => this.memoryService.buildLessonsBlock(uid, msg),
       getConfigService: () => this.configService,
       getToolRegistry: () => this.toolRegistry,
       getMcpRegistry: () => this.mcpRegistry,

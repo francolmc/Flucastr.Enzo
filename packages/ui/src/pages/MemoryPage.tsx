@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
-import type { UIMemory } from '../types';
+import type { UIMemory, UIMemoryHistoryItem } from '../types';
 import { CANONICAL_MEMORY_KEYS } from '../constants/memoryKeys';
 import { formatRelativeTime } from '../utils/timeFormat';
 import { useEnzoStore } from '../stores/enzoStore';
@@ -19,6 +19,9 @@ export default function MemoryPage() {
   const [draftValue, setDraftValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [pendingDeleteKey, setPendingDeleteKey] = useState<string | null>(null);
+  const [historyKey, setHistoryKey] = useState<string | null>(null);
+  const [historyRows, setHistoryRows] = useState<UIMemoryHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +60,26 @@ export default function MemoryPage() {
     setDraftValue('');
     setEditKey('');
     setPendingDeleteKey(null);
+  };
+
+  const closeHistoryPanel = () => {
+    setHistoryKey(null);
+    setHistoryRows([]);
+  };
+
+  const openHistory = async (key: string) => {
+    setHistoryKey(key);
+    setHistoryLoading(true);
+    setError(null);
+    try {
+      const { history } = await apiClient.getMemoryHistory(userId, key);
+      setHistoryRows(history ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setHistoryRows([]);
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const handleSaveAdd = async () => {
@@ -113,7 +136,10 @@ export default function MemoryPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Memoria</h1>
-          <p className="page-subtitle">Contexto persistente por clave canónica.</p>
+          <p className="page-subtitle">
+          Contexto persistente por clave canónica. Editar o borrar corrige errores human-in-the-loop; el historial muestra versiones previas cuando existen varias escrituras por clave. Si viene vacío pero sí usás Enzo por Telegram, en{' '}
+          <strong>Config → Paso 2</strong> fijá el mismo <strong>User ID</strong> numérico que usa Telegram (no el nombre &quot;franco&quot; por defecto).
+        </p>
         </div>
         <button type="button" className="btn-add-memory" onClick={openAdd}>
           ＋ Agregar memoria
@@ -132,6 +158,8 @@ export default function MemoryPage() {
                 <tr>
                   <th>Key</th>
                   <th>Value</th>
+                  <th>Origen</th>
+                  <th>Conf.</th>
                   <th>Actualizado</th>
                   <th className="col-actions">Acciones</th>
                 </tr>
@@ -139,8 +167,8 @@ export default function MemoryPage() {
               <tbody>
                 {sorted.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="empty-cell">
-                      Sin memorias para este usuario.
+                    <td colSpan={6} className="empty-cell">
+                      Sin memorias para este usuario. Si son datos que creés que ya existen, revisá que el User ID coincida con Telegram (Config).
                     </td>
                   </tr>
                 ) : (
@@ -148,6 +176,10 @@ export default function MemoryPage() {
                     <tr key={m.id}>
                       <td className="td-key">{m.key}</td>
                       <td className="td-value">{m.value}</td>
+                      <td className="td-time">{m.source ?? '—'}</td>
+                      <td className="td-time">
+                        {typeof m.confidence === 'number' ? `${Math.round(m.confidence * 100)}%` : '—'}
+                      </td>
                       <td className="td-time">{formatRelativeTime(m.updatedAt)}</td>
                       <td className="col-actions">
                         {pendingDeleteKey === m.key ? (
@@ -162,6 +194,14 @@ export default function MemoryPage() {
                           </span>
                         ) : (
                           <span className="action-btns">
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="Historial de versiones"
+                              onClick={() => void openHistory(m.key)}
+                            >
+                              📜
+                            </button>
                             <button
                               type="button"
                               className="icon-btn"
@@ -189,6 +229,44 @@ export default function MemoryPage() {
           )}
         </div>
       </div>
+
+      {historyKey !== null && (
+        <div className="memory-panel-backdrop" role="presentation" onClick={closeHistoryPanel}>
+          <aside
+            className="memory-panel surface-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="memory-history-title"
+          >
+            <h2 id="memory-history-title" className="panel-title">
+              Historial: {historyKey}
+            </h2>
+            {historyLoading ? (
+              <p className="muted-pad">Cargando…</p>
+            ) : historyRows.length === 0 ? (
+              <p className="muted-pad">Solo existe la versión actual (sin historial de entradas versionadas).</p>
+            ) : (
+              <ul className="memory-history-list">
+                {historyRows.map((h) => (
+                  <li key={`${h.id}-${h.updatedAt}`} className={h.isCurrent ? 'history-current' : ''}>
+                    <div className="history-meta">
+                      {h.isCurrent ? <strong>Actual</strong> : <span>Archivado</span>}
+                      <span>{formatRelativeTime(h.updatedAt)}</span>
+                      {h.source && <span className="history-source">{h.source}</span>}
+                    </div>
+                    <pre className="history-value">{h.value}</pre>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="panel-actions">
+              <button type="button" className="btn-secondary" onClick={closeHistoryPanel}>
+                Cerrar
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {panelMode !== 'closed' && (
         <div className="memory-panel-backdrop" role="presentation" onClick={closePanel}>

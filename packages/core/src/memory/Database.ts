@@ -3,6 +3,41 @@ import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { migrateMemoryKeysIfNeeded } from './migrations/normalizeMemoryKeys.js';
 
+function migrateLegacyMemoriesIntoMemoryEntries(db: DatabaseSync): void {
+  const countRow = db.prepare('SELECT COUNT(*) as n FROM memory_entries').get() as { n: number };
+  if (countRow.n > 0) {
+    return;
+  }
+  const rows = db
+    .prepare('SELECT id, userId, key, value, createdAt, updatedAt FROM memories')
+    .all() as Array<{
+    id: string;
+    userId: string;
+    key: string;
+    value: string;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+  if (rows.length === 0) {
+    return;
+  }
+  const ins = db.prepare(
+    `INSERT INTO memory_entries (id, userId, key, value, source, confidence, active, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, 'migrated', 1.0, 1, ?, ?)`
+  );
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    for (const r of rows) {
+      ins.run(r.id, r.userId, r.key, r.value, r.createdAt, r.updatedAt);
+    }
+    db.exec('COMMIT');
+    console.log(`[Database] Backfilled memory_entries (${rows.length} row(s)) from memories`);
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 interface DbWrapper {
   run(sql: string, params: any[]): void;
   get(sql: string, params: any[]): any;
@@ -90,6 +125,42 @@ export class DatabaseManager {
       );
     `);
     db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_entries (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        source TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.85,
+        active INTEGER NOT NULL DEFAULT 1,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_active_user_key
+       ON memory_entries(userId, key) WHERE active = 1`
+    );
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_lessons (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        situation TEXT NOT NULL,
+        avoid TEXT NOT NULL,
+        prefer TEXT NOT NULL,
+        source TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        conversationId TEXT,
+        requestId TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_memory_lessons_user_active ON memory_lessons(userId, active, updatedAt DESC)`
+    );
+    db.exec(`
       CREATE TABLE IF NOT EXISTS usage_stats (
         id TEXT PRIMARY KEY,
         requestId TEXT,
@@ -175,6 +246,7 @@ export class DatabaseManager {
     db.exec('CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(userId, createdAt DESC);');
 
     migrateMemoryKeysIfNeeded(db);
+    migrateLegacyMemoriesIntoMemoryEntries(db);
   }
 
   private buildSiblingLegacyJsonPath(sqlitePath: string): string | null {

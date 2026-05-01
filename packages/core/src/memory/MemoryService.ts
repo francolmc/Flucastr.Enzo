@@ -4,13 +4,25 @@ import { normalizeMemoryKey } from './MemoryKeys.js';
 import { Message } from '../providers/types.js';
 import {
   Memory,
+  MemoryLesson,
+  RememberOptions,
+  SaveMemoryLessonInput,
   UsageStat,
   MessageRecord,
   ConversationRecord,
   ConversationSummaryRecord,
   AgentRecord,
   AssistantMessageMetadata,
+  MemoryEntrySource,
+  MemoryHistoryItem,
 } from './types.js';
+import {
+  rankMemoriesByLexicalSimilarity,
+  parseMemoryRecallTopK,
+  selectLessonsForUserMessage,
+  parseLessonsPoolMax,
+} from './MemoryRecallRank.js';
+import { recordMemoryRecallTurn } from './MemoryMetrics.js';
 import { MCPServerConfig } from '../mcp/types.js';
 
 export class MemoryService {
@@ -201,50 +213,272 @@ export class MemoryService {
     return id;
   }
 
-  // Memoria semántica
-  async remember(userId: string, key: string, value: string): Promise<void> {
-    const canonicalKey = normalizeMemoryKey(key);
-    console.log(`[Memory] Guardando: ${userId} → ${canonicalKey}: ${value}`);
-    const now = Date.now();
+  private mapEntryRow(row: {
+    id: string;
+    userId: string;
+    key: string;
+    value: string;
+    createdAt: number;
+    updatedAt: number;
+    source: string;
+    confidence: number;
+  }): Memory {
+    const src = row.source as MemoryEntrySource;
+    const allowed: MemoryEntrySource[] = ['extractor', 'tool', 'api', 'migrated'];
+    return {
+      id: row.id,
+      userId: row.userId,
+      key: row.key,
+      value: row.value,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      source: allowed.includes(src) ? src : undefined,
+      confidence: typeof row.confidence === 'number' ? row.confidence : undefined,
+    };
+  }
 
-    const existing = await this.getAsync(
-      `SELECT id FROM memories WHERE userId = ? AND key = ?`,
-      [userId, canonicalKey]
+  /**
+   * Active profile memories for prompts: optional lexical top‑k vs current user message
+   * (ENZO_MEMORY_RECALL_TOP_K). When absent or 0, returns full active set.
+   */
+  async recallRankedForPrompt(
+    userId: string,
+    queryHint: string | undefined,
+    opts?: { recordMetrics?: boolean }
+  ): Promise<Memory[]> {
+    const all = await this.recall(userId);
+    const topK = parseMemoryRecallTopK();
+    const q = (queryHint ?? '').trim();
+    let selected = all;
+    if (q.length > 0 && topK > 0 && all.length > topK) {
+      selected = rankMemoriesByLexicalSimilarity(q, all, topK);
+      if (opts?.recordMetrics !== false) {
+        recordMemoryRecallTurn({ mode: 'ranked', returnedCountDelta: selected.length });
+      }
+    } else if (opts?.recordMetrics !== false) {
+      recordMemoryRecallTurn({ mode: 'full', returnedCountDelta: all.length });
+    }
+    return selected;
+  }
+
+  // Memoria semántica (memory_entries + mirror en `memories` por compatibilidad)
+  async remember(userId: string, key: string, value: string, options?: RememberOptions): Promise<void> {
+    const canonicalKey = normalizeMemoryKey(key);
+    const source: MemoryEntrySource = options?.source ?? 'tool';
+    const confidence =
+      typeof options?.confidence === 'number' && Number.isFinite(options.confidence)
+        ? Math.min(0.99, Math.max(0, options.confidence))
+        : 0.85;
+    console.log(`[Memory] Guardando: ${userId} → ${canonicalKey}: ${value} (source=${source})`);
+    const now = Date.now();
+    const newId = uuidv4();
+
+    await this.runAsync(
+      `UPDATE memory_entries SET active = 0, updatedAt = ? WHERE userId = ? AND key = ? AND active = 1`,
+      [now, userId, canonicalKey]
     );
 
+    await this.runAsync(
+      `INSERT INTO memory_entries (id, userId, key, value, source, confidence, active, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [newId, userId, canonicalKey, value, source, confidence, now, now]
+    );
+
+    const existing = await this.getAsync(`SELECT id FROM memories WHERE userId = ? AND key = ?`, [userId, canonicalKey]);
+
     if (existing) {
-      console.log(`[Memory] Actualizando memoria existente con id: ${existing.id}`);
-      await this.runAsync(
-        `UPDATE memories SET value = ?, updatedAt = ? WHERE userId = ? AND key = ?`,
-        [value, now, userId, canonicalKey]
-      );
-      console.log(`[Memory] Memoria actualizada`);
+      console.log(`[Memory] Mirror actualizando memories id → ${newId}`);
+      await this.runAsync(`UPDATE memories SET id = ?, value = ?, updatedAt = ? WHERE userId = ? AND key = ?`, [
+        newId,
+        value,
+        now,
+        userId,
+        canonicalKey,
+      ]);
     } else {
-      const id = uuidv4();
-      console.log(`[Memory] Insertando nueva memoria con id: ${id}`);
+      console.log(`[Memory] Mirror insert memories id=${newId}`);
       await this.runAsync(
         `INSERT INTO memories (id, userId, key, value, createdAt, updatedAt)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, userId, canonicalKey, value, now, now]
+        [newId, userId, canonicalKey, value, now, now]
       );
-      console.log(`[Memory] Memoria insertada`);
     }
   }
 
   async recall(userId: string, key?: string): Promise<Memory[]> {
     if (key) {
       const canonicalKey = normalizeMemoryKey(key);
-      return this.allAsync(
+      const rows = await this.allAsync(
+        `SELECT id, userId, key, value, source, confidence, createdAt, updatedAt FROM memory_entries
+         WHERE userId = ? AND key = ? AND active = 1`,
+        [userId, canonicalKey]
+      );
+      if (rows.length > 0) {
+        return rows.map((r) =>
+          this.mapEntryRow(
+            r as {
+              id: string;
+              userId: string;
+              key: string;
+              value: string;
+              source: string;
+              confidence: number;
+              createdAt: number;
+              updatedAt: number;
+            }
+          )
+        );
+      }
+      const legacy = await this.allAsync(
         `SELECT id, userId, key, value, createdAt, updatedAt FROM memories
          WHERE userId = ? AND key = ?`,
         [userId, canonicalKey]
       );
-    } else {
-      return this.allAsync(
-        `SELECT id, userId, key, value, createdAt, updatedAt FROM memories
-         WHERE userId = ?`,
-        [userId]
+      return legacy as Memory[];
+    }
+
+    const rows = await this.allAsync(
+      `SELECT id, userId, key, value, source, confidence, createdAt, updatedAt FROM memory_entries
+       WHERE userId = ? AND active = 1 ORDER BY key ASC`,
+      [userId]
+    );
+    if (rows.length > 0) {
+      return rows.map((r) =>
+        this.mapEntryRow(
+          r as {
+            id: string;
+            userId: string;
+            key: string;
+            value: string;
+            source: string;
+            confidence: number;
+            createdAt: number;
+            updatedAt: number;
+          }
+        )
       );
+    }
+
+    const legacy = await this.allAsync(
+      `SELECT id, userId, key, value, createdAt, updatedAt FROM memories
+       WHERE userId = ? ORDER BY key ASC`,
+      [userId]
+    );
+    return legacy as Memory[];
+  }
+
+  async recallMemoryHistory(userId: string, key: string): Promise<MemoryHistoryItem[]> {
+    const canonicalKey = normalizeMemoryKey(key);
+    const rows = await this.allAsync(
+      `SELECT id, userId, key, value, source, confidence, active, createdAt, updatedAt
+       FROM memory_entries WHERE userId = ? AND key = ?
+       ORDER BY active DESC, updatedAt DESC`,
+      [userId, canonicalKey]
+    );
+    if (rows.length > 0) {
+      return (rows as any[]).map((r: any) => ({
+        ...this.mapEntryRow(r),
+        isCurrent: r.active === 1,
+      }));
+    }
+    const legacy = await this.getAsync(
+      `SELECT id, userId, key, value, createdAt, updatedAt FROM memories WHERE userId = ? AND key = ?`,
+      [userId, canonicalKey]
+    );
+    if (!legacy) {
+      return [];
+    }
+    return [
+      {
+        id: legacy.id,
+        userId: legacy.userId,
+        key: legacy.key,
+        value: legacy.value,
+        createdAt: legacy.createdAt,
+        updatedAt: legacy.updatedAt,
+        isCurrent: true,
+      },
+    ];
+  }
+
+  /** When `currentUserMessage` is set and ENZO_LESSONS_RECALL_TOP_K > 0, ranks lessons vs message (pinned recent + lexical top‑k). */
+  async buildLessonsBlock(userId: string, currentUserMessage?: string): Promise<string> {
+    const pool = parseLessonsPoolMax();
+    const lessons = await this.recallActiveLessons(userId, pool);
+    if (lessons.length === 0) {
+      return '';
+    }
+    const picked = selectLessonsForUserMessage(lessons, currentUserMessage);
+    const lines = picked.map(
+      (l) =>
+        `- [${l.source}] ${l.situation.trim()} — avoid: ${l.avoid.trim()}; prefer: ${l.prefer.trim()}`
+    );
+    return `[LESSONS_FROM_PRIOR_RUNS — scoped to this user]
+${lines.join('\n')}
+Use only when relevant to the current request; never invent new failures from this list.`;
+  }
+
+  async recallActiveLessons(userId: string, limit = 20): Promise<MemoryLesson[]> {
+    const rows = await this.allAsync(
+      `SELECT id, userId, situation, avoid, prefer, source, confidence, conversationId, requestId, active,
+              createdAt, updatedAt FROM memory_lessons
+       WHERE userId = ? AND active = 1
+       ORDER BY updatedAt DESC
+       LIMIT ?`,
+      [userId, limit]
+    );
+    return (rows || []).map((row: any) => ({
+      id: row.id,
+      userId: row.userId,
+      situation: row.situation,
+      avoid: row.avoid,
+      prefer: row.prefer,
+      source: row.source as MemoryLesson['source'],
+      confidence: row.confidence,
+      conversationId: row.conversationId || undefined,
+      requestId: row.requestId || undefined,
+      active: Boolean(row.active),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  async saveMemoryLesson(input: SaveMemoryLessonInput): Promise<void> {
+    const cap = Number(process.env.ENZO_MEMORY_LESSON_MAX_ACTIVE ?? '25');
+    const maxActive = Number.isFinite(cap) ? Math.min(100, Math.max(1, Math.floor(cap))) : 25;
+    const id = uuidv4();
+    const now = Date.now();
+    await this.runAsync(
+      `INSERT INTO memory_lessons (id, userId, situation, avoid, prefer, source, confidence, conversationId, requestId, active, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [
+        id,
+        input.userId,
+        input.situation,
+        input.avoid,
+        input.prefer,
+        input.source,
+        input.confidence,
+        input.conversationId ?? null,
+        input.requestId ?? null,
+        now,
+        now,
+      ]
+    );
+
+    const countRow = await this.getAsync(
+      `SELECT COUNT(*) as c FROM memory_lessons WHERE userId = ? AND active = 1`,
+      [input.userId]
+    );
+    const c = typeof countRow?.c === 'number' ? countRow.c : 0;
+    if (c > maxActive) {
+      const excess = await this.allAsync(
+        `SELECT id FROM memory_lessons WHERE userId = ? AND active = 1 ORDER BY updatedAt ASC LIMIT ?`,
+        [input.userId, c - maxActive]
+      );
+      for (const row of excess) {
+        await this.runAsync(`UPDATE memory_lessons SET active = 0, updatedAt = ? WHERE id = ?`, [Date.now(), row.id]);
+      }
     }
   }
 
@@ -527,10 +761,13 @@ export class MemoryService {
 
   async deleteMemory(userId: string, key: string): Promise<void> {
     const canonicalKey = normalizeMemoryKey(key);
-    await this.runAsync(
-      `DELETE FROM memories WHERE userId = ? AND key = ?`,
-      [userId, canonicalKey]
-    );
+    const now = Date.now();
+    await this.runAsync(`UPDATE memory_entries SET active = 0, updatedAt = ? WHERE userId = ? AND key = ?`, [
+      now,
+      userId,
+      canonicalKey,
+    ]);
+    await this.runAsync(`DELETE FROM memories WHERE userId = ? AND key = ?`, [userId, canonicalKey]);
   }
 
   async getConversations(userId: string, limit: number = 20): Promise<ConversationRecord[]> {

@@ -11,12 +11,30 @@ export {
 export type { MemoryKey } from './MemoryKeys.js';
 export type {
   Memory,
+  MemoryHistoryItem,
+  MemoryLesson,
+  MemoryLessonSource,
+  MemoryEntrySource,
+  RememberOptions,
   UsageStat,
   MessageRecord,
   ConversationRecord,
   ConversationSummaryRecord,
   AgentRecord,
 } from './types.js';
+export { getMemoryMetricsSnapshot, resetMemoryMetricsForTests, type MemoryMetricSnapshot } from './MemoryMetrics.js';
+export { MemoryLessonExtractor } from './MemoryLessonExtractor.js';
+export {
+  rankMemoriesByLexicalSimilarity,
+  parseMemoryRecallTopK,
+  rankLessonsByLexicalSimilarity,
+  lessonRankingDocument,
+  selectLessonsForUserMessage,
+  parseLessonsRecallTopK,
+  parseLessonsAlwaysPin,
+  parseLessonsMaxInPrompt,
+  parseLessonsPoolMax,
+} from './MemoryRecallRank.js';
 export {
   estimateTextTokens,
   buildConversationContext,

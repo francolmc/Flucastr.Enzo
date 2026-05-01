@@ -197,3 +197,47 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.memory-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.memory-history-list li {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  background: var(--surface-elevated);
+}
+
+.memory-history-list li.history-current {
+  border-color: var(--accent);
+}
+
+.memory-history-list .history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.memory-history-list .history-source {
+  opacity: 0.85;
+}
+
+.memory-history-list .history-value {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}

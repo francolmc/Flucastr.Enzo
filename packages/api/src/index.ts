@@ -15,6 +15,7 @@ import {
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
+  getMemoryMetricsSnapshot,
 } from "@enzo/core";
 import {
   createDefaultToolRegistry,
@@ -211,6 +212,7 @@ app.get("/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     model: configService.getPrimaryModel(),
+    memoryMetrics: getMemoryMetricsSnapshot(),
   });
 });
 

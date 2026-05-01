@@ -1,5 +1,6 @@
 import { ExecutableTool, ToolResult } from '../tools/types.js';
 import { MemoryService } from './MemoryService.js';
+import { rankMemoriesByLexicalSimilarity, parseMemoryRecallTopK } from './MemoryRecallRank.js';
 
 export class RecallTool implements ExecutableTool {
   name = 'recall';
@@ -18,13 +19,26 @@ export class RecallTool implements ExecutableTool {
   ) {}
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const query = String(input.query ?? '').toLowerCase();
+    const query = String(input.query ?? '').trim();
     try {
       const memories = await this.memoryService.recall(this.userId);
-      const matches = memories.filter(
-        (memory: { key: string; value: string }) =>
-          memory.key.includes(query) || memory.value.toLowerCase().includes(query)
-      );
+      if (!memories.length) {
+        return { success: true, output: 'No stored memories for this user.' };
+      }
+      const topK = parseMemoryRecallTopK();
+      const qLower = query.toLowerCase();
+      let matches =
+        query.length === 0
+          ? memories
+          : memories.filter(
+              (memory: { key: string; value: string }) =>
+                memory.key.toLowerCase().includes(qLower) || memory.value.toLowerCase().includes(qLower)
+            );
+      if (matches.length === 0 && query.length > 0) {
+        matches = rankMemoriesByLexicalSimilarity(query, memories, Math.max(topK, 5));
+      } else if (topK > 0 && matches.length > topK) {
+        matches = rankMemoriesByLexicalSimilarity(query || memories.map((m) => m.key).join(' '), matches, topK);
+      }
       if (!matches.length) {
         return { success: true, output: `No memories found for: ${query}` };
       }

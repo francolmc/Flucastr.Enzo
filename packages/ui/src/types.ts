@@ -193,6 +193,14 @@ export interface UIMemory {
   value: string;
   createdAt: number;
   updatedAt: number;
+  /** extractor | tool | api | migrated — when persisted as memory_entries */
+  source?: string;
+  confidence?: number;
+}
+
+/** Timeline row from GET /api/memory/:userId/:key/history */
+export interface UIMemoryHistoryItem extends UIMemory {
+  isCurrent: boolean;
 }
 
 export interface EchoResult {

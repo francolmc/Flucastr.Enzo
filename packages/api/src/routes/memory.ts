@@ -4,6 +4,31 @@ import { MemoryService, parseMemoryKeyFromRequest } from '@enzo/core';
 export function createMemoryRouter(memoryService: MemoryService): Router {
   const router = Router();
 
+  router.get('/api/memory/:userId/:key/history', async (req: Request, res: Response) => {
+    try {
+      const { userId, key } = req.params;
+      const canonicalKey = parseMemoryKeyFromRequest(key);
+      if (!canonicalKey) {
+        res.status(400).json({
+          error: 'ValidationError',
+          message: 'Invalid or unknown memory key',
+          statusCode: 400,
+        });
+        return;
+      }
+
+      const history = await memoryService.recallMemoryHistory(userId, canonicalKey);
+      res.json({ history });
+    } catch (error) {
+      console.error('[GET /api/memory/:userId/:key/history] error:', error);
+      res.status(500).json({
+        error: 'RetrievalError',
+        message: error instanceof Error ? error.message : 'Failed to retrieve memory history',
+        statusCode: 500,
+      });
+    }
+  });
+
   router.get('/api/memory/:userId', async (req: Request, res: Response) => {
     try {
       const { userId } = req.params;
@@ -59,7 +84,7 @@ export function createMemoryRouter(memoryService: MemoryService): Router {
         return;
       }
 
-      await memoryService.remember(userId, canonicalKey, valueStr);
+      await memoryService.remember(userId, canonicalKey, valueStr, { source: 'api', confidence: 1 });
       res.status(201).json({ success: true, key: canonicalKey });
     } catch (error) {
       console.error('[POST /api/memory/:userId] error:', error);
@@ -106,7 +131,7 @@ export function createMemoryRouter(memoryService: MemoryService): Router {
         return;
       }
 
-      await memoryService.remember(userId, canonicalKey, valueStr);
+      await memoryService.remember(userId, canonicalKey, valueStr, { source: 'api', confidence: 1 });
       res.json({ success: true, key: canonicalKey });
     } catch (error) {
       console.error('[PUT /api/memory/:userId/:key] error:', error);

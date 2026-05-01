@@ -1,7 +1,9 @@
 import { LLMProvider } from '../providers/types.js';
+import type { Memory } from './types.js';
 import { MemoryService } from './MemoryService.js';
 import { normalizeMemoryKey } from './MemoryKeys.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { recordMemoryExtract } from './MemoryMetrics.js';
 
 export interface ExtractedFact {
   key: string;
@@ -32,6 +34,7 @@ export class MemoryExtractor {
 
       if (facts.length === 0) {
         console.log('[MemoryExtractor] No facts to save from this conversation');
+        recordMemoryExtract(true);
         return;
       }
 
@@ -44,13 +47,18 @@ export class MemoryExtractor {
           console.log(`[MemoryExtractor] Skipping low-confidence fact "${normalizedKey}" (${confidence.toFixed(2)})`);
           continue;
         }
-        await this.memoryService.remember(userId, normalizedKey, fact.value);
+        await this.memoryService.remember(userId, normalizedKey, fact.value, {
+          source: 'extractor',
+          confidence,
+        });
         console.log(
           `[MemoryExtractor] Saved: ${normalizedKey} = ${fact.value}` +
           (normalizedKey !== fact.key ? ` (normalized from "${fact.key}")` : '')
         );
       }
+      recordMemoryExtract(true);
     } catch (error) {
+      recordMemoryExtract(false);
       console.error('[MemoryExtractor] Error extracting facts:', error);
     }
   }
@@ -62,32 +70,47 @@ export class MemoryExtractor {
   }
 
   /**
-   * Carga las memorias del usuario y las formatea como bloque
-   * para inyectar en el system prompt.
+   * Ranked profile memories for this turn (lexical top‑k when ENZO_MEMORY_RECALL_TOP_K > 0).
    */
-  async buildMemoryBlock(userId: string): Promise<string> {
-    try {
-      const memories = await this.memoryService.recall(userId);
+  async getRankedMemoriesForTurn(userId: string, queryHint?: string): Promise<Memory[]> {
+    return this.memoryService.recallRankedForPrompt(userId, queryHint, { recordMetrics: true });
+  }
 
-      if (!memories || memories.length === 0) {
-        return '';
-      }
-
-      const facts = memories
-        .map(m => `${m.key}: ${m.value}`)
-        .join(', ');
-
-      return `[IMPORTANT - USER PROFILE: ${facts}]
+  /** Formats ranked memories into the injected profile block (no sanitization — Orchestrator sanitizes assistant name clashes). */
+  formatMemoryFactsBlock(memories: Memory[]): string {
+    if (!memories?.length) {
+      return '';
+    }
+    const facts = memories.map((m) => `${m.key}: ${m.value}`).join(', ');
+    return `[IMPORTANT - USER PROFILE: ${facts}]
 The user asking you questions has this profile above.
 Use this ONLY for facts about the user (their name, city, profession, etc.).
 If the user asks about THEMSELVES (e.g. "what is my name?"), answer from this profile.
 If the user asks about YOU (assistant), DO NOT use this profile; use assistant identity instructions instead.
 Never treat user profile fields as assistant identity.
 Always answer as if YOU know the user personally.`;
+  }
+
+  /**
+   * Carga memorias rankeadas vs el mensaje actual y las formatea para el system prompt.
+   */
+  async buildMemoryBlock(userId: string, queryHint?: string): Promise<string> {
+    try {
+      const memories = await this.getRankedMemoriesForTurn(userId, queryHint);
+      return this.formatMemoryFactsBlock(memories);
     } catch (error) {
       console.error('[MemoryExtractor] Error building memory block:', error);
       return '';
     }
+  }
+
+  /** Single pass: ranked slice + formatted block + raw rows for Amplifier delegation. */
+  async buildRankedMemoryBlock(userId: string, queryHint?: string): Promise<{ block: string; facts: Memory[] }> {
+    const facts = await this.getRankedMemoriesForTurn(userId, queryHint);
+    return {
+      facts,
+      block: this.formatMemoryFactsBlock(facts),
+    };
   }
 
   /**
@@ -98,7 +121,7 @@ Always answer as if YOU know the user personally.`;
     assistantResponse: string
   ): Promise<ExtractedFact[]> {
     const systemPrompt = `Extract facts about the user from this conversation.
-Respond ONLY with JSON: {"facts": [{"key": "...", "value": "..."}]}
+Respond ONLY with JSON: {"facts": [{"key": "...", "value": "...", "confidence": 0.0-1.0}]}
 
 ALLOWED KEYS (use exactly these, nothing else):
 name, city, profession, projects, preferences, routines, family, other
@@ -106,6 +129,7 @@ name, city, profession, projects, preferences, routines, family, other
 Rules:
 - Use only the allowed keys above
 - If unsure which key fits, use "other"
+- Include "confidence" per fact (how sure it is grounded in the user's words)
 - Only extract concrete, durable facts
 - If nothing to extract, return {"facts": []}
 - Extract facts ONLY from what the USER said

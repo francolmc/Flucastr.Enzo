@@ -29,6 +29,40 @@ interface MessageStatus {
   };
 }
 
+/** localStorage — must match Telegram user id (`String(telegram numeric id)`) to see Telegram memories in the web UI. */
+const WEB_USER_ID_STORAGE_KEY = 'enzo_web_user_id';
+
+function readStoredWebUserId(): string | null {
+  if (typeof globalThis.window === 'undefined') {
+    return null;
+  }
+  try {
+    const v = localStorage.getItem(WEB_USER_ID_STORAGE_KEY);
+    if (v != null && v.trim().length > 0) {
+      return v.trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const VITE_META = typeof import.meta !== 'undefined'
+  ? (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {}
+  : {};
+
+function resolveInitialUserId(): string {
+  const fromStorage = readStoredWebUserId();
+  if (fromStorage) {
+    return fromStorage;
+  }
+  const env = VITE_META.VITE_ENZO_USER_ID;
+  if (typeof env === 'string' && env.trim().length > 0) {
+    return env.trim();
+  }
+  return 'franco';
+}
+
 interface EnzoStore {
   // Chat
   userId: string;
@@ -122,11 +156,13 @@ interface EnzoStore {
   deleteConversation: (conversationId: string) => Promise<void>;
   getMessageStatus: (messageId: string) => MessageStatus | undefined;
   setSelectedAgentId: (agentId: string | null) => void;
+  /** Align web UI with Telegram: use the same numeric string Telegram uses (`/memory` logs it). Persisted locally. */
+  setUserId: (id: string) => void;
 }
 
 export const useEnzoStore = create<EnzoStore>((set, get) => ({
   // Initial state
-  userId: 'franco',
+  userId: resolveInitialUserId(),
   selectedAgentId: null,
   conversationId: null,
   conversations: [],
@@ -563,6 +599,17 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
 
   setSelectedAgentId: (agentId: string | null) => {
     set({ selectedAgentId: agentId });
+  },
+
+  setUserId: (id: string) => {
+    const trimmed = id.trim();
+    const next = trimmed.length > 0 ? trimmed : 'franco';
+    set({ userId: next });
+    try {
+      localStorage.setItem(WEB_USER_ID_STORAGE_KEY, next);
+    } catch {
+      /* ignore quota / private mode */
+    }
   },
 
   deleteConversation: async (conversationId: string) => {

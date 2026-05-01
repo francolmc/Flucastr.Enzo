@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 import { buildOrchestratorRuntimeHints } from './runtimeHostContext.js';
+import type { MemoryExtractor } from '../memory/MemoryExtractor.js';
 
 /** Bound callbacks from Orchestrator — keeps process pipeline out of the class body. */
 export type OrchestratorProcessBindings = {
@@ -25,9 +26,8 @@ export type OrchestratorProcessBindings = {
   ): AssistantProfile;
   buildUserProfileBlock(userId: string, profile: UserProfile): string;
   sanitizeMemoryBlock(memoryBlock: string, assistantName: string): string;
-  getMemoryExtractor(): { buildMemoryBlock(userId: string): Promise<string> };
-  /** Key/value memories for delegation (Amplifier userMemories). */
-  recallUserMemories(userId: string): Promise<Array<{ key: string; value: string }>>;
+  getMemoryExtractor(): MemoryExtractor;
+  buildLessonsBlock(userId: string, currentUserMessage?: string): Promise<string>;
   getConfigService(): ConfigService | undefined;
   getToolRegistry(): { getToolDefinitions(): Tool[] };
   getMcpRegistry(): { getMCPToolsForOrchestrator(): Tool[] };
@@ -69,7 +69,7 @@ export async function executeOrchestratorProcess(
   const assistantProfile = b.resolveAssistantProfile(configAssistantProfile, selectedAgent);
   const userProfile = configUserProfile ?? {};
 
-  const { context: conv, memoryBlock } = await prepareConversationTurnContext(b, {
+  const { context: conv, memoryBlock, rankedMemoryFacts } = await prepareConversationTurnContext(b, {
     conversationId: input.conversationId,
     userId: input.userId,
     message: input.message,
@@ -125,7 +125,7 @@ export async function executeOrchestratorProcess(
 
   const runtimeHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
 
-  const userMemories = await b.recallUserMemories(input.userId);
+  const userMemories = rankedMemoryFacts;
 
   let amplifierResult: AmplifierResult;
   const runtimeAmplifierLoop = b.createAmplifierLoop(runtimeProvider);

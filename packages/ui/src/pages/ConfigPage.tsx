@@ -24,9 +24,12 @@ function ConfigPage() {
     agents,
     assistantProfile,
     userProfile,
+    userId,
+    setUserId,
     loadConfig,
     loadAgents,
     loadProfilesConfig,
+    loadConversations,
     updateProfilesConfig,
     createAgent,
     updateAgent,
@@ -62,6 +65,11 @@ function ConfigPage() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingSystem, setIsSavingSystem] = useState(false);
   const [isSavingVoice, setIsSavingVoice] = useState(false);
+  const [webUserIdDraft, setWebUserIdDraft] = useState(userId);
+
+  useEffect(() => {
+    setWebUserIdDraft(userId);
+  }, [userId]);
   const [voiceForm, setVoiceForm] = useState<{
     whisperUrl: string;
     whisperLanguage: string;
@@ -364,6 +372,43 @@ function ConfigPage() {
         <div className="config-section-header">
           <span className="badge">Paso 2 · Personalizar</span>
           <h2>Identidad del asistente y perfil de usuario</h2>
+        </div>
+
+        <div className="surface-card" style={{ marginBottom: '1rem', padding: '1rem 1.25rem' }}>
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>ID de usuario (memoria, proyectos y chat)</h3>
+          <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            En <strong>Telegram</strong> tus datos van guardados con tu ID numérico (ej. <code>123456789</code>). En la web,
+            antes se usaba fijo el nombre <code>franco</code>. Si sólo ves memoria vacía en el Dashboard o en{' '}
+            <strong>Memoria</strong>, pon aquí <strong>el mismo ID que usa Telegram</strong> (podés verlo en logs al enviar{' '}
+            <code>/memory</code> o en la consola del bot). Así ves conversaciones y hechos persistentes sin duplicarlos en otra cuenta.
+          </p>
+          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+            <label htmlFor="webEnzoUserId">User ID (texto)</label>
+            <input
+              id="webEnzoUserId"
+              type="text"
+              value={webUserIdDraft}
+              onChange={(e) => setWebUserIdDraft(e.target.value)}
+              placeholder="Ej. 123456789 o franco"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="form-actions" style={{ marginTop: 0 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setUserId(webUserIdDraft);
+                void loadConversations();
+                alert(`ID guardado: ${webUserIdDraft.trim() || 'franco'}. Lista de chats actualizada; revisá Dashboard y Memoria.`);
+              }}
+            >
+              Guardar ID local
+            </button>
+          </div>
+          <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.82rem' }}>
+            Opcional: variable de build <code>VITE_ENZO_USER_ID</code> como valor inicial si no hay nada guardado en este navegador.
+          </p>
         </div>
 
         <form className="agent-form surface-card" onSubmit={handleSaveProfiles}>

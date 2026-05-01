@@ -13,6 +13,7 @@ import {
   SkillsResponse,
   InjectedSkillUsage,
   UIMemory,
+  UIMemoryHistoryItem,
   EchoEngineStatus,
   EchoResult,
   Notification,
@@ -422,6 +423,13 @@ class ApiClient {
       {
         method: 'DELETE',
       }
+    );
+  }
+
+  async getMemoryHistory(userId: string, key: string): Promise<{ history: UIMemoryHistoryItem[] }> {
+    return this.request(
+      `/memory/${encodeURIComponent(userId)}/${encodeURIComponent(key)}/history`,
+      {}
     );
   }
 
