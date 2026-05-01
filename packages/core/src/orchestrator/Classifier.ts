@@ -1,7 +1,40 @@
+/**
+ * Complexity routing (`SIMPLE` | `MODERATE` | `COMPLEX`):
+ *
+ * 1. Optional bypass: when `process.env.ENZO_CLASSIFIER_LLM_ALWAYS === 'true'`, skip all heuristic
+ *    fast-paths below and classify only via LLM (+ history in `messages`). Logs `classifierBranch: llm_always`.
+ *
+ * 2. Heuristic ordered fast-paths (cheap; ESLint many are ES/EN-lexical — multilingual gap, see multilingual audit below):
+ *    - trivial greeting / short acknowledgement (`trivialPattern`)
+ *    - recall / pending wording (`isLikelyRecallQuery`) → MODERATE
+ *    - abstract life planning without filesystem path (`isLikelyAbstractLifePlanningWithoutPaths`) → SIMPLE
+ *    - explicit chain phrases (`isLikelyChainedTask`) → COMPLEX
+ *    - implicit multi-tool patterns (`impliesMultiToolWorkflow` from taskRoutingHints) → COMPLEX
+ *    - factual / temporal lexical lists (`isLikelyFactualQuery`) → MODERATE + suggestedTool web_search
+ *    - single-tool lexical cues (`isLikelySingleToolTask`) → MODERATE
+ *
+ * 3. If no heuristic matches → LLM JSON classifier (`requestClassification`).
+ *
+ * 4. On LLM JSON parse failure → `fallbackClassification` uses `hasActionVerb` → logs `fallback`.
+ *
+ * Multilingual audit (high level — lexical heuristics do not adapt to PT/FR/de/zh/…):
+ * - Classifier: trivialPattern; isLikelyRecallQuery; isLikelyAbstractLifePlanningWithoutPaths; isLikelyChainedTask;
+ *   isLikelyFactualQuery word lists; isLikelySingleToolTask; hasActionVerb.
+ * - taskRoutingHints.impliesMultiToolWorkflow: ES/EN chain + web/read/write combinators only.
+ * - More locale-agnostic cues (used only inside helpers): absolute path shapes in messageContainsLikelyAbsolutePath,
+ *   file extensions in impliesMultiToolWorkflow (\\.md etc.).
+ *
+ * Duplicate gate: AmplifierLoop.amplify re-runs impliesMultiToolWorkflow on the raw user message even after
+ * Classifier returned SIMPLE/MODERATE — intentional second line of defense before runSimpleModerateFastPath.
+ */
 import { LLMProvider, Message } from '../providers/types.js';
 import { ClassificationResult, ComplexityLevel } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+
+function logClassifierRouting(branch: string, level: ComplexityLevel): void {
+  console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+}
 
 export class Classifier {
   private provider: LLMProvider;
@@ -12,40 +45,94 @@ export class Classifier {
 
   async classify(message: string, history: Message[]): Promise<ClassificationResult> {
     const normalizedMessage = message.trim();
-    // Fast-path: mensajes triviales no necesitan llamada al LLM
+    const llmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS === 'true';
+
+    const systemPrompt = this.buildClassifierSystemPrompt();
+    const messages: Message[] = [...history, { role: 'user', content: message }];
+
+    if (llmAlways) {
+      console.log('[Classifier] ENZO_CLASSIFIER_LLM_ALWAYS — skipping lexical fast-paths');
+      return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true);
+    }
+
     const trivialPattern = /^(hola|hello|hi|hey|buenos días|buenas|good morning|gracias|thanks|ok|sí|no|chao|bye|adiós)[.!?]?$/i;
     if (trivialPattern.test(normalizedMessage)) {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
-      return { level: ComplexityLevel.SIMPLE, reason: 'trivial message' };
+      logClassifierRouting('trivial', ComplexityLevel.SIMPLE);
+      return { level: ComplexityLevel.SIMPLE, reason: 'trivial message', classifierBranch: 'trivial' };
     }
     if (this.isLikelyRecallQuery(normalizedMessage.toLowerCase())) {
       console.log('[Classifier] Fast-path recall query → MODERATE');
-      return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool' };
+      logClassifierRouting('recall_lexical', ComplexityLevel.MODERATE);
+      return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool', classifierBranch: 'recall_lexical' };
     }
     if (this.isLikelyAbstractLifePlanningWithoutPaths(normalizedMessage)) {
       console.log('[Classifier] Fast-path life/task planning (no paths) → SIMPLE');
-      return { level: ComplexityLevel.SIMPLE, reason: 'abstract task or daily planning without concrete file paths' };
+      logClassifierRouting('life_planning_no_path', ComplexityLevel.SIMPLE);
+      return {
+        level: ComplexityLevel.SIMPLE,
+        reason: 'abstract task or daily planning without concrete file paths',
+        classifierBranch: 'life_planning_no_path',
+      };
     }
     if (this.isLikelyChainedTask(normalizedMessage)) {
-      return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow' };
+      logClassifierRouting('chained_explicit_lexical', ComplexityLevel.COMPLEX);
+      return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow', classifierBranch: 'chained_explicit_lexical' };
     }
     if (impliesMultiToolWorkflow(normalizedMessage)) {
-      return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow' };
+      logClassifierRouting('multi_tool_implicit_classifier', ComplexityLevel.COMPLEX);
+      return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow', classifierBranch: 'multi_tool_implicit_classifier' };
     }
-    // After chained/multitool: temporal words in the same message must not preempt COMPLEX.
     if (this.isLikelyFactualQuery(normalizedMessage)) {
       console.log('[Classifier] Fast-path factual query → MODERATE');
+      logClassifierRouting('factual_lexical', ComplexityLevel.MODERATE);
       return {
         level: ComplexityLevel.MODERATE,
         reason: 'Real-world factual query that requires web search for accurate answer',
         suggestedTool: 'web_search',
+        classifierBranch: 'factual_lexical',
       };
     }
     if (this.isLikelySingleToolTask(normalizedMessage)) {
-      return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent' };
+      logClassifierRouting('single_tool_lexical', ComplexityLevel.MODERATE);
+      return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent', classifierBranch: 'single_tool_lexical' };
     }
 
-    const systemPrompt = `You are a task complexity classifier. Respond ONLY with JSON, no extra text.
+    return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false);
+  }
+
+  private async runLlmClassification(
+    systemPrompt: string,
+    messages: Message[],
+    normalizedMessage: string,
+    fromLlmAlwaysBypass: boolean
+  ): Promise<ClassificationResult> {
+    try {
+      const parsed = await this.requestClassification(systemPrompt, messages);
+      if (!parsed) {
+        return this.fallbackClassification(normalizedMessage, 'Classification JSON parse failed');
+      }
+
+      const level = Object.values(ComplexityLevel).includes(parsed.level)
+        ? parsed.level
+        : ComplexityLevel.SIMPLE;
+
+      const llmBranch = fromLlmAlwaysBypass ? 'llm_always' : 'llm';
+      logClassifierRouting(llmBranch, level);
+      return {
+        level,
+        reason: parsed.reason || 'No reason provided',
+        classifierBranch: llmBranch,
+      };
+    } catch (error) {
+      console.error('Classifier.classify() error:', error);
+      return this.fallbackClassification(normalizedMessage, 'Classification failed due to error');
+    }
+  }
+
+  private buildClassifierSystemPrompt(): string {
+    return `You are a task complexity classifier. Respond ONLY with JSON, no extra text.
+The user's message may be in ANY natural language — infer intent regardless of language; map to level using the SAME rules below.
 
 {"level":"SIMPLE","reason":"..."}
 {"level":"MODERATE","reason":"..."}
@@ -55,7 +142,7 @@ LEVELS — apply in order, first match wins:
 
 SIMPLE — direct conversation, no tools needed:
 - Greetings: "hello", "hi", "good morning", "how are you"
-- Casual conversation, confirmations, thank you, follow-ups
+- Casual conversation, confirmations, thank you, follow-ups — when the user does not ask for filesystem work, URLs, searches, measurable facts about the outside world, system metrics, persistent memory/recall, or other tool-backed actions on this machine
 - Conceptual or math without external or verifiable data: "how does Y work" (in general), "2+2", "what is 15% of 200" — not real-world facts that may be wrong if outdated (those are MODERATE, web search)
 - Anything answerable without tools, file access, or up-to-date web facts
 - Planning / coaching / lists: "help me manage my day", "daily routine tips", "how should I organize my tasks" when the user did NOT give a concrete absolute folder path to operate on
@@ -89,8 +176,8 @@ COMPLEX — when there are 2 or more chained actions, OR when reorganizing/movin
   "I am a developer and I live in X" = MODERATE (two facts to remember, not chained actions)
 
 CRITICAL RULES:
-- When in doubt, check for action verbs (buscar, crear, leer, guardar, search, create, read, save). If present → MODERATE
-- When truly in doubt with no action verbs → SIMPLE
+- Decide from meaning: SIMPLE when no single tool-backed action fits; MODERATE when exactly one such action fits; COMPLEX when multiple chained actions fit
+- When truly in doubt with nothing that requires tools → SIMPLE
 - A greeting is ALWAYS SIMPLE, never MODERATE or COMPLEX
 - One search OR one file operation = MODERATE, never COMPLEX
 - COMPLEX requires explicit chaining ("and then", "luego", "después", "with the result")
@@ -123,27 +210,6 @@ Examples:
 "ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
 
 ONLY JSON. NOTHING ELSE.`;
-
-    const messages: Message[] = [...history, { role: 'user', content: message }];
-
-    try {
-      const parsed = await this.requestClassification(systemPrompt, messages);
-      if (!parsed) {
-        return this.fallbackClassification(message, 'Classification JSON parse failed');
-      }
-
-      const level = Object.values(ComplexityLevel).includes(parsed.level)
-        ? parsed.level
-        : ComplexityLevel.SIMPLE;
-
-      return {
-        level,
-        reason: parsed.reason || 'No reason provided',
-      };
-    } catch (error) {
-      console.error('Classifier.classify() error:', error);
-      return this.fallbackClassification(message, 'Classification failed due to error');
-    }
   }
 
   /** True if the message likely contains a concrete absolute path the shell should use. */
@@ -274,9 +340,11 @@ ONLY JSON. NOTHING ELSE.`;
   private fallbackClassification(message: string, reason: string): ClassificationResult {
     const level = this.hasActionVerb(message) ? ComplexityLevel.MODERATE : ComplexityLevel.SIMPLE;
     console.warn(`[Classifier] ${reason}. Falling back to ${level}.`);
+    logClassifierRouting('fallback_action_verb_hint', level);
     return {
       level,
       reason,
+      classifierBranch: 'fallback_action_verb_hint',
     };
   }
 

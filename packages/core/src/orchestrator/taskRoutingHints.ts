@@ -1,6 +1,9 @@
 /**
  * Heuristics for tasks that need multiple tools or a full ReAct loop even when the user
  * does not use explicit chain words ("and then", "luego", …).
+ *
+ * Multilingual note: patterns are largely Spanish/English lexical; same intent in other
+ * languages may not match (Classifier + AmplifierLoop both call this — see Classifier.ts header).
  */
 export function impliesMultiToolWorkflow(message: string): boolean {
   const n = message.toLowerCase();

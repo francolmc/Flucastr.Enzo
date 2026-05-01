@@ -67,19 +67,20 @@ PLACEHOLDER PATHS — ABSOLUTELY FORBIDDEN in execute_command:
 - If the user asks for abstract "task management" or "organize my work/life" without giving real directories to move: return "steps": [] (empty array) — do NOT invent mkdir/mv commands
 
 Respond ONLY with valid JSON, no extra text:
+Each "tool" MUST be exactly one string from Available tools (${toolsList}) — never invent names.
 {
   "steps": [
     {
       "id": 1,
       "description": "what this step does",
-      "tool": "tool_name",
+      "tool": "web_search",
       "input": "exact description of input for this tool",
       "dependsOn": null
     },
     {
       "id": 2,
       "description": "what this step does",
-      "tool": "tool_name",
+      "tool": "write_file",
       "input": "use result from step 1",
       "dependsOn": 1
     }

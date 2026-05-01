@@ -44,6 +44,7 @@ async function runTests() {
   const cHello = new Classifier(new QueueProvider([]));
   const r0 = await cHello.classify('hola', []);
   assertEq(r0.level, ComplexityLevel.SIMPLE, '"hola" should be SIMPLE');
+  assertEq(r0.classifierBranch, 'trivial', '"hola" should use trivial fast path branch');
   console.log('✓ "hola" → SIMPLE (fast path)');
 
   const cMath = new Classifier(
@@ -51,6 +52,7 @@ async function runTests() {
   );
   const r1 = await cMath.classify('cuánto es 2+2', []);
   assertEq(r1.level, ComplexityLevel.SIMPLE, '"cuánto es 2+2" should be SIMPLE (LLM path with mock)');
+  assertEq(r1.classifierBranch, 'llm', 'LLM path should set classifierBranch llm');
   console.log('✓ "cuánto es 2+2" → SIMPLE (mocked LLM)');
 
   const cAtacama = new Classifier(
@@ -64,6 +66,7 @@ async function runTests() {
   const r3 = await cCeo.classify('quién es el CEO de Apple?', []);
   assertEq(r3.level, ComplexityLevel.MODERATE, 'CEO / Apple should be MODERATE');
   assertEq(r3.suggestedTool, 'web_search', 'CEO should suggest web_search on factual fast path');
+  assertEq(r3.classifierBranch, 'factual_lexical', 'CEO query should hit factual lexical branch');
   console.log('✓ "quién es el CEO de Apple?" → MODERATE (factual fast path)');
 
   const cDollar = new Classifier(new QueueProvider([]));
@@ -84,11 +87,27 @@ async function runTests() {
   const cDash = new Classifier(new QueueProvider([]));
   const r7 = await cDash.classify('qué tengo pendiente de Dash?', []);
   assertEq(r7.level, ComplexityLevel.MODERATE, 'Dash pending should be MODERATE');
+  assertEq(r7.classifierBranch, 'recall_lexical', 'Dash recall should use recall lexical branch');
   assertCondition(
     r7.reason.toLowerCase().includes('recall') && !r7.reason.toLowerCase().includes('web_search'),
     'Dash query should be recall, not a web search classification'
   );
   console.log('✓ "qué tengo pendiente de Dash?" → MODERATE (recall fast path)');
+
+  const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
+  process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
+  try {
+    const cLlmAlways = new Classifier(new QueueProvider(['{"level":"SIMPLE","reason":"greeting ambiguous"}']));
+    const r8 = await cLlmAlways.classify('hola', []);
+    assertEq(r8.level, ComplexityLevel.SIMPLE, 'ENZO_CLASSIFIER_LLM_ALWAYS: mocked LLM should win over trivial regex');
+    assertEq(r8.classifierBranch, 'llm_always', 'ENZO_CLASSIFIER_LLM_ALWAYS should tag branch llm_always');
+  } finally {
+    process.env.ENZO_CLASSIFIER_LLM_ALWAYS = prevLlmAlways;
+    if (prevLlmAlways === undefined) {
+      delete process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
+    }
+  }
+  console.log('✓ ENZO_CLASSIFIER_LLM_ALWAYS skips trivial regex and uses llm_always branch');
 
   console.log('\nAll Classifier proactive-path table tests passed.');
 }

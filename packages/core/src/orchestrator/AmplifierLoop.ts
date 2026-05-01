@@ -308,6 +308,16 @@ No markdown. No prose.`;
     }
 
     const skipFastPathForMultiTool = impliesMultiToolWorkflow(input.message);
+    if (skipFastPathForMultiTool) {
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          fastPathSkippedReason: 'implies_multi_tool_workflow',
+          classifiedLevel: input.classifiedLevel,
+        })
+      );
+    }
 
     if (
       (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE) &&
@@ -339,7 +349,9 @@ No markdown. No prose.`;
     }
 
     if (skipFastPathForMultiTool && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
-      this.log.info('[AmplifierLoop] Fast-path disabled: implicit multi-tool workflow detected');
+      this.log.info(
+        '[AmplifierLoop] Fast-path disabled: impliesMultiToolWorkflow (see taskRoutingHints; also used in Classifier before LLM)'
+      );
     }
 
     if (hasMultiStepSkillRequirement && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {

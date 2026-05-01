@@ -141,15 +141,23 @@ export function buildToolsPrompt(tools: Tool[]): string {
     )
     .join('\n');
 
+  const exactNames = tools.map((t) => t.name).join(', ');
+
   return `AVAILABLE TOOLS:
 ${toolList}
 
-To use a tool, respond with ONLY this JSON:
-{"tool":"tool_name","input":{"param":"value"}}
+CANONICAL TOOL CALL (only when execution is needed):
+{"action":"tool","tool":"<exact_name>","input":{...}}
 
-To respond directly without a tool, write plain text.
-To delegate to a specialized agent:
+The "tool" value MUST be one of these strings exactly — never invent or rename tools:
+${exactNames}
+
+Casual replies, greetings, math, conceptual chat without side effects → write plain text only (no JSON).
+To delegate:
 {"action":"delegate","agent":"agent_name","task":"description","reason":"why"}
 
-ONE action per response. No text before or after the JSON.`;
+When in a reasoning loop with nothing left to execute:
+{"action":"none"}
+
+ONE JSON object per message when using JSON — no prose before or after it.`;
 }

@@ -3,7 +3,8 @@ import { ExecutableTool, ToolResult } from './types.js';
 
 export class ExecuteCommandTool implements ExecutableTool {
   name = 'execute_command';
-  description = 'Execute a shell command and return its output';
+  description =
+    'Execute a shell command on THIS host only and return its output. Commands must match the runtime OS described in prompts (POSIX vs Windows paths and utilities); do not reuse command lines copied from another OS.';
   parameters = {
     type: 'object' as const,
     properties: {

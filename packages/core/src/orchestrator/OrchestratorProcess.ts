@@ -94,10 +94,22 @@ export async function executeOrchestratorProcess(
 
   const classifyStart = Date.now();
   const classification = input.classifiedLevel
-    ? { level: input.classifiedLevel, reason: 'pre-classified' }
+    ? {
+        level: input.classifiedLevel,
+        reason: 'pre-classified',
+        classifierBranch: 'pre_classified',
+      }
     : await new Classifier(runtimeProvider).classify(input.message, classifierMessages);
   const classifyDurationMs = Date.now() - classifyStart;
   console.log(`[Orchestrator] Message classified as: ${classification.level}`);
+  console.log(
+    JSON.stringify({
+      event: 'EnzoRouting',
+      phase: 'orchestrator_after_classify',
+      classifierBranch: classification.classifierBranch ?? 'unset',
+      level: classification.level,
+    })
+  );
 
   const tools: Tool[] = b.getToolRegistry().getToolDefinitions();
   const mcpTools = b.getMcpRegistry().getMCPToolsForOrchestrator();

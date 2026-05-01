@@ -81,6 +81,39 @@ function resolveOsLabel(input: AmplifierInput): string {
   return input.runtimeHints?.osLabel ?? humanOsLabel();
 }
 
+function applyCompletionToolCallsToText(
+  messageContent: string,
+  toolCalls: Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
+): string {
+  if (!toolCalls?.length) return messageContent.trim();
+  const tc = toolCalls[0]!;
+  let args: Record<string, unknown> =
+    typeof tc.arguments === 'object' && tc.arguments !== null && !Array.isArray(tc.arguments)
+      ? (tc.arguments as Record<string, unknown>)
+      : {};
+  if (typeof tc.arguments === 'string') {
+    try {
+      const parsed = JSON.parse(tc.arguments) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      args = {};
+    }
+  }
+  const jsonLine = JSON.stringify({ action: 'tool', tool: tc.name, input: args });
+  const trimmed = messageContent.trim();
+  return trimmed ? `${jsonLine}\n${trimmed}` : jsonLine;
+}
+
+function buildUnknownToolUserMessage(allowlist: string, userLanguage?: string): string {
+  const lang = (userLanguage ?? 'es').toLowerCase();
+  if (lang.startsWith('en')) {
+    return `That capability is not available here. For casual chat you do not need a tool. When you do need the host, I can use only these exact tools: ${allowlist}.`;
+  }
+  return `Esa capacidad no está disponible en este entorno. Para charlar o conversar no hace falta ninguna herramienta especial. Cuando sí corresponda usar el equipo, solo puedo usar estas herramientas (nombres exactos): ${allowlist}.`;
+}
+
 /**
  * SIMPLE / MODERATE fast path: one model call, optional single tool + synthesis.
  */
@@ -128,15 +161,18 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const relevantSkillsSection = buildRelevantSkillsSection(preResolvedSkills);
   const requiredTemplateSection = extractOutputTemplates(preResolvedSkills);
 
+  const exactAllowlist = mergedToolDefs.map((t) => t.name).join(', ');
+
   const toolUsageRule = isModerate
-    ? `You MUST use one of the tools above to answer this request. Do NOT answer from memory.`
+    ? `MODERATE ROUTING: If the user needs disk/shell, web search, memory, email, MCP, or any side effect on this host, respond with exactly ONE JSON tool call; "tool" MUST be one of: ${exactAllowlist}. If the message is only casual chat, a greeting, math, your identity, or conceptual talk with no need for tools, respond in plain text only (no JSON). Never invent tool names.`
     : `If you can answer directly without tools, respond with plain text.`;
 
   const moderateToolJsonOnly = isModerate
     ? `
 
-CRITICAL: When you need to use a tool, respond with ONLY the JSON object.
+CRITICAL: When you need a tool, respond with ONLY the JSON object.
 No text before, no text after, no explanation.
+When the user needs no tool-backed action, reply in plain text and skip JSON entirely.
 WRONG: "Ejecutando el comando... {"action":"tool"...}"
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/franco"}}
 
@@ -147,7 +183,6 @@ If you include any text outside the JSON, the tool will not execute.
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
   const dateLine = formatFastPathDateLine(input);
-  const toolNames = executableTools.map((t) => t.name).join(', ');
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
@@ -158,13 +193,14 @@ OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${ho
 ${toolsPrompt}
 ${skillListSection}
 ${relevantSkillsSection}
-To use a tool, respond ONLY with JSON (no extra text, no markdown):
-{"tool":"TOOL_NAME","input":{PARAMS}}
+When a tool is required, respond ONLY with canonical JSON (no prose, no markdown fences):
+{"action":"tool","tool":"<exact_name_from_below>","input":{...}}
+
+Exact tool names registered in this runtime (includes MCP as listed above): ${exactAllowlist}
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-AVAILABLE TOOLS (use ONLY these exact names): ${toolNames}
 Never invent tool names. If you cannot complete the task with these tools, respond in plain text.
-MCP tools are listed above as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
+MCP tools appear as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
 WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
 
@@ -217,12 +253,15 @@ If responding with plain text (no tool), write in this language.`;
   let rawContent: string;
   let firstResponse;
   const fastThinkStart = Date.now();
+  const useNativeFastPathTools =
+    process.env.ENZO_NATIVE_TOOL_CALLING === 'true' && mergedToolDefs.length > 0;
   try {
     firstResponse = await withTimeout(
       baseProvider.complete({
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
         temperature: 0.3,
         maxTokens: 384,
+        ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
       }),
       180_000,
       'SIMPLE first call'
@@ -234,43 +273,64 @@ If responding with plain text (no tool), write in this language.`;
   }
   recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
 
-  rawContent = (firstResponse.content ?? '').trim();
+  rawContent = applyCompletionToolCallsToText(
+    firstResponse.content ?? '',
+    firstResponse.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
+  );
   log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
 
   let finalContent = rawContent;
 
   let normalizedContent = rawContent;
+  let plainTextFromModerateRetry: string | null = null;
   if (isModerate && !normalizedContent.startsWith('{')) {
-    const forcedTool = '';
     const strictPrompt = `${buildAssistantIdentityPrompt(input)}
-You failed to return a valid tool JSON in a MODERATE request.
-Return ONLY JSON now. No prose, no markdown, no narration before or after the object.
-${forcedTool ? `You MUST use tool "${forcedTool}".` : 'You MUST use one of the available tools.'}
-Format:
-{"action":"tool","tool":"TOOL_NAME","input":{...}}`;
+The prior reply was not valid tool JSON for a request that may need tools.
+
+Return EXACTLY ONE of:
+A) One JSON object only (no prose): {"action":"tool","tool":"<name>","input":{...}}
+   where <name> is copied exactly from: ${exactAllowlist}
+B) If the user's message needs no tool-backed action: one short plain-text reply — no JSON, no markdown.
+
+Never invent tool names.`;
     try {
       const retry = await withTimeout(
         baseProvider.complete({
           messages: [
             { role: 'system', content: strictPrompt },
+            ...resolveAmplifierDialogueMessages(input),
             { role: 'user', content: input.message },
           ],
           temperature: 0,
           maxTokens: 220,
+          ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
         }),
         60_000,
         'SIMPLE moderate strict-tool retry'
       );
-      const retried = (retry.content ?? '').trim();
-      if (retried.startsWith('{') || extractFirstJsonObject(retried)) {
-        normalizedContent = retried.startsWith('{') ? retried : extractFirstJsonObject(retried) ?? retried;
+      const retried = applyCompletionToolCallsToText(
+        retry.content ?? '',
+        retry.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
+      ).trim();
+      const extractedObj = retried.startsWith('{') ? retried : extractFirstJsonObject(retried);
+      if (extractedObj) {
+        normalizedContent = extractedObj;
         log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced tool JSON');
+      } else if (retried.length > 0) {
+        plainTextFromModerateRetry = retried;
+        normalizedContent = '';
+        log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced plain text');
       }
     } catch (retryErr) {
       log.warn('[AmplifierLoop] SIMPLE path - strict moderation retry failed:', retryErr);
     }
   }
-  if (!rawContent.startsWith('{')) {
+
+  if (plainTextFromModerateRetry !== null) {
+    finalContent = plainTextFromModerateRetry;
+  }
+
+  if (plainTextFromModerateRetry === null && !normalizedContent.startsWith('{')) {
     const toolnamePattern = rawContent.match(/^(\w+)\s*(\{[\s\S]+)/);
     if (toolnamePattern) {
       const possibleTool = toolnamePattern[1].toLowerCase();
@@ -317,14 +377,16 @@ Format:
         log.info('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
       }
     }
-
   }
 
-  if (normalizedContent.startsWith('{')) {
+  let ncParse = normalizedContent;
+  let consumedAllowlistParseRetry = false;
+
+  attemptParseLoop: while (plainTextFromModerateRetry === null && ncParse.startsWith('{')) {
     try {
-      const parsedResult = parseFirstJsonObject<any>(normalizedContent, { tryRepair: true });
+      const parsedResult = parseFirstJsonObject<any>(ncParse, { tryRepair: true });
       if (!parsedResult) {
-        const repairedCandidate = repairJsonString(normalizedContent);
+        const repairedCandidate = repairJsonString(ncParse);
         const repairedResult = parseFirstJsonObject<any>(repairedCandidate, { tryRepair: true });
         if (!repairedResult) {
           throw new Error('JSON inválido incluso después de reparación');
@@ -332,7 +394,7 @@ Format:
         log.info('[AmplifierLoop] SIMPLE path - JSON reparado exitosamente');
       }
       const parsed = (
-        parsedResult ?? parseFirstJsonObject<any>(repairJsonString(normalizedContent), { tryRepair: true })
+        parsedResult ?? parseFirstJsonObject<any>(repairJsonString(ncParse), { tryRepair: true })
       )!.value;
       let { toolName, toolInput } = normalizeFastPathToolCall(parsed, executableTools);
 
@@ -362,7 +424,7 @@ Format:
             toolInput = correctedCall.toolInput;
             resolved = resolveFastPathToolForExecution(toolName, mergedToolDefs, executableTools);
             if (!resolved) {
-              finalContent = `No se pudo resolver la herramienta tras la corrección: ${toolName}`;
+              finalContent = buildUnknownToolUserMessage(exactAllowlist, input.userLanguage);
               log.warn(`[AmplifierLoop] SIMPLE path - unresolved after correction: ${toolName}`);
             } else {
               execName = resolved.name;
@@ -505,11 +567,59 @@ ${
         }
       } else if (toolName && toolName !== 'none') {
         log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
-        finalContent = `No pude ejecutar la acción "${toolName}". Intentá de nuevo.`;
+        if (
+          process.env.ENZO_FASTPATH_ALLOWLIST_RETRY === 'true' &&
+          !consumedAllowlistParseRetry
+        ) {
+          consumedAllowlistParseRetry = true;
+          try {
+            const allowlistRepair = await withTimeout(
+              baseProvider.complete({
+                messages: [
+                  {
+                    role: 'system',
+                    content: `${buildAssistantIdentityPrompt(input)}
+The assistant tried to call a tool that does not exist. Output EXACTLY one of:
+(1) {"action":"tool","tool":"<name>","input":{...}} where <name> is one of: ${exactAllowlist}
+(2) Plain text if no tool fits the user message.`,
+                  },
+                  ...resolveAmplifierDialogueMessages(input),
+                  { role: 'user', content: input.message },
+                ],
+                temperature: 0,
+                maxTokens: 280,
+                ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
+              }),
+              60_000,
+              'SIMPLE allowlist-tool retry'
+            );
+            let mergedTxt = applyCompletionToolCallsToText(
+              allowlistRepair.content ?? '',
+              allowlistRepair.toolCalls as Array<{
+                name: string;
+                arguments: Record<string, unknown> | string;
+              }>
+            ).trim();
+            const extractedRepair = mergedTxt.startsWith('{')
+              ? mergedTxt
+              : extractFirstJsonObject(mergedTxt);
+            if (extractedRepair) {
+              ncParse = extractedRepair;
+              log.info('[AmplifierLoop] SIMPLE path - allowlist retry yielded new JSON');
+              continue attemptParseLoop;
+            }
+          } catch (allowErr) {
+            log.warn('[AmplifierLoop] SIMPLE path - allowlist retry failed:', allowErr);
+          }
+        }
+        finalContent = buildUnknownToolUserMessage(exactAllowlist, input.userLanguage);
+        break attemptParseLoop;
       }
+      break attemptParseLoop;
     } catch (err) {
       log.warn('[AmplifierLoop] SIMPLE path - error procesando tool:', err);
       finalContent = 'Tuve un problema procesando tu solicitud. ¿Podés reformularla?';
+      break attemptParseLoop;
     }
   }
 

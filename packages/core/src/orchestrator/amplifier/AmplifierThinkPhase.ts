@@ -148,8 +148,8 @@ or anything that could have changed, use web_search.
 Do not answer from memory when web_search is available.
 If you are unsure whether to search — search.
 
-CRITICAL: To use a tool, respond ONLY with this EXACT JSON format:
-{"tool":"TOOL_NAME","input":{"param":"value"}}
+CRITICAL — follow the canonical format inside AVAILABLE TOOLS above.
+Use {"action":"tool","tool":"<exact_name_from_that_list>","input":{...}}. Never invent a tool name.
 
 CORRECT examples:
 {"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}

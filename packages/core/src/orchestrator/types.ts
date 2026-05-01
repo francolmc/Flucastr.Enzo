@@ -200,6 +200,11 @@ export interface ClassificationResult {
   reason: string;
   /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
   suggestedTool?: 'web_search';
+  /**
+   * How complexity was determined: heuristic name, llm, llm_always bypass, fallback, or pre-classified caller.
+   * Logged by orchestrator for observability (see ENZO routing plan).
+   */
+  classifierBranch?: string;
 }
 
 export interface OrchestratorInput {
