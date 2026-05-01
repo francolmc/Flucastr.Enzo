@@ -37,6 +37,12 @@ import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import { messageIndicatesPersistedWriteToAbsolutePath } from '../Classifier.js';
+import { extractFilePath } from '../../utils/PathExtractor.js';
+
+const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
+const FAST_PATH_MAX_TOKENS_PERSIST = 2048;
+const MODERATE_STRICT_RETRY_MAX_TOKENS_DEFAULT = 220;
+const MODERATE_STRICT_RETRY_MAX_TOKENS_PERSIST = 2048;
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
   classifiedLevel: ComplexityLevel;
@@ -113,6 +119,208 @@ function buildUnknownToolUserMessage(allowlist: string, userLanguage?: string): 
     return `That capability is not available here. For casual chat you do not need a tool. When you do need the host, I can use only these exact tools: ${allowlist}.`;
   }
   return `Esa capacidad no está disponible en este entorno. Para charlar o conversar no hace falta ninguna herramienta especial. Cuando sí corresponda usar el equipo, solo puedo usar estas herramientas (nombres exactos): ${allowlist}.`;
+}
+
+async function synthesizeFastPathToolOutput(params: {
+  baseProvider: LLMProvider;
+  withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  input: AmplifierInput;
+  relevantSkillsSection: string;
+  requiredTemplateSection: string;
+  execName: string;
+  toolOutput: string;
+  steps: Step[];
+  modelsUsed: Set<string>;
+  verifyBeforeSynthesize: boolean;
+  stageMetrics: StageMetrics;
+  log: AmplifierLoopLog;
+}): Promise<string> {
+  const verifyStart = Date.now();
+  const verified = await runVerifyBeforeSynthesizeIfEnabled(
+    { baseProvider: params.baseProvider, withTimeout: params.withTimeout },
+    params.input,
+    params.toolOutput,
+    params.steps.length + 1,
+    params.modelsUsed,
+    params.verifyBeforeSynthesize
+  );
+  if (verified.step) {
+    params.steps.push(verified.step);
+    recordStageMetric(params.stageMetrics, 'verify', Date.now() - verifyStart, true);
+  }
+  const evidenceForSynth = verified.context;
+  const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
+${params.relevantSkillsSection}
+${params.requiredTemplateSection}
+You executed a tool and got this result:
+
+TOOL: ${params.execName}
+RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
+${evidenceForSynth}
+
+Write a response to the user based on this real result.
+Do NOT invent or add information not present in the result.
+If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
+Do NOT explain the internal process or mention tools.
+If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
+Template rules have higher priority than "natural phrasing".
+Do not change labels/order/emoji/sections from the chosen template.
+When a required field is missing in the tool result, keep the format and use "N/D" for that field.
+
+${
+  params.input.userLanguage && params.input.userLanguage !== 'es'
+    ? `CRITICAL: Write your response in ${params.input.userLanguage.toUpperCase()}. NOT in Spanish.`
+    : 'Write your response in Spanish (es).'
+}`;
+
+  const synthStart = Date.now();
+  try {
+    const synthesisResponse = await params.withTimeout(
+      params.baseProvider.complete({
+        messages: [
+          { role: 'system', content: synthesisPrompt },
+          { role: 'user', content: params.input.message },
+        ],
+        temperature: 0.7,
+        maxTokens: 512,
+      }),
+      180_000,
+      'SIMPLE synthesis'
+    );
+    if (synthesisResponse) {
+      recordStageMetric(params.stageMetrics, 'synthesize', Date.now() - synthStart, true);
+    }
+    return synthesisResponse?.content?.trim() ? synthesisResponse.content.trim() : params.toolOutput;
+  } catch (synthErr) {
+    params.log.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
+    recordStageMetric(params.stageMetrics, 'synthesize', Date.now() - synthStart, false);
+    return params.toolOutput;
+  }
+}
+
+/**
+ * Two-phase fallback: generate file body then write_file.execute when JSON fast path failed but the user requested persistence.
+ */
+async function attemptPersistWriteRecovery(params: {
+  input: AmplifierInput;
+  baseProvider: LLMProvider;
+  withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  executableTools: ExecutableTool[];
+  mcpRegistry?: MCPRegistry;
+  toolsUsed: Set<string>;
+  stageMetrics: StageMetrics;
+  steps: Step[];
+  modelsUsed: Set<string>;
+  log: AmplifierLoopLog;
+  verifyBeforeSynthesize: boolean;
+  relevantSkillsSection: string;
+  requiredTemplateSection: string;
+}): Promise<string> {
+  const writeTool = params.executableTools.find((t) => t.name === 'write_file');
+  if (!writeTool) {
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? 'A file save was requested, but write_file is not available in this environment — nothing was written to disk.'
+      : 'Pediste guardar un archivo, pero write_file no está disponible en este entorno — no se escribió nada en disco.';
+  }
+
+  const filePath = extractFilePath(params.input.message);
+  if (!filePath) {
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? 'I could not detect the file path in your message. Send the full absolute path (for example /home/you/file.md).'
+      : 'No pude detectar la ruta del archivo en tu mensaje. Indica la ruta absoluta completa (por ejemplo /home/usuario/archivo.md).';
+  }
+
+  const genSystem = `${buildAssistantIdentityPrompt(params.input)}
+The user wants a new file created or overwritten at a path they specified. Output ONLY the full body of that file (Markdown or plain text as appropriate). No preamble, no closing commentary, no claim that the file was saved on disk. Start directly with the file content.`;
+
+  let body = '';
+  try {
+    const gen = await params.withTimeout(
+      params.baseProvider.complete({
+        messages: [
+          { role: 'system', content: genSystem },
+          { role: 'user', content: params.input.message },
+        ],
+        temperature: 0.5,
+        maxTokens: 2048,
+      }),
+      180_000,
+      'persist recovery content gen'
+    );
+    body = (gen.content ?? '').trim();
+  } catch (e) {
+    params.log.error('[AmplifierLoop] persist recovery content gen failed:', e);
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? 'I could not generate the file content. Please try again.'
+      : 'No pude generar el contenido del archivo. ¿Podés intentar de nuevo?';
+  }
+
+  if (!body) {
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? 'Generated content was empty; the file was not written. Please rephrase your request.'
+      : 'El contenido generado quedó vacío; no escribí el archivo. ¿Podés reformular el pedido?';
+  }
+
+  const preparedInput = { path: filePath, content: body };
+  const validationError = validateToolInput(
+    'write_file',
+    preparedInput,
+    params.executableTools,
+    params.mcpRegistry
+  );
+  if (validationError) {
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? `Could not prepare the write operation: ${validationError}`
+      : `No pude preparar la escritura: ${validationError}`;
+  }
+
+  const actStart = Date.now();
+  let rawToolOutput = '';
+  try {
+    const result = await writeTool.execute(preparedInput);
+    rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
+    const actOk = result.success && !rawToolOutput.toLowerCase().startsWith('error');
+    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, actOk);
+    if (!result.success) {
+      const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+      const fallbackErr = lang.startsWith('en') ? 'Error writing the file.' : 'Error al escribir el archivo.';
+      return rawToolOutput || result.error || fallbackErr;
+    }
+  } catch (execErr) {
+    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, false);
+    params.log.error('[AmplifierLoop] persist recovery write failed:', execErr);
+    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+    return lang.startsWith('en')
+      ? 'There was an error writing the file to disk.'
+      : 'Tuve un error al escribir el archivo en disco.';
+  }
+
+  params.toolsUsed.add('write_file');
+  params.log.info(`[AmplifierLoop] persist recovery: write_file ok at ${filePath}`);
+
+  if (shouldReturnRawToolOutput('write_file', params.input.message, rawToolOutput)) {
+    return rawToolOutput;
+  }
+
+  return synthesizeFastPathToolOutput({
+    baseProvider: params.baseProvider,
+    withTimeout: params.withTimeout,
+    input: params.input,
+    relevantSkillsSection: params.relevantSkillsSection,
+    requiredTemplateSection: params.requiredTemplateSection,
+    execName: 'write_file',
+    toolOutput: rawToolOutput,
+    steps: params.steps,
+    modelsUsed: params.modelsUsed,
+    verifyBeforeSynthesize: params.verifyBeforeSynthesize,
+    stageMetrics: params.stageMetrics,
+    log: params.log,
+  });
 }
 
 /**
@@ -275,7 +483,7 @@ If responding with plain text (no tool), write in this language.`;
       baseProvider.complete({
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
         temperature: 0.3,
-        maxTokens: 384,
+        maxTokens: persistToPathRequested ? FAST_PATH_MAX_TOKENS_PERSIST : FAST_PATH_MAX_TOKENS_DEFAULT,
         ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
       }),
       180_000,
@@ -299,7 +507,15 @@ If responding with plain text (no tool), write in this language.`;
   let normalizedContent = rawContent;
   let plainTextFromModerateRetry: string | null = null;
   if (isModerate && !normalizedContent.startsWith('{')) {
-    const strictPrompt = `${buildAssistantIdentityPrompt(input)}
+    const strictPrompt = persistToPathRequested
+      ? `${buildAssistantIdentityPrompt(input)}
+The prior reply was not valid tool JSON. The user asked to CREATE or SAVE a file at an absolute path on this machine — you MUST use write_file.
+
+Output ONLY one JSON object (no prose, no markdown fences):
+{"action":"tool","tool":"write_file","input":{"path":"<verbatim absolute path from the user's message>","content":"<complete file body>"}}
+
+Use the exact path from the user's message. Do not invent tool names.`
+      : `${buildAssistantIdentityPrompt(input)}
 The prior reply was not valid tool JSON for a request that may need tools.
 
 Return EXACTLY ONE of:
@@ -317,7 +533,9 @@ Never invent tool names.`;
             { role: 'user', content: input.message },
           ],
           temperature: 0,
-          maxTokens: 220,
+          maxTokens: persistToPathRequested
+            ? MODERATE_STRICT_RETRY_MAX_TOKENS_PERSIST
+            : MODERATE_STRICT_RETRY_MAX_TOKENS_DEFAULT,
           ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
         }),
         60_000,
@@ -331,10 +549,12 @@ Never invent tool names.`;
       if (extractedObj) {
         normalizedContent = extractedObj;
         log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced tool JSON');
-      } else if (retried.length > 0) {
+      } else if (retried.length > 0 && !persistToPathRequested) {
         plainTextFromModerateRetry = retried;
         normalizedContent = '';
         log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced plain text');
+      } else if (retried.length > 0 && persistToPathRequested) {
+        log.info('[AmplifierLoop] SIMPLE path - persist retry got prose; will attempt two-phase recovery if needed');
       }
     } catch (retryErr) {
       log.warn('[AmplifierLoop] SIMPLE path - strict moderation retry failed:', retryErr);
@@ -510,72 +730,20 @@ Never invent tool names.`;
                 finalContent = verbatimLead + toolOutput;
                 log.info('[AmplifierLoop] SIMPLE path - síntesis omitida (output directo)');
               } else {
-                const verifyStart = Date.now();
-                const verified = await runVerifyBeforeSynthesizeIfEnabled(
-                  { baseProvider, withTimeout },
+                finalContent = await synthesizeFastPathToolOutput({
+                  baseProvider,
+                  withTimeout,
                   input,
+                  relevantSkillsSection,
+                  requiredTemplateSection,
+                  execName,
                   toolOutput,
-                  steps.length + 1,
+                  steps,
                   modelsUsed,
-                  !!verifyBeforeSynthesize
-                );
-                if (verified.step) {
-                  steps.push(verified.step);
-                  recordStageMetric(stageMetrics, 'verify', Date.now() - verifyStart, true);
-                }
-                const evidenceForSynth = verified.context;
-
-                const synthesisPrompt = `${buildAssistantIdentityPrompt(input)}
-${relevantSkillsSection}
-${requiredTemplateSection}
-You executed a tool and got this result:
-
-TOOL: ${execName}
-RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
-${evidenceForSynth}
-
-Write a response to the user based on this real result.
-Do NOT invent or add information not present in the result.
-If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
-Do NOT explain the internal process or mention tools.
-If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
-Template rules have higher priority than "natural phrasing".
-Do not change labels/order/emoji/sections from the chosen template.
-When a required field is missing in the tool result, keep the format and use "N/D" for that field.
-
-${
-  input.userLanguage && input.userLanguage !== 'es'
-    ? `CRITICAL: Write your response in ${input.userLanguage.toUpperCase()}. NOT in Spanish.`
-    : 'Write your response in Spanish (es).'
-}`;
-
-                let synthesisResponse;
-                const synthStart = Date.now();
-                try {
-                  synthesisResponse = await withTimeout(
-                    baseProvider.complete({
-                      messages: [
-                        { role: 'system', content: synthesisPrompt },
-                        { role: 'user', content: input.message },
-                      ],
-                      temperature: 0.7,
-                      maxTokens: 512,
-                    }),
-                    180_000,
-                    'SIMPLE synthesis'
-                  );
-                } catch (synthErr) {
-                  log.error('[AmplifierLoop] SIMPLE path - síntesis falló:', synthErr);
-                  synthesisResponse = null;
-                  recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, false);
-                }
-                if (synthesisResponse) {
-                  recordStageMetric(stageMetrics, 'synthesize', Date.now() - synthStart, true);
-                }
-
-                finalContent = synthesisResponse?.content?.trim()
-                  ? synthesisResponse.content.trim()
-                  : toolOutput;
+                  verifyBeforeSynthesize: !!verifyBeforeSynthesize,
+                  stageMetrics,
+                  log,
+                });
               }
             }
           }
@@ -636,6 +804,24 @@ The assistant tried to call a tool that does not exist. Output EXACTLY one of:
       finalContent = 'Tuve un problema procesando tu solicitud. ¿Podés reformularla?';
       break attemptParseLoop;
     }
+  }
+
+  if (persistToPathRequested && !toolsUsed.has('write_file')) {
+    finalContent = await attemptPersistWriteRecovery({
+      input,
+      baseProvider,
+      withTimeout,
+      executableTools,
+      mcpRegistry,
+      toolsUsed,
+      stageMetrics,
+      steps,
+      modelsUsed,
+      log,
+      verifyBeforeSynthesize: !!verifyBeforeSynthesize,
+      relevantSkillsSection,
+      requiredTemplateSection,
+    });
   }
 
   if (!finalContent) {
