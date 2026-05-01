@@ -40,7 +40,11 @@ import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
-import { messageIndicatesPersistedWriteToAbsolutePath } from './Classifier.js';
+import {
+  messageIndicatesPersistedWriteToAbsolutePath,
+  messageLooksLikeCalendarListQuery,
+  messageLooksLikePersistedAgendaScheduleRequest,
+} from './Classifier.js';
 import type { MemoryService } from '../memory/MemoryService.js';
 import { MemoryLessonExtractor } from '../memory/MemoryLessonExtractor.js';
 
@@ -312,7 +316,31 @@ No markdown. No prose.`;
       );
     }
 
+    const calendarCorpusFastPath = [input.originalMessage, input.message].filter(Boolean).join('\n');
+    const lexicalCalendarListIntent =
+      this.executableTools.some((t) => t.name === 'calendar') &&
+      messageLooksLikeCalendarListQuery(calendarCorpusFastPath) &&
+      !messageLooksLikePersistedAgendaScheduleRequest(calendarCorpusFastPath);
+
     let fastPathLevel = input.classifiedLevel;
+    if (fastPathLevel === ComplexityLevel.SIMPLE && lexicalCalendarListIntent) {
+      fastPathLevel = ComplexityLevel.MODERATE;
+      this.log.info(
+        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (Enzo persisted agenda list — calendar tool lexical)'
+      );
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          reclassifiedTo: 'MODERATE',
+          reason: 'calendar_list_lexical',
+          priorLevel: input.classifiedLevel,
+        })
+      );
+    }
+
+    const calendarListBypassesMultiStepBlock = lexicalCalendarListIntent;
+
     if (
       fastPathLevel === ComplexityLevel.SIMPLE &&
       messageIndicatesPersistedWriteToAbsolutePath(input.message)
@@ -332,10 +360,23 @@ No markdown. No prose.`;
       );
     }
 
+    if (calendarListBypassesMultiStepBlock && hasMultiStepSkillRequirement) {
+      this.log.info(
+        '[AmplifierLoop] Calendar list query: staying on SIMPLE/MODERATE fast path (calendar list locked prompt) despite multi-step skill plan'
+      );
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_fast_path',
+          calendarListLexicalBypassMultiStepSkill: true,
+        })
+      );
+    }
+
     if (
       (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
-      !hasMultiStepSkillRequirement &&
-      !skipFastPathForMultiTool &&
+      (!hasMultiStepSkillRequirement || calendarListBypassesMultiStepBlock) &&
+      (!skipFastPathForMultiTool || calendarListBypassesMultiStepBlock) &&
       !input.imageContext
     ) {
       return runSimpleModerateFastPath({

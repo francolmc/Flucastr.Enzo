@@ -126,6 +126,13 @@ async function runTests() {
   assertEq(rList.suggestedTool, 'calendar', 'agenda list path should hint calendar tool');
   console.log('✓ "¿qué eventos tengo el día de hoy?" → MODERATE + calendar_list_lexical + calendar hint');
 
+  const cAgendaProg = new Classifier(new QueueProvider([]));
+  const rProg = await cAgendaProg.classify('que eventos programados tengo para hoy?', []);
+  assertEq(rProg.level, ComplexityLevel.MODERATE, '"eventos programados … hoy" should be MODERATE');
+  assertEq(rProg.classifierBranch, 'calendar_list_lexical', 'programados phrasing hits calendar_list_lexical');
+  assertEq(rProg.suggestedTool, 'calendar', 'programados calendar hint');
+  console.log('✓ "que eventos programados tengo para hoy?" → calendar_list_lexical');
+
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
   process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
   try {
