@@ -146,7 +146,16 @@ export default function MemoryPage() {
         </button>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          {error}
+          <div style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="btn-add-memory" onClick={() => void load()}>
+              Reintentar
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="memory-layout">
         <div className="surface-card memory-table-wrap">

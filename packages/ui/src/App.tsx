@@ -57,9 +57,14 @@ function App() {
   } = useEnzoStore();
 
   useEffect(() => {
-    loadConversations();
-    loadConfig();
-    loadAgents();
+    void Promise.allSettled([loadConversations(), loadConfig(), loadAgents()]).then((results) => {
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          const label = ['loadConversations', 'loadConfig', 'loadAgents'][i] ?? 'bootstrap';
+          console.error(`[App] ${label} rejected:`, r.reason);
+        }
+      });
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

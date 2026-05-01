@@ -20,6 +20,7 @@ const DEFAULT_VOICE_TRIGGERS = [
 function ConfigPage() {
   const {
     config,
+    configLoadError,
     systemConfig,
     agents,
     assistantProfile,
@@ -104,11 +105,13 @@ function ConfigPage() {
   });
 
   useEffect(() => {
-    loadConfig();
-    loadAgents();
-    loadProfilesConfig();
-    loadModelsConfig();
-    loadSystemConfig();
+    void Promise.allSettled([
+      loadConfig(),
+      loadAgents(),
+      loadProfilesConfig(),
+      loadModelsConfig(),
+      loadSystemConfig(),
+    ]);
   }, [loadConfig, loadAgents, loadProfilesConfig, loadModelsConfig, loadSystemConfig]);
 
   useEffect(() => {
@@ -342,7 +345,30 @@ function ConfigPage() {
   };
 
   if (!config) {
-    return <div className="config-page">Cargando configuración...</div>;
+    if (configLoadError) {
+      return (
+        <div className="config-page page-shell">
+          <div className="page-header">
+            <div>
+              <h1 className="page-title">ControlCenter</h1>
+              <p className="page-subtitle">No se pudo cargar la configuración desde la API.</p>
+            </div>
+          </div>
+          <div className="error-banner" role="alert">
+            {configLoadError}
+          </div>
+          <p className="muted" style={{ marginTop: '1rem', lineHeight: 1.55 }}>
+            Revisá que el servidor Enzo (`/api/config`) esté accesible, el proxy reverso correcto y que no haga falta más tiempo (`VITE_API_QUICK_TIMEOUT_MS`). Error 524: timeout en Cloudflare antes de llegar al origen.
+          </p>
+          <div className="form-actions">
+            <button type="button" onClick={() => void loadConfig()}>
+              Reintentar
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <div className="config-page page-shell">Cargando configuración…</div>;
   }
 
   return (

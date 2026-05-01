@@ -24,11 +24,52 @@ import {
 
 const BASE_URL = '/api';
 const ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+/** Long operations (POST /chat, etc.) — override with VITE_API_TIMEOUT_MS. */
 const DEFAULT_REQUEST_TIMEOUT_MS = (() => {
-  const raw = Number(ENV.VITE_API_TIMEOUT_MS ?? 300000);
-  if (Number.isNaN(raw) || raw < 10000) return 300000;
+  const raw = Number(ENV.VITE_API_TIMEOUT_MS ?? 180000);
+  if (Number.isNaN(raw) || raw < 15000) return 180000;
   return raw;
 })();
+/** List / GET pages (config, memoria, conversaciones) — fail fast so the UI no queda colgada minutos. */
+const API_QUICK_READ_TIMEOUT_MS = (() => {
+  const raw = Number(ENV.VITE_API_QUICK_TIMEOUT_MS ?? 45000);
+  if (Number.isNaN(raw) || raw < 5000) return 45000;
+  return Math.min(raw, 120000);
+})();
+
+function normalizeNetworkError(error: unknown, endpoint: string): Error {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new Error(
+      `Timeout (${endpoint}): el servidor no respondió a tiempo. Si usás Cloudflare y ves 524, el origen está caído o muy lento.`
+    );
+  }
+  if (error instanceof TypeError && /fetch|network|failed to load/i.test(String(error.message))) {
+    return new Error(
+      `Sin conexión con la API (${endpoint}). Comprueba red, proxy /api y que el backend esté en marcha. ` +
+        `(524 Cloudflare = origen timeout). "Receiving end does not exist" suele venir de una extensión del navegador.`
+    );
+  }
+  if (error instanceof Error) {
+    const m = error.message;
+    if (
+      m.includes('Failed to fetch') ||
+      m.includes('NetworkError') ||
+      m.includes('Network request failed') ||
+      m.includes('Load failed')
+    ) {
+      return new Error(
+        `Sin conexión con la API (${endpoint}). ¿Está corriendo el backend y el proxy sirve /api? ` +
+          `524 = timeout en el proxy (Cloudflare). El mensaje "Receiving end does not exist" suele ser un plugin del navegador, no Enzo.`
+      );
+    }
+    if (/\b524\b/.test(m) || m.includes('HTTP 524')) {
+      return new Error(
+        `HTTP 524: el origen no respondió a tiempo (típico de Cloudflare). Revisá túnel, firewall y que la API esté en marcha.`
+      );
+    }
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
 
 interface ApiError {
   error?: string;
@@ -79,11 +120,8 @@ class ApiClient {
       return JSON.parse(bodyText) as T;
     } catch (error) {
       clearTimeout(timeoutId);
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Request timeout: El servidor tardó demasiado en responder. Intenta de nuevo o activa el modo stream.');
-      }
       console.error(`API Error [${endpoint}]:`, error);
-      throw error;
+      throw normalizeNetworkError(error, endpoint);
     }
   }
 
@@ -101,15 +139,19 @@ class ApiClient {
     injectedSkills: InjectedSkillUsage[];
     durationMs: number;
   }> {
-    return this.request('/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        userId,
-        message,
-        conversationId: conversationId || null,
-        agentId: agentId || null,
-      }),
-    });
+    return this.request(
+      '/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          userId,
+          message,
+          conversationId: conversationId || null,
+          agentId: agentId || null,
+        }),
+      },
+      DEFAULT_REQUEST_TIMEOUT_MS
+    );
   }
 
   async sendMessageStream(
@@ -184,7 +226,9 @@ class ApiClient {
 
   async getHistory(conversationId: string): Promise<UIMessage[]> {
     const response = await this.request<{ messages: any[] }>(
-      `/chat/${conversationId}/history`
+      `/chat/${conversationId}/history`,
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
     );
 
     return response.messages.map((msg) => ({
@@ -204,7 +248,7 @@ class ApiClient {
   ): Promise<{ id: string; createdAt: number; updatedAt: number }[]> {
     const response = await this.request<{
       conversations: { id: string; createdAt: number; updatedAt: number }[];
-    }>(`/chat/conversations/${userId}`);
+    }>(`/chat/conversations/${userId}`, undefined, API_QUICK_READ_TIMEOUT_MS);
     return response.conversations;
   }
 
@@ -223,11 +267,11 @@ class ApiClient {
       params.set('source', filters.source);
     }
     const query = params.toString();
-    return this.request(`/stats/${userId}${query ? `?${query}` : ''}`);
+    return this.request(`/stats/${userId}${query ? `?${query}` : ''}`, undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async getConfig(): Promise<ConfigData> {
-    return this.request('/config');
+    return this.request('/config', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async testProvider(provider: string): Promise<{
@@ -241,7 +285,7 @@ class ApiClient {
   }
 
   async getAgents(userId: string): Promise<{ agents: AgentConfig[] }> {
-    return this.request(`/agents/${userId}`);
+    return this.request(`/agents/${userId}`, undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async createAgent(
@@ -289,7 +333,7 @@ class ApiClient {
   }
 
   async getProfilesConfig(): Promise<ProfilesConfigData> {
-    return this.request('/config/profiles');
+    return this.request('/config/profiles', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async updateProfilesConfig(
@@ -309,9 +353,13 @@ class ApiClient {
   }
 
   async deleteConversation(conversationId: string): Promise<{ success: boolean }> {
-    return this.request(`/chat/${conversationId}`, {
-      method: 'DELETE',
-    });
+    return this.request(
+      `/chat/${conversationId}`,
+      {
+        method: 'DELETE',
+      },
+      API_QUICK_READ_TIMEOUT_MS
+    );
   }
 
   // Model configuration APIs
@@ -332,7 +380,7 @@ class ApiClient {
       hasApiKey: boolean;
     }>;
   }> {
-    return this.request('/config/models');
+    return this.request('/config/models', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async updateModels(
@@ -356,7 +404,7 @@ class ApiClient {
   }
 
   async getSystemConfig(): Promise<{ system: SystemConfigView }> {
-    return this.request('/config/system');
+    return this.request('/config/system', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async updateSystemConfig(payload: SystemConfigUpdatePayload): Promise<{ success: boolean; system: SystemConfigView }> {
@@ -378,7 +426,7 @@ class ApiClient {
 
   // Skills APIs
   async getSkills(): Promise<SkillRecord[]> {
-    const response = await this.request<SkillsResponse>('/skills');
+    const response = await this.request<SkillsResponse>('/skills', undefined, API_QUICK_READ_TIMEOUT_MS);
     return response.skills || [];
   }
 
@@ -397,14 +445,18 @@ class ApiClient {
 
   // Memory APIs
   async getMemory(userId: string): Promise<{ memories: UIMemory[] }> {
-    return this.request(`/memory/${encodeURIComponent(userId)}`);
+    return this.request(`/memory/${encodeURIComponent(userId)}`, undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async createMemory(userId: string, key: string, value: string): Promise<void> {
-    await this.request(`/memory/${encodeURIComponent(userId)}`, {
-      method: 'POST',
-      body: JSON.stringify({ key, value }),
-    });
+    await this.request(
+      `/memory/${encodeURIComponent(userId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ key, value }),
+      },
+      API_QUICK_READ_TIMEOUT_MS
+    );
   }
 
   async updateMemory(userId: string, key: string, value: string): Promise<void> {
@@ -413,7 +465,8 @@ class ApiClient {
       {
         method: 'PUT',
         body: JSON.stringify({ value }),
-      }
+      },
+      API_QUICK_READ_TIMEOUT_MS
     );
   }
 
@@ -422,48 +475,64 @@ class ApiClient {
       `/memory/${encodeURIComponent(userId)}/${encodeURIComponent(key)}`,
       {
         method: 'DELETE',
-      }
+      },
+      API_QUICK_READ_TIMEOUT_MS
     );
   }
 
   async getMemoryHistory(userId: string, key: string): Promise<{ history: UIMemoryHistoryItem[] }> {
     return this.request(
       `/memory/${encodeURIComponent(userId)}/${encodeURIComponent(key)}/history`,
-      {}
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
     );
   }
 
   // Echo APIs
   async getEchoStatus(): Promise<EchoEngineStatus> {
-    return this.request('/echo/status');
+    return this.request('/echo/status', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async runEchoTask(taskId: string): Promise<EchoResult> {
-    return this.request(`/echo/${encodeURIComponent(taskId)}/run`, {
-      method: 'POST',
-    });
+    return this.request(
+      `/echo/${encodeURIComponent(taskId)}/run`,
+      {
+        method: 'POST',
+      },
+      API_QUICK_READ_TIMEOUT_MS
+    );
   }
 
   async toggleEchoTask(taskId: string): Promise<void> {
-    await this.request(`/echo/${encodeURIComponent(taskId)}/toggle`, {
-      method: 'POST',
-    });
+    await this.request(
+      `/echo/${encodeURIComponent(taskId)}/toggle`,
+      {
+        method: 'POST',
+      },
+      API_QUICK_READ_TIMEOUT_MS
+    );
   }
 
   async getRecentNotifications(userId: string): Promise<Notification[]> {
     const data = await this.request<Notification[] | { error?: string }>(
-      `/echo/notifications/${encodeURIComponent(userId)}`
+      `/echo/notifications/${encodeURIComponent(userId)}`,
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
     );
     return Array.isArray(data) ? data : [];
   }
 
   // Projects API
   async getProjects(userId: string): Promise<{ projects: Project[] }> {
-    return this.request(`/projects/${encodeURIComponent(userId)}`);
+    return this.request(`/projects/${encodeURIComponent(userId)}`, undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
   async getEmailAccounts(): Promise<EmailAccountConfigDTO[]> {
-    const data = await this.request<{ accounts: EmailAccountConfigDTO[] }>('/email/accounts');
+    const data = await this.request<{ accounts: EmailAccountConfigDTO[] }>(
+      '/email/accounts',
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
+    );
     return data.accounts ?? [];
   }
 
@@ -490,13 +559,17 @@ class ApiClient {
   async getRecentEmails(limit?: number): Promise<EmailMessageDTO[]> {
     const q =
       typeof limit === 'number' ? `?limit=${encodeURIComponent(String(limit))}` : '';
-    const data = await this.request<{ messages: EmailMessageDTO[] }>(`/email/recent${q}`);
+    const data = await this.request<{ messages: EmailMessageDTO[] }>(
+      `/email/recent${q}`,
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
+    );
     return data.messages ?? [];
   }
 
   // MCP APIs
   async getMCPServers(): Promise<any[]> {
-    const response = await this.request<any>('/mcp/servers');
+    const response = await this.request<any>('/mcp/servers', undefined, API_QUICK_READ_TIMEOUT_MS);
     return (response as any).servers || response || [];
   }
 
@@ -537,7 +610,7 @@ class ApiClient {
   }
 
   async getMCPTools(serverId?: string): Promise<any[]> {
-    const response = await this.request<any>('/mcp/tools');
+    const response = await this.request<any>('/mcp/tools', undefined, API_QUICK_READ_TIMEOUT_MS);
     const allTools = (response as any).tools || response || [];
     if (!serverId) {
       return allTools;

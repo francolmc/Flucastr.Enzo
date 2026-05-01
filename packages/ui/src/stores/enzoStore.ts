@@ -76,6 +76,8 @@ interface EnzoStore {
 
   // Config
   config: ConfigData | null;
+  /** Mensaje cuando GET /config falló (la página Config quedaba colgada en "Cargando"). */
+  configLoadError: string | null;
   systemConfig: SystemConfigView | null;
   assistantProfile: AssistantProfile | null;
   userProfile: UserProfile | null;
@@ -170,6 +172,7 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   isThinking: false,
   messageStatuses: new Map(),
   config: null,
+  configLoadError: null,
   systemConfig: null,
   assistantProfile: null,
   userProfile: null,
@@ -416,13 +419,17 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
       const config = await apiClient.getConfig();
       set({
         config,
+        configLoadError: null,
         systemConfig: config.systemConfig || null,
         assistantProfile: config.assistantProfile || null,
         userProfile: config.userProfile || null,
       });
     } catch (error) {
       console.error('Error loading config:', error);
-      throw error;
+      const msg = error instanceof Error ? error.message : String(error);
+      set({
+        configLoadError: msg,
+      });
     }
   },
 
