@@ -1,4 +1,4 @@
-import type { AmplifierInput, Step } from '../types.js';
+import type { AmplifierInput } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import type { Tool } from '../../providers/types.js';
 
@@ -37,59 +37,6 @@ export function resolveFastPathSkillContentLimit(): number {
   const fromEnv = Number(process.env.ENZO_SKILLS_FASTPATH_CONTENT_LIMIT ?? 1800);
   if (Number.isNaN(fromEnv)) return 1800;
   return Math.max(300, Math.floor(fromEnv));
-}
-
-export function extractWeatherLocation(message: string): string | null {
-  const trimmed = (message ?? '').trim();
-  if (!trimmed) return null;
-
-  const patterns = [
-    /\bclima(?:\s+actual)?\s+en\s+([^?.!,\n]+)/i,
-    /\btiempo(?:\s+actual)?\s+en\s+([^?.!,\n]+)/i,
-    /\btemperatura\s+en\s+([^?.!,\n]+)/i,
-    /\ben\s+([^?.!,\n]+)\s+\b(?:hoy|ahora)\b/i,
-  ];
-  for (const pattern of patterns) {
-    const match = trimmed.match(pattern);
-    if (match?.[1]) return match[1].trim();
-  }
-  return null;
-}
-
-export function buildWeatherGeocodingCommand(location: string): string {
-  return [
-    "curl -sG 'https://geocoding-api.open-meteo.com/v1/search'",
-    `--data-urlencode 'name=${location}'`,
-    "--data 'count=1'",
-    "--data 'language=es'",
-    "--data 'format=json'",
-  ].join(' ');
-}
-
-export function extractWeatherCoordsFromSteps(steps: Step[]): { latitude: number; longitude: number } | null {
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const step = steps[i];
-    if (step.type !== 'observe' || !step.output) continue;
-    const text = step.output;
-    const latMatch = text.match(/"latitude":\s*(-?\d+(?:\.\d+)?)/);
-    const lonMatch = text.match(/"longitude":\s*(-?\d+(?:\.\d+)?)/);
-    if (!latMatch || !lonMatch) continue;
-    const latitude = Number(latMatch[1]);
-    const longitude = Number(lonMatch[1]);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
-    return { latitude, longitude };
-  }
-  return null;
-}
-
-export function buildWeatherForecastCommand(latitude: number, longitude: number): string {
-  return [
-    "curl -sG 'https://api.open-meteo.com/v1/forecast'",
-    `--data 'latitude=${latitude}'`,
-    `--data 'longitude=${longitude}'`,
-    "--data 'current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code'",
-    "--data 'timezone=auto'",
-  ].join(' ');
 }
 
 export function buildRelevantSkillsSection(skills: RelevantSkill[]): string {

@@ -13,7 +13,22 @@ export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';
 export { EscalationManager } from './EscalationManager.js';
-export { SkillResolver, type RelevantSkill } from './SkillResolver.js';
+export {
+  SkillResolver,
+  type RelevantSkill,
+  type SkillResolveOptions,
+  mergeResolvedSkills,
+  resolveMaxSkillsInjection,
+} from './SkillResolver.js';
+export {
+  countCompletedToolActs,
+  isMultiStepRelevantSkill,
+  stepCountForRelevantSkill,
+  buildMultiStepAlgorithmPlan,
+  resolveAlgorithmCursor,
+  totalToolActsForMultiStepPlan,
+  buildStepDescriptionsForSkill,
+} from './SkillAlgorithmProgress.js';
 export {
   executeOrchestratorProcess,
   type OrchestratorProcessBindings,

@@ -1,6 +1,8 @@
+import type { LLMProvider } from '../providers/types.js';
 import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { LoadedSkill, SkillStep } from '../skills/SkillLoader.js';
 import { foldDiacritics } from '../utils/foldDiacritics.js';
+import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 
 export interface RelevantSkill {
   id: string
@@ -11,10 +13,45 @@ export interface RelevantSkill {
   steps?: SkillStep[]
 }
 
+export type SkillResolveOptions = {
+  /** When ENZO_SKILLS_LLM_SELECTION=true, used together with withTimeout for semantic routing. */
+  llm?: LLMProvider;
+  withTimeout?: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+};
+
+/** Merge parent message resolution with subtask resolution (max score wins per id), capped. */
+export function mergeResolvedSkills(
+  parentSkills: RelevantSkill[],
+  subtaskSkills: RelevantSkill[],
+  maxSkills: number
+): RelevantSkill[] {
+  const cap = Math.max(1, Math.floor(maxSkills));
+  const map = new Map<string, RelevantSkill>();
+  for (const s of parentSkills) {
+    map.set(s.id, { ...s });
+  }
+  for (const s of subtaskSkills) {
+    const prev = map.get(s.id);
+    if (!prev || s.relevanceScore >= prev.relevanceScore) {
+      map.set(s.id, { ...s });
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+    .slice(0, cap);
+}
+
+export function resolveMaxSkillsInjection(): number {
+  const fromEnv = Number(process.env.ENZO_SKILLS_MAX_INJECTION ?? 3);
+  if (Number.isNaN(fromEnv)) return 3;
+  return Math.max(1, Math.floor(fromEnv));
+}
+
 export class SkillResolver {
   async resolveRelevantSkills(
     message: string,
-    skillRegistry: SkillRegistry | undefined
+    skillRegistry: SkillRegistry | undefined,
+    options?: SkillResolveOptions
   ): Promise<RelevantSkill[]> {
     if (!skillRegistry) return []
 
@@ -53,21 +90,127 @@ export class SkillResolver {
       if (score >= threshold) relevant.push(candidate)
     }
 
+    let heuristicResult: RelevantSkill[]
     if (relevant.length > 0) {
-      return relevant
+      heuristicResult = relevant
         .sort((a, b) => b.relevanceScore - a.relevanceScore)
         .slice(0, maxSkills)
+    } else {
+      const fallbackThreshold = this.resolveFallbackThreshold()
+      const fallbackMax = this.resolveFallbackMaxSkills(maxSkills)
+      heuristicResult = scored
+        .filter((skill) => skill.relevanceScore >= fallbackThreshold)
+        .sort((a, b) => b.relevanceScore - a.relevanceScore)
+        .slice(0, fallbackMax)
     }
 
-    // Soft fallback: when nothing passes strict threshold, still inject top intent signals.
-    // This keeps behavior general (no skill-specific hardcoding) while avoiding "0 skills injected"
-    // for natural language variants.
-    const fallbackThreshold = this.resolveFallbackThreshold()
-    const fallbackMax = this.resolveFallbackMaxSkills(maxSkills)
-    return scored
-      .filter((skill) => skill.relevanceScore >= fallbackThreshold)
-      .sort((a, b) => b.relevanceScore - a.relevanceScore)
-      .slice(0, fallbackMax)
+    const semantic = await this.trySemanticReordering(message, scored, maxSkills, options)
+    if (semantic && semantic.length > 0) {
+      if (process.env.ENZO_DEBUG === 'true') {
+        console.log('[SkillResolver] Applied ENZO_SKILLS_LLM_SELECTION ranking:', semantic.map((s) => s.id).join(', '))
+      }
+      return semantic
+    }
+
+    return heuristicResult
+  }
+
+  private semanticSelectionEnabled(): boolean {
+    return (process.env.ENZO_SKILLS_LLM_SELECTION ?? 'false').toLowerCase() === 'true'
+  }
+
+  private semanticMinHeuristic(): number {
+    const fromEnv = Number(process.env.ENZO_SKILLS_SEMANTIC_MIN_HEURISTIC ?? 0.08)
+    if (Number.isNaN(fromEnv)) return 0.08
+    return Math.min(Math.max(fromEnv, 0), 1)
+  }
+
+  private async trySemanticReordering(
+    message: string,
+    scored: RelevantSkill[],
+    maxSkills: number,
+    options?: SkillResolveOptions
+  ): Promise<RelevantSkill[] | null> {
+    if (!this.semanticSelectionEnabled() || !options?.llm || !options.withTimeout || scored.length === 0) {
+      return null
+    }
+
+    const catalog = scored.map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: (s.description ?? '').slice(0, 500),
+    }))
+
+    const system = `You route user tasks to assistant skills. Given the user message and a skill catalog, respond with ONE JSON object only:
+{"skillIds":["id1","id2"]}
+Rules:
+- Include at most ${maxSkills} ids, most relevant first.
+- Use only ids that appear in the catalog.
+- If no skill fits, use {"skillIds":[]}.
+- Do not wrap in markdown. No other keys.`
+
+    const userPayload = [
+      'USER MESSAGE:',
+      message.slice(0, 4000),
+      '',
+      'CATALOG:',
+      JSON.stringify(catalog),
+    ].join('\n')
+
+    try {
+      const resp = await options.withTimeout(
+        options.llm.complete({
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userPayload },
+          ],
+          temperature: 0,
+          maxTokens: 256,
+        }),
+        60_000,
+        'skill-semantic-rank'
+      )
+
+      const raw = resp.content ?? ''
+      const parsed = parseFirstJsonObject<{ skillIds?: unknown }>(raw, { tryRepair: true })
+      if (!parsed?.value || !Array.isArray(parsed.value.skillIds)) {
+        return null
+      }
+
+      const ids = parsed.value.skillIds.filter((x): x is string => typeof x === 'string')
+      const byId = new Map(scored.map((s) => [s.id, s]))
+      const minHeuristic = this.semanticMinHeuristic()
+      const picked: RelevantSkill[] = []
+      const used = new Set<string>()
+
+      for (const id of ids) {
+        const s = byId.get(id)
+        if (s && !used.has(id) && s.relevanceScore >= minHeuristic) {
+          used.add(id)
+          picked.push({ ...s, relevanceScore: Math.max(s.relevanceScore, 0.97) })
+        }
+        if (picked.length >= maxSkills) break
+      }
+
+      if (picked.length === 0) {
+        return null
+      }
+
+      const rest = [...scored]
+        .sort((a, b) => b.relevanceScore - a.relevanceScore)
+        .filter((s) => !used.has(s.id))
+      for (const s of rest) {
+        if (picked.length >= maxSkills) break
+        picked.push(s)
+      }
+
+      return picked
+    } catch (err) {
+      if (process.env.ENZO_DEBUG === 'true') {
+        console.warn('[SkillResolver] Semantic ranking failed:', err)
+      }
+      return null
+    }
   }
 
   private shouldFallbackWhenNoneEnabled(): boolean {

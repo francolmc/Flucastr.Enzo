@@ -14,7 +14,22 @@ export { CapabilityResolver } from './orchestrator/CapabilityResolver.js';
 export { IntentAnalyzer, type IntentAnalysisResult } from './orchestrator/IntentAnalyzer.js';
 export { ContextSynthesizer } from './orchestrator/ContextSynthesizer.js';
 export { EscalationManager } from './orchestrator/EscalationManager.js';
-export { SkillResolver, type RelevantSkill } from './orchestrator/SkillResolver.js';
+export {
+  SkillResolver,
+  type RelevantSkill,
+  type SkillResolveOptions,
+  mergeResolvedSkills,
+  resolveMaxSkillsInjection,
+} from './orchestrator/SkillResolver.js';
+export {
+  countCompletedToolActs,
+  isMultiStepRelevantSkill,
+  stepCountForRelevantSkill,
+  buildMultiStepAlgorithmPlan,
+  resolveAlgorithmCursor,
+  totalToolActsForMultiStepPlan,
+  buildStepDescriptionsForSkill,
+} from './orchestrator/SkillAlgorithmProgress.js';
 export { ModelSelector } from './orchestrator/ModelSelector.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './orchestrator/OrchestratorCapabilities.js';
 export { ClaudeCodeAgent } from './agents/ClaudeCodeAgent.js';

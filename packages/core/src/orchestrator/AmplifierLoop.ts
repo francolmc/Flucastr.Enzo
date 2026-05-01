@@ -7,7 +7,8 @@ import { IntentAnalyzer } from './IntentAnalyzer.js';
 import { ExecutableTool } from '../tools/types.js';
 import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { MCPRegistry } from '../mcp/index.js';
-import { SkillResolver, RelevantSkill } from './SkillResolver.js';
+import { mergeResolvedSkills, resolveMaxSkillsInjection, SkillResolver, RelevantSkill } from './SkillResolver.js';
+import { totalToolActsForMultiStepPlan } from './SkillAlgorithmProgress.js';
 import { Decomposer, Subtask } from './Decomposer.js';
 import { extractFilePath, extractTargetDir } from '../utils/PathExtractor.js';
 import { extractToolOutput } from '../utils/ToolOutputExtractor.js';
@@ -22,10 +23,6 @@ import {
   buildAssistantIdentityPrompt,
   buildRelevantSkillsSection,
   extractOutputTemplates,
-  extractWeatherLocation,
-  buildWeatherGeocodingCommand,
-  extractWeatherCoordsFromSteps,
-  buildWeatherForecastCommand,
 } from './amplifier/AmplifierLoopPromptHelpers.js';
 import {
   normalizeFastPathToolCall,
@@ -267,8 +264,12 @@ No markdown. No prose.`;
     let hasEnoughInfo = false;
 
     modelsUsed.add(this.baseProvider.model);
+    const skillResolveOpts = {
+      llm: this.baseProvider,
+      withTimeout: this.withTimeout.bind(this),
+    };
     const preResolvedSkills = this.skillRegistry
-      ? await this.skillResolver.resolveRelevantSkills(input.message, this.skillRegistry)
+      ? await this.skillResolver.resolveRelevantSkills(input.message, this.skillRegistry, skillResolveOpts)
       : [];
     if (preResolvedSkills.length > 0) {
       this.log.info(
@@ -292,17 +293,7 @@ No markdown. No prose.`;
     };
     rememberInjectedSkills(preResolvedSkills);
 
-    const minRequiredSteps = preResolvedSkills.reduce((max, skill) => {
-      // Fuente 1: pasos estructurados en frontmatter (más confiable)
-      if (skill.steps?.length) return Math.max(max, skill.steps.length);
-      // Fuente 2: detectar el paso de número más alto mencionado en el contenido
-      const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
-      const maxN = markers.reduce((m, s) => {
-        const n = parseInt(s.replace(/\D/g, ''));
-        return isNaN(n) ? m : Math.max(m, n);
-      }, 0);
-      return Math.max(max, maxN);
-    }, 0);
+    const minRequiredSteps = totalToolActsForMultiStepPlan(preResolvedSkills);
 
     const hasMultiStepSkillRequirement = minRequiredSteps >= 2;
     if (hasMultiStepSkillRequirement) {
@@ -798,11 +789,17 @@ Do NOT search for more information. Use what is provided.`;
         while (subtaskIteration < subtaskMaxIterations && !subtaskDone) {
           subtaskIteration++;
           const skillQueryMessage = (subtask.description ?? subtask.input ?? '').trim();
+          const subtaskRaw =
+            forcedTool || !this.skillRegistry
+              ? []
+              : await this.skillResolver.resolveRelevantSkills(
+                  skillQueryMessage,
+                  this.skillRegistry,
+                  skillResolveOpts
+                );
           const subtaskResolvedSkills = forcedTool
             ? []
-            : this.skillRegistry
-            ? await this.skillResolver.resolveRelevantSkills(skillQueryMessage, this.skillRegistry)
-            : preResolvedSkills;
+            : mergeResolvedSkills(preResolvedSkills, subtaskRaw, resolveMaxSkillsInjection());
           rememberInjectedSkills(subtaskResolvedSkills);
           subtaskInput.resolvedSkills = subtaskResolvedSkills;
 
@@ -1042,37 +1039,6 @@ Do NOT search for more information. Use what is provided.`;
       // Contamos solo acciones de tipo tool; ejecutar una "skill" no equivale a completar un paso.
       const stepsExecutedCount = steps.filter(s => s.type === 'act' && s.action === 'tool').length;
       const mustUseToolNow = hasMultiStepSkillRequirement && stepsExecutedCount < minRequiredSteps;
-      const weatherSkillActive = preResolvedSkills.some(
-        (skill) => (skill.name ?? '').toLowerCase() === 'weather'
-      );
-
-      // Guardrail: for weather multi-step, enforce canonical commands for step 1/2.
-      // This avoids malformed curl generations (wrong query param, missing URL, placeholders).
-      if (weatherSkillActive && resolvedAction.type === 'tool' && resolvedAction.target === 'execute_command') {
-        if (stepsExecutedCount === 0) {
-          const location = extractWeatherLocation(input.message);
-          if (location) {
-            resolvedAction = {
-              ...resolvedAction,
-              input: { command: buildWeatherGeocodingCommand(location) },
-              reason: `${resolvedAction.reason} (normalized weather step 1 command)`,
-            };
-            this.log.info(`[AmplifierLoop] Iteration ${iteration} - normalized weather step 1 command for "${location}"`);
-          }
-        } else if (stepsExecutedCount === 1) {
-          const coords = extractWeatherCoordsFromSteps(steps);
-          if (coords) {
-            resolvedAction = {
-              ...resolvedAction,
-              input: { command: buildWeatherForecastCommand(coords.latitude, coords.longitude) },
-              reason: `${resolvedAction.reason} (normalized weather step 2 command)`,
-            };
-            this.log.info(
-              `[AmplifierLoop] Iteration ${iteration} - normalized weather step 2 command (${coords.latitude}, ${coords.longitude})`
-            );
-          }
-        }
-      }
       if (resolvedAction.type === 'none' && mustUseToolNow) {
         this.log.warn(
           `[AmplifierLoop] Iteration ${iteration} - resolvedAction=none but only ${stepsExecutedCount}/${minRequiredSteps} steps done; retrying THINK`

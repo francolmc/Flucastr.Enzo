@@ -3,6 +3,13 @@ import type { AmplifierInput, Step } from '../types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { SkillResolver, RelevantSkill } from '../SkillResolver.js';
+import {
+  buildMultiStepAlgorithmPlan,
+  buildStepDescriptionsForSkill,
+  countCompletedToolActs,
+  isMultiStepRelevantSkill,
+  resolveAlgorithmCursor,
+} from '../SkillAlgorithmProgress.js';
 import { buildAssistantIdentityPrompt, buildToolsPrompt } from './AmplifierLoopPromptHelpers.js';
 import { describeHostForExecuteCommandPrompt } from '../runtimeHostContext.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
@@ -43,63 +50,57 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
   }
   const toolsPrompt = buildToolsPrompt(mergedTools);
 
-  const previousActSteps = previousSteps.filter((s) => s.type === 'act');
   const previousObservations = previousSteps.filter((s) => s.type === 'observe' && s.output);
   const preResolvedSkills = input.resolvedSkills ?? resolvedSkills;
   const skillsToInjectForThink: RelevantSkill[] =
     !skipSkills && skillRegistry
-      ? preResolvedSkills ?? (await skillResolver.resolveRelevantSkills(input.message, skillRegistry))
+      ? preResolvedSkills ??
+        (await skillResolver.resolveRelevantSkills(input.message, skillRegistry, {
+          llm: baseProvider,
+          withTimeout,
+        }))
       : [];
 
-  const multiStepSkills = skillsToInjectForThink.filter((skill) => {
-    if (skill.steps?.length && skill.steps.length >= 2) return true;
-    const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
-    const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, '')) || 0), 0);
-    return maxN >= 2;
-  });
+  const multiStepSkills = skillsToInjectForThink.filter(isMultiStepRelevantSkill);
+  const algorithmPlan = buildMultiStepAlgorithmPlan(multiStepSkills);
 
   const isAlgorithmMode = multiStepSkills.length > 0;
 
   let algorithmModeBlock = '';
   if (isAlgorithmMode) {
-    const skill = multiStepSkills[0];
-    const stepsCompleted = previousActSteps.length;
-
-    let stepDescriptions: string[] = [];
-    if (skill.steps?.length) {
-      stepDescriptions = skill.steps.map(
-        (s, i) => `  Step ${i + 1}: ${s.description}${s.tool ? ` [tool: ${s.tool}]` : ''}`
-      );
-    } else {
-      const pasoLines = (skill.content ?? '')
-        .split('\n')
-        .filter((l) => /^\d+\.\s/.test(l.trim()) || /\bpaso\s+\d+/i.test(l))
-        .slice(0, 10)
-        .map((l, i) => `  Step ${i + 1}: ${l.trim()}`);
-      stepDescriptions = pasoLines.length > 0 ? pasoLines : [`  (see skill algorithm below)`];
-    }
-
-    const totalSteps = Math.max(1, skill.steps?.length ?? stepDescriptions.length);
-    const nextStepN = Math.min(stepsCompleted + 1, totalSteps);
-    const expectedToolForNextStep = skill.steps?.[nextStepN - 1]?.tool;
+    const completedToolActs = countCompletedToolActs(previousSteps);
+    const cursor = resolveAlgorithmCursor(completedToolActs, algorithmPlan);
+    const skill = cursor?.currentSkill ?? multiStepSkills[0]!;
+    const stepsCompleted = completedToolActs;
+    const totalSteps = cursor?.totalStepsAllSkills ?? buildStepDescriptionsForSkill(skill).length;
+    const stepDescriptions = buildStepDescriptionsForSkill(skill);
+    const totalInCurrentSkill = Math.max(1, skill.steps?.length ?? stepDescriptions.length);
+    const localNext = cursor?.stepWithinSkill ?? Math.min(stepsCompleted + 1, totalInCurrentSkill);
+    const expectedToolForNextStep = skill.steps?.[localNext - 1]?.tool;
     const observationSummary = previousObservations
-      .map((s, i) => `  Step ${i + 1} result: ${(s.output ?? '').substring(0, 300)}`)
+      .map((s, i) => `  Tool step ${i + 1} result: ${(s.output ?? '').substring(0, 300)}`)
       .join('\n');
+
+    const segmentHint =
+      cursor && cursor.planLength > 1
+        ? `\nMulti-skill chain: segment ${cursor.skillIndex + 1}/${cursor.planLength} ("${skill.name}"). Global progress: ${stepsCompleted}/${totalSteps} tool steps.\n`
+        : '';
 
     algorithmModeBlock = `
 ━━━ SKILL ALGORITHM IN PROGRESS: "${skill.name}" ━━━
-Total steps required: ${totalSteps}
-Steps completed: ${stepsCompleted}/${totalSteps}
+Total tool steps required (all segments): ${totalSteps}
+Tool steps completed: ${stepsCompleted}/${totalSteps}${segmentHint}
+Current segment (${skill.name}): local step ${localNext}/${totalInCurrentSkill}
 
-Algorithm:
+Algorithm (this segment):
 ${stepDescriptions.join('\n')}
 
 Results so far:
 ${observationSummary}
 
-CURRENT TASK: Execute step ${nextStepN} of the algorithm.
+CURRENT TASK: Execute local step ${localNext} of this segment (${skill.name}). Global tool-step ${stepsCompleted + 1} of ${totalSteps}.
 ${expectedToolForNextStep ? `REQUIRED TOOL FOR THIS STEP: ${expectedToolForNextStep}` : ''}
-Return ONLY a JSON tool call for step ${nextStepN}. {"action":"none"} is NOT valid until all ${totalSteps} steps are complete.
+Return ONLY a JSON tool call for this step. {"action":"none"} is NOT valid until all ${totalSteps} global tool steps are complete.
 Do NOT return conversational text. Do NOT return {"action":"skill"}.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
   }
@@ -233,9 +234,11 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
     messages.push(...previousResults);
   }
 
-  if (isAlgorithmMode) {
+  if (isAlgorithmMode && algorithmPlan.length > 0) {
+    const ct = countCompletedToolActs(previousSteps);
+    const cur = resolveAlgorithmCursor(ct, algorithmPlan);
     log.info(
-      `[AmplifierLoop] Algorithm mode: step ${previousActSteps.length + 1}/${multiStepSkills[0].steps?.length ?? '?'} of skill "${multiStepSkills[0].name}"`
+      `[AmplifierLoop] Algorithm mode: global tool-step ${ct + 1}/${cur?.totalStepsAllSkills ?? '?'}; segment "${cur?.currentSkill.name ?? multiStepSkills[0]?.name}"`
     );
   }
 
