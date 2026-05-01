@@ -1,5 +1,8 @@
 export { Orchestrator } from './Orchestrator.js';
-export { Classifier } from './Classifier.js';
+export {
+  Classifier,
+  messageLooksLikePersistedAgendaScheduleRequest,
+} from './Classifier.js';
 export { ModelSelector } from './ModelSelector.js';
 export { Decomposer } from './Decomposer.js';
 export type { Subtask, DecompositionResult } from './Decomposer.js';

@@ -41,7 +41,10 @@ import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
-import { messageIndicatesPersistedWriteToAbsolutePath } from '../Classifier.js';
+import {
+  messageIndicatesPersistedWriteToAbsolutePath,
+  messageLooksLikePersistedAgendaScheduleRequest,
+} from '../Classifier.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
 const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
@@ -390,10 +393,28 @@ If you include any text outside the JSON, the tool will not execute.
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
+  const schedulePersistCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
+  const lexicalSchedulePersist =
+    isModerate &&
+    executableTools.some((t) => t.name === 'calendar') &&
+    messageLooksLikePersistedAgendaScheduleRequest(schedulePersistCorpus);
+
+  const mandatoryCalendarBlock =
+    lexicalSchedulePersist
+      ? `
+
+━━━ SCHEDULE_PERSIST_LOCKED ━━━
+The user explicitly asked to save a timed entry to Enzo persisted agenda (SQLite; visible in web UI Agenda). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no greetings, no "listo").
+{"action":"tool","tool":"calendar","input":{"action":"add","title":"<short>","start_iso":"<ISO8601>","notes":"<detail>","end_iso":""}}
+Interpret "today/tomorrow" plus any clock HH:MM using the **User local wall clock** line below. Omit end_iso entirely if absent (or use ""). Title should reflect what to do ("tomar medicamento"). Prose confirmations without this JSON leave the agenda empty — forbidden here.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      : '';
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
+${mandatoryCalendarBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
 ${toolsPrompt}

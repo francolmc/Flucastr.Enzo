@@ -39,6 +39,41 @@ function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
 }
 
+/**
+ * Heuristic: persisted calendar / timed reminder intent (ES + EN). Used by classifier and MODERATE fast-path UX.
+ * Intentionally narrow: requires a time/day cue plus scheduling wording (not abstract "organize my day").
+ */
+export function messageLooksLikePersistedAgendaScheduleRequest(raw: string): boolean {
+  const m = raw.trim();
+  if (!m) {
+    return false;
+  }
+  const n = m.toLowerCase();
+  const timeCue =
+    /\d{1,2}\s*[:h.]\s*\d{2}/.test(m) ||
+    /\b\d{1,2}\s*(?:hrs?\b|h\b|am\b|pm\b)\b/i.test(n) ||
+    /\b(?:hoy|mañana|pasado\s+mañana|today|tomorrow|tonight|esta\s+(?:tarde|mañana|noche)|this\s+(?:morning|afternoon|evening))\b/u.test(
+      n
+    );
+  if (!timeCue) {
+    return false;
+  }
+  return (
+    /\bagendar\b/u.test(m) ||
+    /\bcalendariz(?:ar|cación)\b/u.test(n) ||
+    /\b(?:programar|programemos|programame)\s+(?:un\s+|una\s+)?(?:evento|recordatorio|cita|alarma)\b/u.test(n) ||
+    /\b(?:(?:can|could)\s+we\s+|please\s+)?(?:schedule|book)\s+(?:an?\s+)?(?:event|reminder|appointment|meeting)\b/u.test(
+      n
+    ) ||
+    /\b(?:add|put)\s+.+\s+(?:on|to|in)\s+(?:my\s+)?(?:calendar|agenda)\b/u.test(n) ||
+    /\b(?:set|create)\s+(?:an?\s+)?(?:calendar\s+)?(?:event|reminder|alarm)\b/u.test(n) ||
+    /\bremind(?:er)?\s+(?:me\s+)?(?:at|for|on)\b/u.test(n) ||
+    /\b(?:crear|creá|crea)\s+(?:un\s+|una\s+)?(?:evento|cita)\b/u.test(n) ||
+    /\bun\s+evento\s+para\b/u.test(n) ||
+    /\b(?:añad(?:eme|ir)|pon(?:eme|é)?)\s+.+\s+(?:en\s+(?:mi|el|tu|su)\s+)?(?:calend(?:ario)?|agenda)\b/u.test(n)
+  );
+}
+
 /** True if the message likely contains a concrete absolute path the shell should use. */
 export function messageContainsLikelyAbsolutePath(message: string): boolean {
   if (/(?:^|\s|["'])(\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|usr|root)\b\/[\S]*)/i.test(message)) {
@@ -113,7 +148,7 @@ export class Classifier {
       logClassifierRouting('recall_lexical', ComplexityLevel.MODERATE);
       return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool', classifierBranch: 'recall_lexical' };
     }
-    if (this.isLikelyPersistedAgendaOrScheduleIntent(normalizedMessage)) {
+    if (messageLooksLikePersistedAgendaScheduleRequest(normalizedMessage)) {
       console.log('[Classifier] Fast-path persisted agenda / schedule → MODERATE');
       logClassifierRouting('schedule_persist_lexical', ComplexityLevel.MODERATE);
       return {
@@ -284,33 +319,6 @@ Examples:
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
 ONLY JSON. NOTHING ELSE.`;
-  }
-
-  /**
-   * User wants a persisted calendar/agenda entry with a concrete slot (not abstract planning tips).
-   * Routed before {@link isLikelyAbstractLifePlanningWithoutPaths} so small models are not allowed to answer in prose-only SIMPLE.
-   */
-  private isLikelyPersistedAgendaOrScheduleIntent(message: string): boolean {
-    const m = message.trim();
-    const n = m.toLowerCase();
-    const timeCue =
-      /\d{1,2}\s*[:h.]\s*\d{2}/.test(m) ||
-      /\b\d{1,2}\s*(?:hrs?\b|h\b|am\b|pm\b)\b/i.test(n) ||
-      /\b(?:hoy|mañana|pasado\s+mañana|today|tomorrow|tonight|esta\s+(?:tarde|mañana|noche)|this\s+(?:morning|afternoon|evening))\b/u.test(
-        n
-      );
-    if (!timeCue) {
-      return false;
-    }
-    return (
-      /\bagendar\b/u.test(m) ||
-      /\bcalendariz(?:ar|cación)\b/u.test(n) ||
-      /\b(?:programar|programemos|programame)\s+(?:un\s+|una\s+)?(?:evento|recordatorio|cita|alarma)\b/u.test(n) ||
-      /\bschedule\s+(?:an?\s+)?(?:event|reminder|appointment)\b/u.test(n) ||
-      /\b(?:crear|creá|crea)\s+(?:un\s+|una\s+)?(?:evento|cita)\b/u.test(n) ||
-      /\bun\s+evento\s+para\b/u.test(n) ||
-      /\b(?:añad(?:eme|ir)|pon(?:eme|é)?)\s+.+\s+(?:en\s+(?:mi|el|tu|su)\s+)?(?:calend(?:ario)?|agenda)\b/u.test(n)
-    );
   }
 
   /**

@@ -153,7 +153,11 @@ export default function CalendarPage() {
       <div className="page-header">
         <div>
           <h2 className="page-title">Agenda</h2>
-          <p className="page-sub">Eventos persistentes (SQLite). En el chat, Enzo usa la herramienta <code>calendar</code>.</p>
+          <p className="page-sub">
+            Eventos persistentes (SQLite). En Telegram, configurá{' '}
+            <code>telegramAgentOwnerUserId</code> igual al usuario de esta UI (<code>default-user</code> u otro)
+            para ver lo mismo que en el bot.
+          </p>
         </div>
         <button type="button" className="btn-primary-cal" onClick={openAdd}>
           + Nuevo evento

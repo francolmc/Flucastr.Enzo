@@ -1,7 +1,8 @@
 import { Telegraf } from 'telegraf';
 import type { EnzoContext } from '../bot.js';
-import type { Step, OrchestratorInput } from '@enzo/core';
+import type { ConfigService, Step, OrchestratorInput } from '@enzo/core';
 import {
+  ComplexityLevel,
   InputChunker,
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
@@ -20,6 +21,37 @@ import { randomUUID } from 'crypto';
 const MAX_MESSAGE_LENGTH = 4096;
 const inputChunker = new InputChunker();
 const TTS_FALLBACK_NOTE = '_(No pude generar audio, pero acá va la respuesta)_';
+
+function complexityRank(level: ComplexityLevel): number {
+  switch (level) {
+    case ComplexityLevel.SIMPLE:
+      return 0;
+    case ComplexityLevel.MODERATE:
+      return 1;
+    case ComplexityLevel.COMPLEX:
+      return 2;
+    case ComplexityLevel.AGENT:
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function mergeHigherComplexity(a: ComplexityLevel, b: ComplexityLevel): ComplexityLevel {
+  return complexityRank(b) > complexityRank(a) ? b : a;
+}
+
+/**
+ * Telegram numeric id differs from chat web userId: when `telegramAgentOwnerUserId` is set,
+ * persisted tools (calendar, remember, recall) use that id so Agenda/Memoria align with UI.
+ */
+function resolveTelegramPersistenceUserId(telegramUserId: string, configService?: ConfigService): string {
+  const owner = configService?.getSystemConfig()?.telegramAgentOwnerUserId?.trim();
+  if (owner) {
+    return owner;
+  }
+  return telegramUserId;
+}
 
 /** Best-effort user-visible error; logs if Telegram rejects the send (e.g. rate limit). */
 async function safeReply(ctx: EnzoContext, text: string): Promise<void> {
@@ -83,6 +115,8 @@ function getProgressEmoji(step: Step): string {
         return '💾';
       case 'send_file':
         return '📎';
+      case 'calendar':
+        return '📅';
       default:
         return '⚙️';
     }
@@ -109,6 +143,8 @@ function getProgressText(step: Step): string {
         return 'Guardando en memoria...';
       case 'send_file':
         return 'Enviando archivo...';
+      case 'calendar':
+        return 'Actualizando agenda...';
       default:
         return 'Ejecutando herramienta...';
     }
@@ -133,6 +169,8 @@ async function processMessageInBackground(
   let progressMessageId: number | null = null;
 
   try {
+    const persistenceUserId = resolveTelegramPersistenceUserId(userId, ctx.configService);
+
     // Step 0: Setup language middleware
     const languageMiddleware = new LanguageMiddleware(ctx.orchestrator.getBaseProvider());
     
@@ -151,9 +189,28 @@ async function processMessageInBackground(
       (langContext.userLanguage.toLowerCase().startsWith('en') ? 'en-US' : 'es-CL');
     const timeZone = profile?.timezone?.trim() || systemTz;
 
-    // Step 2: Classify using the working message (in English)
-    const complexityLevel = await ctx.orchestrator.classify(workingMessage, userId, conversationId, 'telegram');
-    console.log(`[Telegram] Classified as: ${complexityLevel}`);
+    // Step 2: Classify (use persistence user id for memory/session alignment with web/Echo owner)
+    let complexityLevel = await ctx.orchestrator.classify(
+      workingMessage,
+      persistenceUserId,
+      conversationId,
+      'telegram'
+    );
+    if (
+      langContext.wasTranslated &&
+      langContext.originalInput.trim() !== workingMessage.trim()
+    ) {
+      const levelOrig = await ctx.orchestrator.classify(
+        langContext.originalInput.trim(),
+        persistenceUserId,
+        conversationId,
+        'telegram'
+      );
+      complexityLevel = mergeHigherComplexity(complexityLevel, levelOrig);
+    }
+    console.log(
+      `[Telegram] Classified as: ${complexityLevel}; persistenceUserId=${persistenceUserId} (telegram id ${userId})`
+    );
 
     // Step 3: Only show progress message for non-SIMPLE tasks
     const isSimple = complexityLevel === 'SIMPLE';
@@ -168,7 +225,7 @@ async function processMessageInBackground(
       message: workingMessage,
       originalMessage: langContext.originalInput,
       conversationId,
-      userId,
+      userId: persistenceUserId,
       source: 'telegram',
       requestId,
       userLanguage: langContext.userLanguage,
@@ -252,7 +309,7 @@ async function processMessageInBackground(
       const messages = getMemoryExtractionMessages(messageText, chunkResult);
       await Promise.all(
         messages.map((chunkedMessage) =>
-          memoryExtractor.extractAndSave(userId, chunkedMessage, result.content)
+          memoryExtractor.extractAndSave(persistenceUserId, chunkedMessage, result.content)
         )
       );
     };
