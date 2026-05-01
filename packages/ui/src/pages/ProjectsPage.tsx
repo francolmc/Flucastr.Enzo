@@ -56,7 +56,9 @@ export default function ProjectsPage() {
         </div>
         <div className="surface-card empty-projects">
           <p>
-            No hay proyectos registrados. Contale a Enzo por Telegram en qué estás trabajando.
+            No hay proyectos registrados en la memoria de Enzo para este usuario. Hablá del proyecto en el
+            chat web o en Telegram y revisá también la página Memoria para confirmar que guardó el detalle
+            bajo la categoría <strong>projects</strong>.
           </p>
         </div>
       </div>
@@ -68,7 +70,9 @@ export default function ProjectsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Proyectos</h1>
-          <p className="page-subtitle">Solo lectura — se actualizan vía Telegram.</p>
+          <p className="page-subtitle">
+            Solo lectura — se actualiza desde la memoria de Enzo (chat web y Telegram).
+          </p>
         </div>
       </div>
 

@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "pnpm -F @enzo/core build && pnpm -F @enzo/bootstrap build && tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "pnpm run build && node dist/lib/__tests__/extractProjectsFromMemoryText.test.js"
   },
   "dependencies": {
     "@enzo/bootstrap": "workspace:*",
