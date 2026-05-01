@@ -11,7 +11,10 @@ import { ComplexityLevel as CL } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
-import { buildOrchestratorRuntimeHints } from './runtimeHostContext.js';
+import {
+  buildOrchestratorRuntimeHints,
+  resolvePreferredWallClockTimeZoneId,
+} from './runtimeHostContext.js';
 import type { MemoryExtractor } from '../memory/MemoryExtractor.js';
 
 /** Bound callbacks from Orchestrator — keeps process pipeline out of the class body. */
@@ -123,7 +126,13 @@ export async function executeOrchestratorProcess(
   const skills = resolveSkillsForOrchestrator(b.getSkillRegistry(), b.getAvailableSkills());
   const agents = b.getAvailableAgents();
 
-  const runtimeHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
+  const mergedHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
+  const runtimeHints = {
+    ...mergedHints,
+    timeZone: resolvePreferredWallClockTimeZoneId(
+      mergedHints.timeZone ?? process.env.TZ ?? 'America/Santiago'
+    ),
+  };
 
   const userMemories = rankedMemoryFacts;
 

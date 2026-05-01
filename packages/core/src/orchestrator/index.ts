@@ -41,6 +41,8 @@ export {
   buildOrchestratorRuntimeHints,
   describeHostForExecuteCommandPrompt,
   humanOsLabel,
+  parseExplicitUtcOffsetLabelToTimeZoneId,
+  resolvePreferredWallClockTimeZoneId,
 } from './runtimeHostContext.js';
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 export { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';

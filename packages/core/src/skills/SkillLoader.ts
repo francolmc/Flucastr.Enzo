@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 import { homedir } from 'os';
+import { resolvePreferredWallClockTimeZoneId } from '../orchestrator/runtimeHostContext.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -183,7 +184,7 @@ export class SkillLoader {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      timeZone: process.env.TZ || 'America/Santiago'
+      timeZone: resolvePreferredWallClockTimeZoneId(process.env.TZ || 'America/Santiago')
     };
     
     const fullDatetime = now.toLocaleDateString('es-CL', options);

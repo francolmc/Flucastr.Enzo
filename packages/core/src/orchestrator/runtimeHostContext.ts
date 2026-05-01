@@ -1,6 +1,63 @@
 import os from 'os';
 import type { AmplifierInput } from './types.js';
 
+/**
+ * Map loose user labels ("UTC-3", "GMT+2") to fixed IANA zones. Returns undefined if not an explicit offset label.
+ * Note: IANA "Etc/GMT±N" naming inverts the sign (Etc/GMT+3 == UTC-3).
+ */
+export function parseExplicitUtcOffsetLabelToTimeZoneId(raw: string): string | undefined {
+  const s = raw.normalize('NFKC').trim().replace(/\s+/g, '').toUpperCase();
+  const um = s.replace(/−/g, '-');
+  const m =
+    um.match(/^UTC([+-])(\d{1,2})$/) ||
+    um.match(/^GMT([+-])(\d{1,2})$/) ||
+    um.match(/^UTC([+-])(\d{1,2}):(\d{2})$/) ||
+    um.match(/^GMT([+-])(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    return undefined;
+  }
+  const sign = m[1];
+  const hours = Number(m[2]);
+  const minutes = m[3] !== undefined ? Number(m[3]) : 0;
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes % 15 !== 0) {
+    return undefined;
+  }
+  if (hours === 0 && minutes === 0) {
+    return 'Etc/UTC';
+  }
+  if (minutes !== 0) {
+    return undefined;
+  }
+  if (sign === '-') {
+    return `Etc/GMT+${hours}`;
+  }
+  return `Etc/GMT-${hours}`;
+}
+
+const CHILE_MAINLAND_IANA = new Set(['america/santiago', 'chile/continental']);
+
+/**
+ * Wall clock used in prompts, calendar list windows, and Echo morning brief.
+ *
+ * - Explicit "UTC±H" / "GMT±H" → fixed `Etc/GMT…` (matches how users describe civil offset).
+ * - `America/Santiago` (and `Chile/Continental`): Node's tzdb often uses seasonal CLT/CST; Chile's
+ *   common civil expectation is **UTC-3** (`Etc/GMT+3`) for mainland. Set `ENZO_KEEP_IANA_SANTIAGO=true`
+ *   to keep canonical IANA offsets instead.
+ */
+export function resolvePreferredWallClockTimeZoneId(raw?: string): string {
+  const keepIanaSantiago =
+    process.env.ENZO_KEEP_IANA_SANTIAGO === 'true' || process.env.ENZO_KEEP_IANA_SANTIAGO === '1';
+  const base = (raw ?? '').trim() || process.env.TZ?.trim() || 'America/Santiago';
+  const explicit = parseExplicitUtcOffsetLabelToTimeZoneId(base);
+  if (explicit) {
+    return explicit;
+  }
+  if (!keepIanaSantiago && CHILE_MAINLAND_IANA.has(base.toLowerCase())) {
+    return 'Etc/GMT+3';
+  }
+  return base;
+}
+
 function localCalendarYyyymmddFromUtcMs(ms: number, timeZone: string): number {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -67,7 +124,7 @@ export function computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt
   message: string,
   hints?: AmplifierInput['runtimeHints']
 ): { from_iso: string; to_iso: string } {
-  const tz = hints?.timeZone ?? 'America/Santiago';
+  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone ?? 'America/Santiago');
   const normalized = message.toLowerCase();
   const anchorNow = Date.now();
 
@@ -135,7 +192,7 @@ export function computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt
 export function describeLocalWallClockPromptLine(
   hints?: AmplifierInput['runtimeHints']
 ): string {
-  const tz = hints?.timeZone ?? 'America/Santiago';
+  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone ?? 'America/Santiago');
   const locale = hints?.timeLocale ?? 'es-CL';
   const now = new Date();
   try {
@@ -183,7 +240,7 @@ export function buildOrchestratorRuntimeHints(
   overrides?: Partial<NonNullable<AmplifierInput['runtimeHints']>>
 ): NonNullable<AmplifierInput['runtimeHints']> {
   const platform = process.platform;
-  return {
+  const merged: NonNullable<AmplifierInput['runtimeHints']> = {
     homeDir: process.env.HOME ?? os.homedir(),
     osLabel: humanOsLabel(platform),
     timeLocale: 'es-CL',
@@ -194,6 +251,8 @@ export function buildOrchestratorRuntimeHints(
     arch: os.arch(),
     ...overrides,
   };
+  merged.timeZone = resolvePreferredWallClockTimeZoneId(merged.timeZone);
+  return merged;
 }
 
 /**

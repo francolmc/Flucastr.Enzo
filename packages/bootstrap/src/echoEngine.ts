@@ -5,6 +5,7 @@ import {
   NotificationGateway,
   Orchestrator,
   buildOrchestratorRuntimeHints,
+  resolvePreferredWallClockTimeZoneId,
   createMorningBriefingTask,
   createContextRefreshTask,
   createNightSummaryTask,
@@ -124,11 +125,15 @@ function buildEchoRuntimeHints(configService: ConfigService): Record<string, unk
     profile?.locale?.trim() ||
     (lang.toLowerCase().includes('en_us') || lang.toLowerCase().startsWith('en') ? 'en-US' : 'es-CL');
   const tz = profile?.timezone?.trim() || systemTz;
-  return {
+  const merged = {
     ...base,
     homeDir: process.env.HOME ?? base.homeDir,
     timeLocale,
     ...(tz ? { timeZone: tz } : {}),
+  } as Record<string, unknown>;
+  return {
+    ...merged,
+    timeZone: resolvePreferredWallClockTimeZoneId(merged.timeZone as string | undefined),
   };
 }
 

@@ -3,7 +3,10 @@ import type { NotificationGateway } from '../NotificationGateway.js';
 import type { Memory } from '../../memory/types.js';
 import type { EmailService } from '../../email/EmailService.js';
 import type { AmplifierInput } from '../../orchestrator/types.js';
-import { computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt } from '../../orchestrator/runtimeHostContext.js';
+import {
+  computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt,
+  resolvePreferredWallClockTimeZoneId,
+} from '../../orchestrator/runtimeHostContext.js';
 import type { CalendarService } from '../../calendar/CalendarService.js';
 import type { CalendarEventRow } from '../../calendar/types.js';
 
@@ -125,7 +128,7 @@ export function createMorningBriefingTask(options: MorningBriefingTaskOptions): 
         const fromMs = Date.parse(from_iso);
         const toMs = Date.parse(to_iso);
         const rows = await options.calendarService.listInRange(userId, fromMs, toMs);
-        const tz = hints.timeZone ?? 'America/Santiago';
+        const tz = resolvePreferredWallClockTimeZoneId(hints.timeZone ?? 'America/Santiago');
         agendaTodaySection = formatAgendaTodaySection(rows, locale, tz);
       }
 
