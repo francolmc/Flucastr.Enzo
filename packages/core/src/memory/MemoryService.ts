@@ -840,6 +840,10 @@ Use only when relevant to the current request; never invent new failures from th
     }));
   }
 
+  deleteSkillConfig(id: string): void {
+    this.db.getDb().run(`DELETE FROM skills_config WHERE id = ?`, [id]);
+  }
+
   // MCP Servers configuration
   saveMCPServer(config: MCPServerConfig): void {
     const now = Date.now();

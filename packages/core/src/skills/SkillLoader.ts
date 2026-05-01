@@ -95,6 +95,11 @@ export class SkillLoader {
     return skills;
   }
 
+  /** Throws if frontmatter or required fields are invalid (for API validation before write). */
+  validateRawMarkdown(raw: string): void {
+    this.parseFrontmatter(raw);
+  }
+
   async loadSkill(id: string): Promise<LoadedSkill | null> {
     const skillPath = path.join(this.skillsDir, id);
     const skillMdPath = path.join(skillPath, 'SKILL.md');

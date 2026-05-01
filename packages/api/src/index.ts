@@ -234,7 +234,7 @@ app.use(createProjectsRouter(memoryService));
 app.use(createAgentsRouter(memoryService));
 app.use(createStatsRouter(memoryService));
 app.use(createConfigRouter(configService, encryptionService));
-app.use(createSkillsRouter(skillRegistry));
+app.use(createSkillsRouter({ skillRegistry, memoryService, skillsDir: skillsPath }));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
 app.use(createCalendarRouter(calendarService));

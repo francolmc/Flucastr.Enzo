@@ -449,6 +449,40 @@ class ApiClient {
     });
   }
 
+  async getSkillSource(id: string): Promise<{ markdown: string }> {
+    return this.request(
+      `/skills/${encodeURIComponent(id)}/source`,
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async putSkillSource(
+    id: string,
+    markdown: string
+  ): Promise<{ success: boolean; skill: SkillRecord }> {
+    return this.request(`/skills/${encodeURIComponent(id)}/source`, {
+      method: 'PUT',
+      body: JSON.stringify({ markdown }),
+    });
+  }
+
+  async createSkill(
+    id: string,
+    markdown: string
+  ): Promise<{ success: boolean; skill: SkillRecord }> {
+    return this.request('/skills', {
+      method: 'POST',
+      body: JSON.stringify({ id, markdown }),
+    });
+  }
+
+  async deleteSkill(id: string): Promise<{ success: boolean }> {
+    return this.request(`/skills/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Memory APIs
   async getMemory(userId: string): Promise<{ memories: UIMemory[] }> {
     return this.request(`/memory/${encodeURIComponent(userId)}`, undefined, API_QUICK_READ_TIMEOUT_MS);
