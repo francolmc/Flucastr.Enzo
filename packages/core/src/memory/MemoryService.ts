@@ -2,7 +2,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseManager } from './Database.js';
 import { normalizeMemoryKey } from './MemoryKeys.js';
 import { Message } from '../providers/types.js';
-import { Memory, UsageStat, MessageRecord, ConversationRecord, AgentRecord, AssistantMessageMetadata } from './types.js';
+import {
+  Memory,
+  UsageStat,
+  MessageRecord,
+  ConversationRecord,
+  ConversationSummaryRecord,
+  AgentRecord,
+  AssistantMessageMetadata,
+} from './types.js';
 import { MCPServerConfig } from '../mcp/types.js';
 
 export class MemoryService {
@@ -52,32 +60,34 @@ export class MemoryService {
     });
   }
 
-  // Historial conversacional
-  async getHistory(conversationId: string, limit: number = 20): Promise<Message[]> {
+  // Historial conversacional (últimos `limit` mensajes, orden cronológico ASC para el LLM)
+  async getHistory(conversationId: string, limit: number = 200): Promise<Message[]> {
     const rows = await this.allAsync(
       `SELECT role, content FROM messages
        WHERE conversationId = ?
-       ORDER BY createdAt ASC
+       ORDER BY createdAt DESC
        LIMIT ?`,
       [conversationId, limit]
     );
 
-    return rows.map(row => ({
+    const chronological = [...rows].reverse();
+    return chronological.map(row => ({
       role: row.role as 'user' | 'assistant' | 'system',
       content: row.content,
     }));
   }
 
-  async getHistoryWithMetadata(conversationId: string, limit: number = 20): Promise<MessageRecord[]> {
+  async getHistoryWithMetadata(conversationId: string, limit: number = 200): Promise<MessageRecord[]> {
     const rows = await this.allAsync(
       `SELECT id, conversationId, role, content, modelUsed, assistantMeta, createdAt FROM messages
        WHERE conversationId = ?
-       ORDER BY createdAt ASC
+       ORDER BY createdAt DESC
        LIMIT ?`,
       [conversationId, limit]
     );
 
-    return rows.map(row => {
+    const chronological = [...rows].reverse();
+    return chronological.map(row => {
       const assistantMeta = this.safeParseAssistantMeta(row.assistantMeta);
       return {
         id: row.id,
@@ -130,7 +140,47 @@ export class MemoryService {
       `DELETE FROM messages WHERE conversationId = ?`,
       [conversationId]
     );
+    await this.runAsync(`DELETE FROM conversation_summaries WHERE conversationId = ?`, [conversationId]);
     console.log(`[Memory] History cleared for conversationId: ${conversationId}`);
+  }
+
+  async getConversationSummary(conversationId: string): Promise<ConversationSummaryRecord | null> {
+    const row = await this.getAsync(
+      `SELECT conversationId, summary, upToMessageId, upToCreatedAt, topicHint, updatedAt
+       FROM conversation_summaries WHERE conversationId = ?`,
+      [conversationId]
+    );
+    if (!row) return null;
+    return {
+      conversationId: row.conversationId,
+      summary: row.summary,
+      upToMessageId: row.upToMessageId,
+      upToCreatedAt: row.upToCreatedAt,
+      topicHint: row.topicHint || undefined,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async upsertConversationSummary(record: Omit<ConversationSummaryRecord, 'updatedAt'> & { updatedAt?: number }): Promise<void> {
+    const now = record.updatedAt ?? Date.now();
+    await this.runAsync(
+      `INSERT INTO conversation_summaries (conversationId, summary, upToMessageId, upToCreatedAt, topicHint, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversationId) DO UPDATE SET
+         summary = excluded.summary,
+         upToMessageId = excluded.upToMessageId,
+         upToCreatedAt = excluded.upToCreatedAt,
+         topicHint = excluded.topicHint,
+         updatedAt = excluded.updatedAt`,
+      [
+        record.conversationId,
+        record.summary,
+        record.upToMessageId,
+        record.upToCreatedAt,
+        record.topicHint ?? null,
+        now,
+      ]
+    );
   }
 
   async resetConversationContext(conversationId: string, userId: string): Promise<void> {
@@ -223,7 +273,12 @@ export class MemoryService {
         stats.outputTokens,
         stats.estimatedCostUsd,
         stats.durationMs,
-        stats.stageMetrics ? JSON.stringify(stats.stageMetrics) : null,
+        stats.stageMetrics || stats.continuity
+          ? JSON.stringify({
+              ...(stats.stageMetrics ?? {}),
+              ...(stats.continuity ? { continuityContext: stats.continuity } : {}),
+            })
+          : null,
         JSON.stringify(stats.toolsUsed),
         stats.complexityLevel,
         stats.createdAt

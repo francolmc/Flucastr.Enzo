@@ -25,6 +25,15 @@ export interface UsageStat {
     totalDurationMs: number;
     maxDurationMs: number;
   }>;
+  /** Continuity / context window diagnostics (not a pipeline stage). */
+  continuity?: {
+    recentTurns: number;
+    droppedTurns: number;
+    summaryUsed: boolean;
+    tokensEstimated: number;
+    flowKind: string;
+    flowConfidence: number;
+  };
   toolsUsed: string[];
   complexityLevel: string;
   createdAt: number;
@@ -59,6 +68,16 @@ export interface ConversationRecord {
   id: string;
   userId: string;
   createdAt: number;
+  updatedAt: number;
+}
+
+/** Rolling summary of older turns for long threads (see ConversationSummarizer). */
+export interface ConversationSummaryRecord {
+  conversationId: string;
+  summary: string;
+  upToMessageId: string;
+  upToCreatedAt: number;
+  topicHint?: string;
   updatedAt: number;
 }
 

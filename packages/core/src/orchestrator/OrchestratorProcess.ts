@@ -2,7 +2,8 @@ import { Classifier } from './Classifier.js';
 import { AmplifierLoop } from './AmplifierLoop.js';
 import { CircuitOpenError } from '../providers/circuitBreaker.js';
 import type { Message, Tool, LLMProvider } from '../providers/types.js';
-import type { AssistantMessageMetadata, UsageStat } from '../memory/types.js';
+import type { AssistantMessageMetadata, ConversationSummaryRecord, MessageRecord, UsageStat } from '../memory/types.js';
+import { prepareConversationTurnContext } from './prepareConversationContext.js';
 import type { ConfigService, AssistantProfile, UserProfile } from '../config/ConfigService.js';
 import type { SkillRegistry } from '../skills/SkillRegistry.js';
 import type { Skill, AgentConfig, OrchestratorInput, OrchestratorResponse, AmplifierResult, ComplexityLevel } from './types.js';
@@ -44,6 +45,13 @@ export type OrchestratorProcessBindings = {
     assistantMeta?: AssistantMessageMetadata
   ): Promise<void>;
   saveStats(stats: UsageStat): Promise<void>;
+  loadHistoryRecords(conversationId: string): Promise<MessageRecord[]>;
+  getConversationSummary(conversationId: string): Promise<ConversationSummaryRecord | null>;
+  mergeConversationSummaryInBackground(payload: {
+    conversationId: string;
+    droppedRecords: MessageRecord[];
+    previousSummary?: string;
+  }): void;
 };
 
 export async function executeOrchestratorProcess(
@@ -54,8 +62,6 @@ export async function executeOrchestratorProcess(
 ): Promise<OrchestratorResponse> {
   b.syncBaseProviderFromConfig();
 
-  const history = await b.loadHistory(input.conversationId);
-
   const configAssistantProfile = b.getConfigService()?.getAssistantProfile();
   const configUserProfile = b.getConfigService()?.getUserProfile();
   const selectedAgent = input.agentId ? await b.resolveSelectedAgent(input.agentId) : undefined;
@@ -63,23 +69,33 @@ export async function executeOrchestratorProcess(
   const assistantProfile = b.resolveAssistantProfile(configAssistantProfile, selectedAgent);
   const userProfile = configUserProfile ?? {};
 
-  const rawMemoryBlock = await b.getMemoryExtractor().buildMemoryBlock(input.userId);
-  const memoryBlock = b.sanitizeMemoryBlock(rawMemoryBlock, assistantProfile.name);
-  const profileBlock = b.buildUserProfileBlock(input.userId, userProfile);
-  const systemBlocks = [profileBlock, memoryBlock].filter(Boolean) as string[];
-  const historyWithMemory =
-    systemBlocks.length > 0
-      ? [{ role: 'system' as const, content: systemBlocks.join('\n\n') }, ...history]
-      : history;
+  const { context: conv, memoryBlock } = await prepareConversationTurnContext(b, {
+    conversationId: input.conversationId,
+    userId: input.userId,
+    message: input.message,
+    assistantProfile,
+    userProfile,
+  });
 
   if (memoryBlock) {
     console.log(`[Orchestrator] Injecting memory block for user ${input.userId}`);
   }
 
+  console.log(
+    `[Continuity] flow=${conv.flowKind} conf=${conv.flowConfidence.toFixed(2)} dropped=${conv.droppedTurns} summary=${conv.summaryUsed ? 'yes' : 'no'} tokEst=${conv.estimatedTokensRecent + conv.estimatedTokensContinuity}`
+  );
+
+  const classifierMessages: Message[] = [
+    ...conv.continuitySystemBlocks.map((c) => ({ role: 'system' as const, content: c })),
+    ...conv.recentTurns,
+  ];
+
+  const historyWithMemory: Message[] = classifierMessages;
+
   const classifyStart = Date.now();
   const classification = input.classifiedLevel
     ? { level: input.classifiedLevel, reason: 'pre-classified' }
-    : await new Classifier(runtimeProvider).classify(input.message, historyWithMemory);
+    : await new Classifier(runtimeProvider).classify(input.message, classifierMessages);
   const classifyDurationMs = Date.now() - classifyStart;
   console.log(`[Orchestrator] Message classified as: ${classification.level}`);
 
@@ -109,6 +125,7 @@ export async function executeOrchestratorProcess(
       conversationId: input.conversationId,
       userId: input.userId,
       history: historyWithMemory,
+      conversation: conv,
       memoryBlock,
       userMemories,
       availableTools: tools,
@@ -135,6 +152,7 @@ export async function executeOrchestratorProcess(
         conversationId: input.conversationId,
         userId: input.userId,
         history: historyWithMemory,
+        conversation: conv,
         memoryBlock,
         userMemories,
         availableTools: tools,
@@ -181,6 +199,15 @@ export async function executeOrchestratorProcess(
   await b.saveToMemory(input.conversationId, { role: 'user', content: input.message });
   await b.saveToMemory(input.conversationId, { role: 'assistant', content: assistantContent }, modelUsed, assistantMeta);
 
+  if (conv.droppedTurns > 0) {
+    const prevRoll = await b.getConversationSummary(input.conversationId);
+    b.mergeConversationSummaryInBackground({
+      conversationId: input.conversationId,
+      droppedRecords: conv.droppedRecords,
+      previousSummary: prevRoll?.summary,
+    });
+  }
+
   const providerUsed = runtimeProvider.name || b.resolveProvider(modelUsed);
   const source = input.source || 'unknown';
 
@@ -217,6 +244,14 @@ export async function executeOrchestratorProcess(
         maxDurationMs: classifyDurationMs,
       },
       ...(amplifierResult.stageMetrics || {}),
+    },
+    continuity: {
+      recentTurns: conv.recentTurns.length,
+      droppedTurns: conv.droppedTurns,
+      summaryUsed: conv.summaryUsed,
+      tokensEstimated: conv.estimatedTokensRecent + conv.estimatedTokensContinuity,
+      flowKind: conv.flowKind,
+      flowConfidence: conv.flowConfidence,
     },
     toolsUsed: Array.from(statsToolsUsed),
     complexityLevel: complexityUsed,

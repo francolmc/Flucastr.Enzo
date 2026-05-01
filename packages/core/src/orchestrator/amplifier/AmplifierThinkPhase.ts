@@ -6,6 +6,7 @@ import type { SkillResolver, RelevantSkill } from '../SkillResolver.js';
 import { buildAssistantIdentityPrompt, buildToolsPrompt } from './AmplifierLoopPromptHelpers.js';
 import { describeHostForExecuteCommandPrompt } from '../runtimeHostContext.js';
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
+import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 
 export type ThinkPhaseDeps = {
   baseProvider: LLMProvider;
@@ -185,7 +186,7 @@ ${
 Iteration: ${iteration}/${maxIterations}
 ${context ? `Context from previous steps:\n${context}` : ''}`;
 
-  const messages: Message[] = [...input.history, { role: 'user', content: input.message }];
+  const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 
   const DEBUG = process.env.ENZO_DEBUG === 'true';
   if (DEBUG) log.info(`[AmplifierLoop] SkillRegistry available:`, !!skillRegistry);

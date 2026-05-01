@@ -30,6 +30,7 @@ import {
   validateToolInput,
 } from './AmplifierLoopFastPathTools.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './AmplifierVerifyPhase.js';
+import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 import type { ExecutableTool } from '../../tools/types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
 import type { MCPRegistry } from '../../mcp/index.js';
@@ -211,7 +212,7 @@ ${
 }
 If responding with plain text (no tool), write in this language.`;
 
-  const messages: Message[] = [...input.history, { role: 'user', content: input.message }];
+  const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 
   let rawContent: string;
   let firstResponse;

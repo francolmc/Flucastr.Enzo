@@ -2,6 +2,9 @@ import { Message, Tool, LLMProvider } from '../providers/types.js';
 import type { Subtask, DecompositionResult } from './Decomposer.js';
 import type { AssistantProfile, UserProfile } from '../config/ConfigService.js';
 import type { RelevantSkill } from './SkillResolver.js';
+import type { ConversationContext } from '../memory/ConversationContext.js';
+
+export type { ConversationContext } from '../memory/ConversationContext.js';
 
 export enum ComplexityLevel {
   SIMPLE = 'SIMPLE',
@@ -113,6 +116,8 @@ export interface AmplifierInput {
   resolvedSkills?: RelevantSkill[];
   /** Image bytes for vision delegation (e.g. Telegram when local Ollama cannot see). */
   imageContext?: { base64: string; mimeType: string };
+  /** Token-budgeted continuity (recent turns + rolling summary + flow hints). */
+  conversation?: ConversationContext;
 }
 
 export interface AmplifierResult {

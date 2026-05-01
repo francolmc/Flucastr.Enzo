@@ -2,6 +2,7 @@ import type { Message, LLMProvider } from '../../providers/types.js';
 import type { AmplifierInput, Step } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import { buildAssistantIdentityPrompt, buildRelevantSkillsSection, extractOutputTemplates } from './AmplifierLoopPromptHelpers.js';
+import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 
 export type SynthesizePhaseDeps = {
   baseProvider: LLMProvider;
@@ -41,7 +42,7 @@ RESPONSE LANGUAGE: ${userLanguage === 'es' ? 'SPANISH' : userLanguage.toUpperCas
 Your response MUST be in this language. This is mandatory.
 The language of the context does NOT affect the language of your response.`;
 
-  const messages: Message[] = [...input.history.slice(-4), { role: 'user', content: input.message }];
+  const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 
   const response = await withTimeout(
     baseProvider.complete({

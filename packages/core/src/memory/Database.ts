@@ -156,6 +156,17 @@ export class DatabaseManager {
         updatedAt INTEGER NOT NULL
       );
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversationId TEXT PRIMARY KEY,
+        summary TEXT NOT NULL,
+        upToMessageId TEXT NOT NULL,
+        upToCreatedAt INTEGER NOT NULL,
+        topicHint TEXT,
+        updatedAt INTEGER NOT NULL,
+        FOREIGN KEY (conversationId) REFERENCES conversations(id) ON DELETE CASCADE
+      );
+    `);
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversationId, createdAt);');
     db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(userId, updatedAt DESC);');

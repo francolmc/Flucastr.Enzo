@@ -355,7 +355,11 @@ No markdown. No prose.`;
       
       // Include all available capabilities (including MCP-prefixed tools) in decomposition.
       const toolNames = input.availableTools.map((tool) => tool.name);
-      const decomposition = await this.decomposer.decompose(input.message, toolNames, input.history);
+      const dialogueForDecompose =
+        input.conversation != null
+          ? input.conversation.recentTurns
+          : input.history.filter((m) => m.role === 'user' || m.role === 'assistant');
+      const decomposition = await this.decomposer.decompose(input.message, toolNames, dialogueForDecompose);
       subtasks = decomposition.steps;
 
       this.log.info(`[AmplifierLoop] Executing ${subtasks.length} subtask(s) sequentially`);

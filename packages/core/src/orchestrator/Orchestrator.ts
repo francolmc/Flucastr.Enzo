@@ -8,6 +8,8 @@ import { Classifier } from './Classifier.js';
 import { AmplifierLoop } from './AmplifierLoop.js';
 import { MemoryService } from '../memory/MemoryService.js';
 import { MemoryExtractor } from '../memory/MemoryExtractor.js';
+import { ConversationSummarizer } from '../memory/ConversationSummarizer.js';
+import { prepareConversationTurnContext, type PrepareConversationBindings } from './prepareConversationContext.js';
 import { ToolRegistry, ExecutableTool } from '../tools/index.js';
 import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { MCPRegistry } from '../mcp/index.js';
@@ -32,6 +34,7 @@ export class Orchestrator {
   private ollamaProvider: OllamaProvider;
   private memoryService: MemoryService;
   private memoryExtractor: MemoryExtractor;
+  private conversationSummarizer: ConversationSummarizer;
   private toolRegistry: ToolRegistry;
   private skillRegistry?: SkillRegistry;
   private configService?: ConfigService;
@@ -84,7 +87,8 @@ export class Orchestrator {
     this.mcpRegistry = new MCPRegistry(this.memoryService);
 
     this.memoryExtractor = new MemoryExtractor(this.baseProvider, this.memoryService);
-    
+    this.conversationSummarizer = new ConversationSummarizer(this.baseProvider, this.memoryService);
+
     this.classifier = new Classifier(this.baseProvider);
 
     // Load MCP servers if auto-connect is enabled
@@ -123,14 +127,37 @@ export class Orchestrator {
     message: string,
     userId: string,
     conversationId?: string,
-    source: 'web' | 'telegram' | 'unknown' = 'unknown'
+    _source: 'web' | 'telegram' | 'unknown' = 'unknown'
   ): Promise<ComplexityLevel> {
     this.syncBaseProviderFromConfig();
     const cid = conversationId ?? `telegram_${userId}`;
-    const history = await this.loadHistory(cid);
-    const classification = await this.classifier.classify(message, history);
+    const configAssistantProfile = this.configService?.getAssistantProfile();
+    const userProfile = this.configService?.getUserProfile() ?? {};
+    const assistantProfile = this.resolveAssistantProfile(configAssistantProfile, undefined);
+    const { context: conv } = await prepareConversationTurnContext(this.createPrepareConversationBindings(), {
+      conversationId: cid,
+      userId,
+      message,
+      assistantProfile,
+      userProfile,
+    });
+    const classifierMessages: Message[] = [
+      ...conv.continuitySystemBlocks.map((c) => ({ role: 'system' as const, content: c })),
+      ...conv.recentTurns,
+    ];
+    const classification = await this.classifier.classify(message, classifierMessages);
     console.log(`[Orchestrator] classify() - Message classified as: ${classification.level}`);
     return classification.level;
+  }
+
+  private createPrepareConversationBindings(): PrepareConversationBindings {
+    return {
+      loadHistoryRecords: (id) => this.memoryService.getHistoryWithMetadata(id),
+      getConversationSummary: (id) => this.memoryService.getConversationSummary(id),
+      getMemoryExtractor: () => this.memoryExtractor,
+      sanitizeMemoryBlock: (m, n) => this.sanitizeMemoryBlock(m, n),
+      buildUserProfileBlock: (u, p) => this.buildUserProfileBlock(u, p),
+    };
   }
 
   async process(input: OrchestratorInput): Promise<OrchestratorResponse> {
@@ -160,6 +187,10 @@ export class Orchestrator {
     return {
       syncBaseProviderFromConfig: () => this.syncBaseProviderFromConfig(),
       loadHistory: (id) => this.loadHistory(id),
+      loadHistoryRecords: (id) => this.memoryService.getHistoryWithMetadata(id),
+      getConversationSummary: (id) => this.memoryService.getConversationSummary(id),
+      mergeConversationSummaryInBackground: (payload) =>
+        this.conversationSummarizer.mergeOlderTurnsInBackground(payload),
       resolveSelectedAgent: (id) => this.resolveSelectedAgent(id),
       resolveRuntimeProvider: (a) => this.resolveRuntimeProvider(a),
       resolveAssistantProfile: (c, s) => this.resolveAssistantProfile(c, s),

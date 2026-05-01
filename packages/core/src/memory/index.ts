@@ -9,4 +9,20 @@ export {
   parseMemoryKeyFromRequest,
 } from './MemoryKeys.js';
 export type { MemoryKey } from './MemoryKeys.js';
-export type { Memory, UsageStat, MessageRecord, ConversationRecord, AgentRecord } from './types.js';
+export type {
+  Memory,
+  UsageStat,
+  MessageRecord,
+  ConversationRecord,
+  ConversationSummaryRecord,
+  AgentRecord,
+} from './types.js';
+export {
+  estimateTextTokens,
+  buildConversationContext,
+  mergeHistoryForModel,
+  type ConversationContext,
+  type ConversationFlowKind,
+  type BuildConversationContextInput,
+} from './ConversationContext.js';
+export { ConversationSummarizer } from './ConversationSummarizer.js';

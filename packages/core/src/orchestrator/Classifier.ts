@@ -124,10 +124,7 @@ Examples:
 
 ONLY JSON. NOTHING ELSE.`;
 
-    const messages: Message[] = [
-      ...history.slice(-4),
-      { role: 'user', content: message },
-    ];
+    const messages: Message[] = [...history, { role: 'user', content: message }];
 
     try {
       const parsed = await this.requestClassification(systemPrompt, messages);

@@ -31,12 +31,13 @@ export class Decomposer {
           toolName.includes('_list_pdfs'))
     );
 
-    // Include last 4 messages as context so the Decomposer can understand follow-up references
-    // like "do it", "proceed", "create those folders" without losing the original path/plan
+    // Full dialogue slice already token-trimmed upstream (ConversationContext); cap line length for prompt size
     let contextBlock = '';
     if (history && history.length > 0) {
-      const recent = history.slice(-4);
-      const lines = recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.content ?? '').substring(0, 300)}`);
+      const lines = history.map(
+        (m) =>
+          `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : 'System'}: ${String(m.content ?? '').substring(0, 500)}`
+      );
       contextBlock = `\nCONVERSATION CONTEXT (use this to understand references like "do it", "create those folders", "proceed"):\n${lines.join('\n')}\n`;
     }
 
