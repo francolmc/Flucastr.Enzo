@@ -381,7 +381,8 @@ No markdown. No prose.`;
       (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
       (!hasMultiStepSkillRequirement || calendarListBypassesMultiStepBlock) &&
       (!skipFastPathForMultiTool || calendarListBypassesMultiStepBlock) &&
-      !input.imageContext
+      !input.imageContext &&
+      !input.delegationHint
     ) {
       return runSimpleModerateFastPath({
         input,

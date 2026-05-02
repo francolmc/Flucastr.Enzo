@@ -34,7 +34,7 @@ export interface AgentConfig {
 
 export type StepAction = 'tool' | 'skill' | 'mcp' | 'agent' | 'escalate' | 'none' | 'delegate';
 
-/** Valid agent ids for the delegate action (THINK / CapabilityResolver / prompts must stay aligned). */
+/** Built-in specialist ids; THINK may also delegate to user-preset UUIDs resolved by {@link AgentRouter}. */
 export const DELEGATION_AGENT_IDS = ['claude_code', 'doc_agent', 'vision_agent'] as const;
 export type DelegationAgentId = (typeof DELEGATION_AGENT_IDS)[number];
 
@@ -120,6 +120,8 @@ export interface AmplifierInput {
   };
   /** When set (e.g. by AmplifierLoop), THINK skips re-resolving skills against `message`. */
   resolvedSkills?: RelevantSkill[];
+  /** From classifier: skip fast path and bias THINK toward delegating to this catalog agent when set. */
+  delegationHint?: DelegationHint;
   /** Image bytes for vision delegation (e.g. Telegram when local Ollama cannot see). */
   imageContext?: { base64: string; mimeType: string };
   /** Token-budgeted continuity (recent turns + rolling summary + flow hints). */
@@ -148,8 +150,8 @@ export interface AvailableCapabilities {
   tools: Tool[];
   skills: Skill[];
   /**
-   * Mirrors {@link AmplifierInput.availableAgents}. Not used by CapabilityResolver to validate
-   * `delegate` actions (delegation targets are the fixed ids in DELEGATION_AGENT_IDS).
+   * Mirrors {@link AmplifierInput.availableAgents}. THINK may delegate to built-in ids or user-preset ids;
+   * {@link CapabilityResolver} does not validate agent ids (routing is handled in {@link AgentRouter}).
    */
   agents: AgentConfig[];
   powerfulProvider?: LLMProvider;
@@ -205,11 +207,22 @@ export interface OrchestratorResponse {
   durationMs: number;
 }
 
+/** Optional classifier hint: a catalog agent may handle the turn better than plain chat (see Classifier LLM JSON). */
+export interface DelegationHint {
+  /** User-preset id (UUID) or built-in specialist: claude_code | doc_agent | vision_agent */
+  agentId?: string;
+  reason: string;
+}
+
 export interface ClassificationResult {
   level: ComplexityLevel;
   reason: string;
   /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
   suggestedTool?: 'web_search' | 'calendar';
+  /**
+   * When set, {@link AmplifierLoop} skips SIMPLE/MODERATE fast path so THINK can delegate to a catalog agent.
+   */
+  delegationHint?: DelegationHint;
   /**
    * How complexity was determined: heuristic name, llm, llm_always bypass, fallback, or pre-classified caller.
    * Logged by orchestrator for observability (see ENZO routing plan).

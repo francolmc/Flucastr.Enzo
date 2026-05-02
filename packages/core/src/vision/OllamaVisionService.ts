@@ -81,14 +81,14 @@ export class OllamaVisionService implements VisionService {
 
       const description = typeof body.response === 'string' ? body.response.trim() : '';
       if (!description) {
-        return { success: false, canRetry: false, error: 'Empty response from Ollama' };
+        return { success: false, canRetry: true, error: 'Empty response from Ollama' };
       }
 
       return { success: true, description };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (err instanceof Error && err.name === 'AbortError') {
-        return { success: false, canRetry: false, error: 'Request timed out' };
+        return { success: false, canRetry: true, error: 'Request timed out' };
       }
       if (isVisionUnsupportedMessage(msg)) {
         return { success: false, canRetry: true, error: 'Model does not support vision' };

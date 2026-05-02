@@ -144,9 +144,13 @@ export async function runAnthropicVisionTask(options: {
   task: string;
   imageBase64: string;
   imageMimeType: string;
+  /** Override default delegation model (e.g. user preset model). */
+  model?: string;
+  /** Agent id reported in {@link DelegationResult.agent} (default vision_agent). */
+  resultAgentId?: string;
   fetchImpl?: typeof fetch;
 }): Promise<DelegationResult> {
-  const agent = 'vision_agent';
+  const agent = options.resultAgentId?.trim() || 'vision_agent';
   const apiKey = options.configService.getProviderApiKey('anthropic');
   if (!apiKey || !apiKey.trim()) {
     return {
@@ -183,7 +187,7 @@ export async function runAnthropicVisionTask(options: {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          model: ANTHROPIC_DELEGATION_MODEL,
+          model: (options.model?.trim() || ANTHROPIC_DELEGATION_MODEL).trim(),
           max_tokens: MAX_TOKENS,
           system: options.systemPrompt,
           messages: [{ role: 'user', content: userContent }],

@@ -1,6 +1,7 @@
 export { Orchestrator } from './Orchestrator.js';
 export {
   Classifier,
+  type ClassifyOptions,
   messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
 } from './Classifier.js';
@@ -13,6 +14,7 @@ export { DELEGATION_NOT_CONFIGURED, AgentRouter } from './AgentRouter.js';
 export { ClaudeCodeAgent } from '../agents/ClaudeCodeAgent.js';
 export { DocAgent } from '../agents/DocAgent.js';
 export { VisionAgent } from '../agents/VisionAgent.js';
+export { UserAgentRunner } from '../agents/UserAgentRunner.js';
 export { CapabilityResolver } from './CapabilityResolver.js';
 export { IntentAnalyzer } from './IntentAnalyzer.js';
 export { ContextSynthesizer } from './ContextSynthesizer.js';

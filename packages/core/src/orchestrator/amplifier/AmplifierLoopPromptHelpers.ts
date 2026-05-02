@@ -1,4 +1,4 @@
-import type { AmplifierInput } from '../types.js';
+import type { AgentConfig, AmplifierInput, DelegationHint } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import type { Tool } from '../../providers/types.js';
 
@@ -107,4 +107,35 @@ When in a reasoning loop with nothing left to execute:
 {"action":"none"}
 
 ONE JSON object per message when using JSON — no prose before or after it.`;
+}
+
+/** THINK-phase catalog: user preset ids + built-in delegation specialists. */
+export function buildThinkDelegationCatalogBlock(
+  availableAgents: AgentConfig[],
+  delegationHint?: DelegationHint
+): string {
+  const builtin = `- "claude_code" — large code / architecture / deep debugging
+- "doc_agent" — long formal documents with sections
+- "vision_agent" — analyze attached image bytes (built-in multimodal specialist)`;
+  const userLines =
+    availableAgents.length === 0
+      ? '(No user-configured presets in catalog for this turn.)'
+      : availableAgents
+          .map(
+            (a) =>
+              `- "${a.id}" — name: ${a.name}; ${a.provider}/${a.model}; ${(a.description || 'no description').slice(0, 220)}`
+          )
+          .join('\n');
+  const hint =
+    delegationHint != null
+      ? `CLASSIFIER_SUGGESTION (non-binding): agentId=${delegationHint.agentId ?? '(you choose)'} — ${delegationHint.reason}\n\n`
+      : '';
+  return `${hint}DELEGATION CATALOG — the "agent" field must be exactly one of these id strings:
+
+User presets:
+${userLines}
+
+Built-in specialists:
+${builtin}
+`;
 }

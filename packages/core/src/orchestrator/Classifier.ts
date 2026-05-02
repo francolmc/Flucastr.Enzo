@@ -32,13 +32,25 @@
  * Classifier returned SIMPLE/MODERATE — intentional second line of defense before runSimpleModerateFastPath.
  */
 import { LLMProvider, Message } from '../providers/types.js';
-import { ClassificationResult, ComplexityLevel } from './types.js';
+import {
+  type AgentConfig,
+  type ClassificationResult,
+  type DelegationHint,
+  ComplexityLevel,
+} from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
 }
+
+/** Optional third argument to {@link Classifier.classify} — user agent catalog + image attachment signal. */
+export type ClassifyOptions = {
+  availableAgents?: AgentConfig[];
+  /** When true, classifier prompt requires non-SIMPLE and a delegationHint (validated downstream too). */
+  hasImageContext?: boolean;
+};
 
 /**
  * Heuristic: persisted calendar / timed reminder intent (ES + EN). Used by classifier and MODERATE fast-path UX.
@@ -158,16 +170,21 @@ export class Classifier {
     this.provider = provider;
   }
 
-  async classify(message: string, history: Message[]): Promise<ClassificationResult> {
+  async classify(
+    message: string,
+    history: Message[],
+    options?: ClassifyOptions
+  ): Promise<ClassificationResult> {
     const normalizedMessage = message.trim();
     const llmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS === 'true';
+    const agents = options?.availableAgents ?? [];
 
-    const systemPrompt = this.buildClassifierSystemPrompt();
+    const systemPrompt = this.buildClassifierSystemPrompt(agents, options?.hasImageContext ?? false);
     const messages: Message[] = [...history, { role: 'user', content: message }];
 
     if (llmAlways) {
       console.log('[Classifier] ENZO_CLASSIFIER_LLM_ALWAYS — skipping lexical fast-paths');
-      return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true);
+      return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
     }
 
     const trivialPattern = /^(hola|hello|hi|hey|buenos días|buenas|good morning|gracias|thanks|ok|sí|no|chao|bye|adiós)[.!?]?$/i;
@@ -242,14 +259,47 @@ export class Classifier {
       return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent', classifierBranch: 'single_tool_lexical' };
     }
 
-    return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false);
+    return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
+  }
+
+  private normalizeDelegationHint(
+    raw: { agentId?: string; reason?: string } | undefined,
+    agents: AgentConfig[]
+  ): DelegationHint | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const reason = typeof raw.reason === 'string' ? raw.reason.trim() : '';
+    if (!reason) return undefined;
+    const agentIdRaw = typeof raw.agentId === 'string' ? raw.agentId.trim() : '';
+    if (!agentIdRaw) return { reason };
+    const fixed = new Set(['claude_code', 'doc_agent', 'vision_agent']);
+    if (fixed.has(agentIdRaw)) return { agentId: agentIdRaw, reason };
+    if (agents.some((a) => a.id === agentIdRaw)) return { agentId: agentIdRaw, reason };
+    return { reason };
+  }
+
+  private buildDelegationCatalogSection(agents: AgentConfig[]): string {
+    const builtin = `Built-in delegation specialists (use these exact id strings in delegationHint.agentId when they fit):
+- claude_code — large or deep code changes, architecture, debugging across many files
+- doc_agent — professional long documents (reports, proposals) with structured sections
+- vision_agent — analyze image pixels when the host attached image bytes for this turn`;
+    if (agents.length === 0) {
+      return `DELEGATION CATALOG — user presets: (none for this user)\n${builtin}`;
+    }
+    const lines = agents.map(
+      (a) =>
+        `- id: ${a.id} | name: ${a.name} | ${a.provider}/${a.model} | description: ${(a.description || 'N/A').slice(0, 220)}`
+    );
+    return `DELEGATION CATALOG — user-configured presets (exact id in delegationHint.agentId):
+${lines.join('\n')}
+${builtin}`;
   }
 
   private async runLlmClassification(
     systemPrompt: string,
     messages: Message[],
     normalizedMessage: string,
-    fromLlmAlwaysBypass: boolean
+    fromLlmAlwaysBypass: boolean,
+    agents: AgentConfig[]
   ): Promise<ClassificationResult> {
     try {
       const parsed = await this.requestClassification(systemPrompt, messages);
@@ -263,10 +313,12 @@ export class Classifier {
 
       const llmBranch = fromLlmAlwaysBypass ? 'llm_always' : 'llm';
       logClassifierRouting(llmBranch, level);
+      const delegationHint = this.normalizeDelegationHint(parsed.delegationHint, agents);
       return {
         level,
         reason: parsed.reason || 'No reason provided',
         classifierBranch: llmBranch,
+        ...(delegationHint ? { delegationHint } : {}),
       };
     } catch (error) {
       console.error('Classifier.classify() error:', error);
@@ -274,7 +326,7 @@ export class Classifier {
     }
   }
 
-  private buildClassifierSystemPrompt(): string {
+  private buildClassifierSystemPrompt(agents: AgentConfig[], hasImageContext: boolean): string {
     return `You are a task complexity classifier. Respond ONLY with JSON, no extra text.
 The user's message may be in ANY natural language — infer intent regardless of language; map to level using the SAME rules below.
 
@@ -362,6 +414,18 @@ Examples:
 "¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list"}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
+
+${this.buildDelegationCatalogSection(agents)}
+
+HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
+
+OUTPUT — one JSON object only (no markdown, no prose):
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"}}
+
+delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
+- When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
+- When HOST_SIGNAL has_image_for_turn is true: NEVER use SIMPLE — use MODERATE or COMPLEX. delegationHint is REQUIRED (reason must be non-empty). Prefer a user preset id whose description/system role plausibly covers vision/image analysis; if none fit, set agentId to "vision_agent".
+- agentId must be exactly "claude_code", "doc_agent", "vision_agent", OR a user preset id from the catalog. Never invent ids.
 
 ONLY JSON. NOTHING ELSE.`;
   }
@@ -491,7 +555,11 @@ ONLY JSON. NOTHING ELSE.`;
   private async requestClassification(
     systemPrompt: string,
     messages: Message[]
-  ): Promise<{ level: ComplexityLevel; reason: string } | null> {
+  ): Promise<{
+    level: ComplexityLevel;
+    reason: string;
+    delegationHint?: { agentId?: string; reason?: string };
+  } | null> {
     const response = await this.provider.complete({
       messages: [{ role: 'system', content: systemPrompt }, ...messages],
       temperature: 0.3,
@@ -504,7 +572,11 @@ ONLY JSON. NOTHING ELSE.`;
       console.warn(`[Classifier] Model emitted ${allJsonMatches.length} JSON objects. Taking the first one.`);
     }
 
-    const parsed = parseFirstJsonObject<{ level: ComplexityLevel; reason: string }>(response.content, {
+    const parsed = parseFirstJsonObject<{
+      level: ComplexityLevel;
+      reason: string;
+      delegationHint?: { agentId?: string; reason?: string };
+    }>(response.content, {
       tryRepair: true,
     });
     if (parsed) {
@@ -512,7 +584,7 @@ ONLY JSON. NOTHING ELSE.`;
     }
 
     const retrySystemPrompt = `Return ONLY valid JSON with one object:
-{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason"}
+{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"}}
 No markdown, no prose.`;
     const retryResponse = await this.provider.complete({
       messages: [{ role: 'system', content: retrySystemPrompt }, ...messages],
@@ -521,10 +593,11 @@ No markdown, no prose.`;
     });
     console.log('[Classifier] Retry raw response:', retryResponse.content);
 
-    const retryParsed = parseFirstJsonObject<{ level: ComplexityLevel; reason: string }>(
-      retryResponse.content,
-      { tryRepair: true }
-    );
+    const retryParsed = parseFirstJsonObject<{
+      level: ComplexityLevel;
+      reason: string;
+      delegationHint?: { agentId?: string; reason?: string };
+    }>(retryResponse.content, { tryRepair: true });
 
     return retryParsed ? retryParsed.value : null;
   }

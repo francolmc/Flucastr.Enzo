@@ -27,6 +27,7 @@ import { estimateCostUsd } from './CostEstimator.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { executeOrchestratorProcess, type OrchestratorProcessBindings } from './OrchestratorProcess.js';
 import type { AgentRouterContract } from '../agents/AgentRouter.js';
+import { instantiateProviderForAgent } from './instantiateProviderForAgent.js';
 
 export class Orchestrator {
   private classifier: Classifier;
@@ -205,6 +206,7 @@ export class Orchestrator {
       getSkillRegistry: () => this.skillRegistry,
       getAvailableSkills: () => this.availableSkills,
       getAvailableAgents: () => this.availableAgents,
+      listAgentsForUser: (uid) => this.listAgentsForUser(uid),
       createAmplifierLoop: (p) => this.createAmplifierLoop(p),
       getBaseProvider: () => this.baseProvider,
       resolveProvider: (m) => this.resolveProvider(m),
@@ -433,47 +435,10 @@ ${providerList}`;
       return { provider: this.baseProvider };
     }
 
-    const cacheKey = `${providerName}:${modelName}`;
-    const cachedProvider = providerName === 'ollama' ? this.providerCache.get(cacheKey) : undefined;
-    if (cachedProvider) {
-      return { provider: cachedProvider };
-    }
-
     try {
-      let provider: LLMProvider | undefined;
-      if (providerName === 'ollama') {
-        const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-        provider = new OllamaProvider(ollamaBaseUrl, modelName);
-      } else if (providerName === 'anthropic') {
-        const apiKey = this.configService?.getProviderApiKey('anthropic') || process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-          throw new Error('Anthropic API key is not configured');
-        }
-        provider = new AnthropicProvider(apiKey, modelName || process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5');
-      } else if (providerName === 'openai') {
-        const apiKey = this.configService?.getProviderApiKey('openai') || process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-          throw new Error('OpenAI API key is not configured');
-        }
-        provider = new OpenAIProvider(apiKey, modelName || 'gpt-4o-mini');
-      } else if (providerName === 'gemini') {
-        const apiKey = this.configService?.getProviderApiKey('gemini') || process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          throw new Error('Gemini API key is not configured');
-        }
-        provider = new GeminiProvider(apiKey, modelName || 'gemini-1.5-flash');
-      } else {
-        throw new Error(`Provider "${selectedAgent.provider}" is not supported`);
-      }
-
-      const isAvailable = await provider.isAvailable();
-      if (!isAvailable) {
-        throw new Error(`Provider "${providerName}" is not available`);
-      }
-
-      if (providerName === 'ollama') {
-        this.providerCache.set(cacheKey, provider);
-      }
+      const provider = await instantiateProviderForAgent(this.configService, selectedAgent, {
+        ollamaProviderCache: this.providerCache,
+      });
       return { provider };
     } catch (error) {
       const fallbackMessage = `Nota: el agente "${selectedAgent.name}" no pudo usar ${selectedAgent.provider}/${selectedAgent.model}. Continuo con el modelo principal "${this.baseProvider.model}".`;

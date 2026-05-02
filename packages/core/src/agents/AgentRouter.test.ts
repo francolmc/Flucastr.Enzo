@@ -1,5 +1,5 @@
 import { AmplifierLoop } from '../orchestrator/AmplifierLoop.js';
-import { ComplexityLevel, AVAILABLE_TOOLS } from '../orchestrator/types.js';
+import { ComplexityLevel, AVAILABLE_TOOLS, type AgentConfig } from '../orchestrator/types.js';
 import { createDefaultAmplifierLoopLog } from '../orchestrator/amplifier/AmplifierLoopLog.js';
 import type { MemoryService } from '../memory/MemoryService.js';
 import type { CompletionRequest, CompletionResponse, LLMProvider } from '../providers/types.js';
@@ -8,6 +8,7 @@ import type { AgentRouterContract, DelegationRequest, DelegationResult } from '.
 import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
 import type { DocAgent } from './DocAgent.js';
 import type { VisionAgent } from './VisionAgent.js';
+import type { UserAgentRunner } from './UserAgentRunner.js';
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -106,6 +107,53 @@ async function testDocAgentRoutesToExecute() {
   });
   assert(called, 'doc execute should run');
   assert(r.output === 'docout', 'doc output');
+}
+
+async function testUserPresetRoutesToUserAgentRunner() {
+  const claude: Pick<ClaudeCodeAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'claude_code', output: '', error: 'no' };
+    },
+  };
+  const doc: Pick<DocAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'doc_agent', output: '', error: 'no' };
+    },
+  };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'vision_agent', output: '', error: 'no' };
+    },
+  };
+  let runnerAgentId = '';
+  const userRunner = {
+    async execute(_req: DelegationRequest, agent: AgentConfig): Promise<DelegationResult> {
+      runnerAgentId = agent.id;
+      return { success: true, agent: agent.id, output: 'preset-out' };
+    },
+  };
+  const preset: AgentConfig = {
+    id: 'user-preset-1',
+    name: 'Visor',
+    description: 'vision',
+    provider: 'anthropic',
+    model: 'claude-3-5-sonnet-20241022',
+  };
+  const router = new AgentRouter({
+    claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
+    docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
+    resolveUserAgent: async (id) => (id === 'user-preset-1' ? preset : undefined),
+    userAgentRunner: userRunner as unknown as UserAgentRunner,
+  });
+  const r = await router.delegate({
+    agent: 'user-preset-1',
+    task: 'describe image',
+    reason: 'vision',
+    context: { userId: 'u1', memories: [], conversationSummary: 's' },
+  });
+  assert(r.success && r.output === 'preset-out', JSON.stringify(r));
+  assert(runnerAgentId === 'user-preset-1', 'runner received preset');
 }
 
 async function testUnknownAgentNoThrow() {
@@ -259,6 +307,7 @@ async function runTests() {
   await testClaudeCodeRoutesToExecute();
   await testDocAgentRoutesToExecute();
   await testVisionAgentRoutesToExecute();
+  await testUserPresetRoutesToUserAgentRunner();
   await testUnknownAgentNoThrow();
   await testNotifyRunsBeforeExecute();
   await testMemoryAfterDelegationResult();

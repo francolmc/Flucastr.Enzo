@@ -10,7 +10,11 @@ import {
   isMultiStepRelevantSkill,
   resolveAlgorithmCursor,
 } from '../SkillAlgorithmProgress.js';
-import { buildAssistantIdentityPrompt, buildToolsPrompt } from './AmplifierLoopPromptHelpers.js';
+import {
+  buildAssistantIdentityPrompt,
+  buildThinkDelegationCatalogBlock,
+  buildToolsPrompt,
+} from './AmplifierLoopPromptHelpers.js';
 import {
   describeHostForExecuteCommandPrompt,
   describeLocalWallClockPromptLine,
@@ -111,12 +115,15 @@ Do NOT return conversational text. Do NOT return {"action":"skill"}.
   const imageDelegationBlock =
     !isAlgorithmMode && input.imageContext?.base64 && input.imageContext?.mimeType
       ? `
-IMAGE DELEGATION (mandatory):
-The user message concerns an image the local model could not analyze. Image bytes are attached only for delegation — you MUST NOT invent or guess visual content from text alone.
-Respond with exactly ONE JSON object: {"action":"delegate","agent":"vision_agent","task":"<what to analyze or extract from the image>","reason":"Local model does not support vision; image is in delegation context"}.
-Use a concrete task (include any user question about the image in the task text). No other action is valid until this delegation runs.
+IMAGE CONTEXT:
+The host attached image bytes for this turn (forwarded to delegable agents). Do not invent visual details — if you need pixels, delegate once with a concrete "task" (include the user's question about the image).
+Prefer a catalog user preset whose description/system role plausibly covers vision; otherwise use "vision_agent".
 `
       : '';
+
+  const delegationCatalogBlock = !isAlgorithmMode
+    ? buildThinkDelegationCatalogBlock(input.availableAgents ?? [], input.delegationHint)
+    : '';
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
@@ -131,15 +138,9 @@ If you determine that completing this task requires capabilities beyond what
 you can do with the available tools, you can delegate to a specialized agent.
 
 To delegate, respond with:
-{"action": "delegate", "agent": "<agent_name>", "task": "<what needs to be done>", "reason": "<why you cannot do it>"}
+{"action": "delegate", "agent": "<agent_id_from_catalog_below>", "task": "<what needs to be done>", "reason": "<why you cannot do it>"}
 
-Delegation targets (fixed specialist backends — not the user's conversational model preset):
-- "claude_code": for complex code generation, debugging, architecture decisions,
-  writing more than 50 lines of code, or technical analysis requiring deep reasoning
-- "doc_agent": for generating professional documents (reports, proposals, presentations)
-  that require structured formatting, multiple sections, or executive-level quality
-- "vision_agent": for analyzing images when the local model cannot process them
-
+${delegationCatalogBlock}
 DELEGATION RULES — read carefully:
 - Only delegate when you genuinely cannot complete the task with available tools
 - Never delegate simple tasks you can handle with web_search, write_file, or execute_command

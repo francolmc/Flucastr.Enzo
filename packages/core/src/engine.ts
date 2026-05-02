@@ -8,7 +8,8 @@ export {
   executeOrchestratorProcess,
   type OrchestratorProcessBindings,
 } from './orchestrator/OrchestratorProcess.js';
-export { Classifier } from './orchestrator/Classifier.js';
+export { Classifier, type ClassifyOptions } from './orchestrator/Classifier.js';
+export { UserAgentRunner } from './agents/UserAgentRunner.js';
 export { Decomposer, type Subtask, type DecompositionResult } from './orchestrator/Decomposer.js';
 export { CapabilityResolver } from './orchestrator/CapabilityResolver.js';
 export { IntentAnalyzer, type IntentAnalysisResult } from './orchestrator/IntentAnalyzer.js';

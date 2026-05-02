@@ -1,7 +1,9 @@
 import type { NotificationGateway } from '../echo/NotificationGateway.js';
+import type { AgentConfig } from '../orchestrator/types.js';
 import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
 import type { DocAgent } from './DocAgent.js';
 import type { VisionAgent } from './VisionAgent.js';
+import type { UserAgentRunner } from './UserAgentRunner.js';
 
 export interface DelegationRequest {
   agent: string;
@@ -46,6 +48,9 @@ export type AgentRouterOptions = {
   docAgent: DocAgent;
   visionAgent: VisionAgent;
   notificationGateway?: Pick<NotificationGateway, 'notify'>;
+  /** Resolve DB-backed user preset by id for {@link UserAgentRunner} delegation. */
+  resolveUserAgent?: (id: string) => Promise<AgentConfig | undefined>;
+  userAgentRunner?: UserAgentRunner;
 };
 
 export class AgentRouter implements AgentRouterContract {
@@ -53,12 +58,16 @@ export class AgentRouter implements AgentRouterContract {
   private readonly claudeCodeAgent: ClaudeCodeAgent;
   private readonly docAgent: DocAgent;
   private readonly visionAgent: VisionAgent;
+  private readonly resolveUserAgent?: (id: string) => Promise<AgentConfig | undefined>;
+  private readonly userAgentRunner?: UserAgentRunner;
 
   constructor(options: AgentRouterOptions) {
     this.notificationGateway = options.notificationGateway;
     this.claudeCodeAgent = options.claudeCodeAgent;
     this.docAgent = options.docAgent;
     this.visionAgent = options.visionAgent;
+    this.resolveUserAgent = options.resolveUserAgent;
+    this.userAgentRunner = options.userAgentRunner;
   }
 
   async delegate(request: DelegationRequest): Promise<DelegationResult> {
@@ -73,13 +82,21 @@ export class AgentRouter implements AgentRouterContract {
       case 'vision_agent':
         await this.notifyIfConfigured(request.context.userId, displayName);
         return this.runVisionAgent(request);
-      default:
+      default: {
+        if (this.resolveUserAgent && this.userAgentRunner) {
+          const preset = await this.resolveUserAgent(request.agent);
+          if (preset) {
+            await this.notifyIfConfigured(request.context.userId, preset.name);
+            return this.userAgentRunner.execute(request, preset);
+          }
+        }
         return {
           success: false,
           agent: request.agent,
           output: '',
           error: `Unknown agent: ${request.agent}`,
         };
+      }
     }
   }
 

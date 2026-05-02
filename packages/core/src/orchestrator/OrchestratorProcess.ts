@@ -11,6 +11,7 @@ import { ComplexityLevel as CL } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
 import { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
+import { applyClassificationFloors } from './classificationFloors.js';
 import {
   buildOrchestratorRuntimeHints,
   resolvePreferredWallClockTimeZoneId,
@@ -37,6 +38,8 @@ export type OrchestratorProcessBindings = {
   getSkillRegistry(): SkillRegistry | undefined;
   getAvailableSkills(): Skill[];
   getAvailableAgents(): AgentConfig[];
+  /** DB-backed presets for this user (and fallbacks); used for classifier catalog + AmplifierInput. */
+  listAgentsForUser(userId: string): Promise<AgentConfig[]>;
   createAmplifierLoop(provider: LLMProvider): AmplifierLoop;
   getBaseProvider(): LLMProvider;
   resolveProvider(modelUsed: string): string;
@@ -95,14 +98,23 @@ export async function executeOrchestratorProcess(
 
   const historyWithMemory: Message[] = classifierMessages;
 
+  const agents = await b.listAgentsForUser(input.userId);
+
   const classifyStart = Date.now();
-  const classification = input.classifiedLevel
+  const rawClassification = input.classifiedLevel
     ? {
         level: input.classifiedLevel,
         reason: 'pre-classified',
         classifierBranch: 'pre_classified',
       }
-    : await new Classifier(runtimeProvider).classify(input.message, classifierMessages);
+    : await new Classifier(runtimeProvider).classify(input.message, classifierMessages, {
+        availableAgents: agents,
+        hasImageContext: !!(input.imageContext?.base64 && input.imageContext?.mimeType),
+      });
+  const classification = applyClassificationFloors(rawClassification, {
+    hasImageContext: !!(input.imageContext?.base64 && input.imageContext?.mimeType),
+    availableAgents: agents,
+  });
   const classifyDurationMs = Date.now() - classifyStart;
   console.log(`[Orchestrator] Message classified as: ${classification.level}`);
   console.log(
@@ -124,7 +136,6 @@ export async function executeOrchestratorProcess(
   appendMcpToolsToToolList(tools, mcpTools);
 
   const skills = resolveSkillsForOrchestrator(b.getSkillRegistry(), b.getAvailableSkills());
-  const agents = b.getAvailableAgents();
 
   const mergedHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
   const runtimeHints = {
@@ -160,6 +171,7 @@ export async function executeOrchestratorProcess(
       onProgress: input.onProgress,
       runtimeHints,
       imageContext: input.imageContext,
+      delegationHint: classification.delegationHint,
     });
   } catch (amplifierError) {
     console.error('[Orchestrator] AmplifierLoop error:', amplifierError);
@@ -187,6 +199,7 @@ export async function executeOrchestratorProcess(
         onProgress: input.onProgress,
         runtimeHints,
         imageContext: input.imageContext,
+        delegationHint: classification.delegationHint,
       });
     } else {
       const errorMsg = amplifierError instanceof Error ? amplifierError.message : String(amplifierError);
