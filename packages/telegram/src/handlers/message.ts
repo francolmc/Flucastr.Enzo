@@ -255,10 +255,17 @@ async function processMessageInBackground(
       },
     });
 
+    // Photo/synthetic prompts are often >3 chunks (host instructions + Ollama + path). "Capturé N cosas"
+    // is for long *user* pastes — never replace the real assistant answer when pixels were attached.
+    const hasImagePayload = Boolean(
+      imageContext?.base64?.trim() && imageContext?.mimeType?.trim()
+    );
+
     // Step 5: Translate response back to user's language
-    const baseContent = chunkResult.isLong
-      ? buildChunkCaptureConfirmation(chunkResult)
-      : result.content || 'No se pudo procesar tu mensaje.';
+    const baseContent =
+      chunkResult.isLong && !hasImagePayload
+        ? buildChunkCaptureConfirmation(chunkResult)
+        : result.content || 'No se pudo procesar tu mensaje.';
     const translatedContent = await languageMiddleware.processOutput(
       baseContent,
       langContext.userLanguage
@@ -306,7 +313,8 @@ async function processMessageInBackground(
     // Extract and save memories in background — no await, no blocking
     const memoryExtractor = ctx.orchestrator.getMemoryExtractor();
     const extractMemory = async () => {
-      const messages = getMemoryExtractionMessages(messageText, chunkResult);
+      const messages =
+        hasImagePayload ? [messageText] : getMemoryExtractionMessages(messageText, chunkResult);
       await Promise.all(
         messages.map((chunkedMessage) =>
           memoryExtractor.extractAndSave(persistenceUserId, chunkedMessage, result.content)
