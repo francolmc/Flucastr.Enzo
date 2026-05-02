@@ -3,6 +3,9 @@ import type { AmplifierInput, Step } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
 import { buildAssistantIdentityPrompt, buildRelevantSkillsSection, extractOutputTemplates } from './AmplifierLoopPromptHelpers.js';
 import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
+import { VERIFY_PRESYNTHESIS_MARK } from './AmplifierVerifyPhase.js';
+
+const SUBTASK_GUARD_MARK = '(SubtaskGuard)';
 
 export type SynthesizePhaseDeps = {
   baseProvider: LLMProvider;
@@ -23,6 +26,16 @@ export async function runSynthesizePhase(
   const relevantSkillsSection = buildRelevantSkillsSection(resolvedSkills);
   const requiredTemplateSection = extractOutputTemplates(resolvedSkills);
 
+  const needsHonestyAboutGaps =
+    (context.includes(VERIFY_PRESYNTHESIS_MARK) || context.includes(SUBTASK_GUARD_MARK)) &&
+    context.trim().length > 0;
+
+  const honestyDirective = needsHonestyAboutGaps
+    ? `
+- CONTEXT INCLUDES EXECUTION AUDIT NOTES (verification or SubtaskGuard): do NOT claim filesystem writes, MCP calls, searches, saves to memory, or shell commands succeeded unless concrete successful results appear in this context above. Explicitly acknowledge any planned step marked missing or incomplete. Do not soften failures into success.
+`
+    : '';
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 ${relevantSkillsSection}
 ${requiredTemplateSection}
@@ -30,7 +43,7 @@ ${requiredTemplateSection}
 ${context ? `Tasks completed and results:\n${context}\n` : ''}
 
 Write a response to the user:
-- Summarize what you found or did
+${honestyDirective}- Summarize what you found or did
 - If a file was created, ALWAYS mention the exact file path
 - If the context includes multi-line shell or listing output, quote it verbatim in a markdown code block before summarizing; never invent paths, merge names into groups, or guess file vs directory
 - If you found information, share the key points briefly

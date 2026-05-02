@@ -39,6 +39,10 @@ import type { AgentRouterContract, DelegationRequest, DelegationResult } from '.
 import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
+import {
+  plannedToolSuccessfulInSteps,
+  subtaskRequiresExecutablePlanTool,
+} from './amplifier/SubtaskExecutionTrace.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
@@ -414,6 +418,8 @@ No markdown. No prose.`;
 
     // DECOMPOSE: Si la tarea es COMPLEX, dividir en subtareas antes del loop
     let subtasks: Subtask[] = [];
+    /** Non-empty decomposition from this request (survives for verify after COMPLEX fallback to ReAct when steps=[]). */
+    let complexPlanForVerify: Subtask[] | undefined;
     let accumulatedContext = '';
 
     if (input.classifiedLevel === ComplexityLevel.COMPLEX) {
@@ -427,6 +433,7 @@ No markdown. No prose.`;
           : input.history.filter((m) => m.role === 'user' || m.role === 'assistant');
       const decomposition = await this.decomposer.decompose(input.message, toolNames, dialogueForDecompose);
       subtasks = decomposition.steps;
+      complexPlanForVerify = decomposition.steps.length > 0 ? decomposition.steps : undefined;
 
       this.log.info(`[AmplifierLoop] Executing ${subtasks.length} subtask(s) sequentially`);
 
@@ -437,6 +444,7 @@ No markdown. No prose.`;
       } else {
       // Ejecutar cada subtarea secuencialmente
       for (const subtask of subtasks) {
+        const stepsBeforeSubtask = steps.length;
         this.log.info(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
 
         // DIRECT EXECUTION: Si la subtarea tiene dependencia Y una tool definida por el Decomposer,
@@ -806,6 +814,9 @@ Do NOT search for more information. Use what is provided.`;
           subtaskMessage = subtask.description;
         }
 
+        const baseSubtaskUserMessage = subtaskMessage;
+        let subtaskMandatoryRetries = 0;
+
         const forcedTool = subtask.tool && subtask.tool !== 'none'
           ? input.availableTools.find((tool) => tool.name === subtask.tool)
           : undefined;
@@ -813,7 +824,7 @@ Do NOT search for more information. Use what is provided.`;
         // Crear un input modificado para esta subtarea
         const subtaskInput: AmplifierInput = {
           ...input,
-          message: subtaskMessage,
+          message: baseSubtaskUserMessage,
           availableTools: forcedTool ? [forcedTool] : input.availableTools,
           // When decomposition already selected a concrete tool, avoid skill/agent drift in the sub-loop.
           availableSkills: forcedTool ? [] : input.availableSkills,
@@ -873,6 +884,14 @@ Do NOT search for more information. Use what is provided.`;
           this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Action:`, resolvedAction.type, resolvedAction.target);
 
           if (resolvedAction.type === 'none') {
+            if (forcedTool && subtaskMandatoryRetries < 1) {
+              subtaskMandatoryRetries++;
+              subtaskInput.message = `${baseSubtaskUserMessage}\n\n[System] Mandatory: invoke the only allowed tool (${subtask.tool}) for this subtask when feasible; do not conclude without invoking it unless prerequisites are objectively impossible — then state briefly why.`;
+              this.log.warn(
+                `[AmplifierLoop] Subtask ${subtask.id} — think produced no actionable tool while '${subtask.tool}' is mandatory; injecting one corrective instruction pass`
+              );
+              continue;
+            }
             subtaskDone = true;
             subtaskResult = thinkStep.output ?? '';
             break;
@@ -952,6 +971,16 @@ Do NOT search for more information. Use what is provided.`;
           accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${subtaskResult}`;
           this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed. Context size: ${accumulatedContext.length} chars`);
         }
+
+        if (subtaskRequiresExecutablePlanTool(subtask)) {
+          const subtaskStepsSlice = steps.slice(stepsBeforeSubtask);
+          if (!plannedToolSuccessfulInSteps(subtask.tool, subtaskStepsSlice)) {
+            this.log.warn(
+              `[AmplifierLoop] SubtaskGuard: planned tool '${subtask.tool}' (subtask ${subtask.id}) has no matching successful invoke in act traces`
+            );
+            accumulatedContext += `\n\n(SubtaskGuard) Subtask ${subtask.id}: planned tool '${subtask.tool}' was not invoked successfully in orchestrator traces. Treat this planned step as not completed; inform the user honestly and do not claim it was executed.`;
+          }
+        }
       }
 
       // Sintetizar todos los resultados acumulados
@@ -1010,7 +1039,8 @@ Do NOT search for more information. Use what is provided.`;
         accumulatedContext,
         iteration,
         modelsUsed,
-        this.verifyBeforeSynthesize
+        this.verifyBeforeSynthesize,
+        complexPlanForVerify?.length ? { plannedSubtasks: complexPlanForVerify, orchestratorSteps: steps } : undefined
       );
       if (verifiedComplex.step) {
         steps.push(verifiedComplex.step);
@@ -1290,7 +1320,10 @@ Do NOT search for more information. Use what is provided.`;
       currentContext,
       iteration + 1,
       modelsUsed,
-      this.verifyBeforeSynthesize
+      this.verifyBeforeSynthesize,
+      complexPlanForVerify?.length
+        ? { plannedSubtasks: complexPlanForVerify, orchestratorSteps: steps }
+        : undefined
     );
     if (verifiedMain.step) {
       steps.push(verifiedMain.step);
