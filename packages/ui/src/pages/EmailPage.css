@@ -1,6 +1,15 @@
-.email-page {
+/* Scrollable column inside .main-content (flex parent has overflow:hidden) */
+.email-page.page-shell {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   max-width: 960px;
-  padding: 0 0 2rem;
+  width: 100%;
+  margin-inline: auto;
+  box-sizing: border-box;
+  gap: 1.25rem;
 }
 
 .email-heading {
@@ -28,6 +37,8 @@
 
 .email-section {
   margin-bottom: 2rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .email-section-toolbar {
@@ -205,12 +216,14 @@
   border-radius: 10px;
   padding: 1rem 1.1rem;
   background: var(--bg-elevated);
+  width: 100%;
+  min-width: 0;
 }
 
 .email-oauth-fields {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1rem;
   margin-bottom: 1rem;
 }
 
@@ -220,6 +233,8 @@
   gap: 0.35rem;
   font-size: 0.82rem;
   color: var(--text-secondary);
+  width: 100%;
+  min-width: 0;
 }
 
 .email-wide-input {
@@ -246,10 +261,12 @@
 }
 
 .email-add-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.85rem 1rem;
+  align-items: end;
+  width: 100%;
+  min-width: 0;
 }
 
 .email-add-row label,
@@ -259,13 +276,14 @@
   gap: 0.28rem;
   font-size: 0.81rem;
   color: var(--text-secondary);
-  min-width: 120px;
+  min-width: 0;
 }
 
 .email-add-row input,
 .email-add-row select,
 .email-field-inline input,
 .email-field-inline select {
+  width: 100%;
   padding: 0.4rem 0.55rem;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -273,6 +291,11 @@
   color: var(--text-primary);
   font-size: 0.86rem;
   min-width: 0;
+}
+
+.email-edit-panel .email-add-row label.email-field-checkbox {
+  flex-direction: row;
+  align-items: center;
 }
 
 .email-field-checkbox {
@@ -302,6 +325,11 @@
   margin-top: 0.75rem;
   padding-top: 0.85rem;
   border-top: 1px solid var(--border);
+  min-width: 0;
+}
+
+.email-edit-panel .email-edit-title {
+  width: 100%;
 }
 
 .email-edit-title {
@@ -327,6 +355,9 @@
   border-radius: 10px;
   padding: 1rem 1.15rem;
   background: var(--bg-elevated);
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .email-guide-title {

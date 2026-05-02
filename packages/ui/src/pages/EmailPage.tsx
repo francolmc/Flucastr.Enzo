@@ -429,7 +429,7 @@ export default function EmailPage() {
   const gmailCallbackUrl = `http://127.0.0.1:${apiPortHint}/api/email/oauth/google/callback`;
 
   return (
-    <div className="email-page">
+    <div className="email-page page-shell">
       <h2 className="email-heading">Correo</h2>
       <p className="email-lead">
         Todo lo que guardás acá queda en este equipo (<code>~/.enzo/config.json</code>). Nadie más lo ve salvo vos.
