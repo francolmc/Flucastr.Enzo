@@ -1,39 +1,28 @@
 /**
  * Complexity routing (`SIMPLE` | `MODERATE` | `COMPLEX`):
  *
- * 1. Optional bypass: when `process.env.ENZO_CLASSIFIER_LLM_ALWAYS === 'true'`, skip all heuristic
- *    fast-paths below and classify only via LLM (+ history in `messages`). Logs `classifierBranch: llm_always`.
+ * Env (LLM-first by default — semantic routing without growing keyword lists):
+ * - `ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH`:
+ *     `true` — run ES/EN lexical shortcuts before the classifier LLM (legacy / rollback / multilingual gaps).
+ *     **Default / unset / any other value** — skip those shortcuts and classify only via `requestClassification`,
+ *     using extended JSON hints (`suggestedTool`, `calendarIntent`, `suppressSimpleModerateFastPath`).
+ * - `ENZO_CLASSIFIER_LLM_ALWAYS === 'true'` — identical to lexical off for routing; logs `classifierBranch: llm_always`.
+ * - Amplifier rollback: `ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true'` re-enables lexical
+ *     `impliesMultiToolWorkflow()` as a safety net alongside classifier output.
  *
- * 2. Heuristic ordered fast-paths (cheap; ESLint many are ES/EN-lexical — multilingual gap, see multilingual audit below):
- *    - trivial greeting / short acknowledgement (`trivialPattern`)
- *    - listing Enzo persisted agenda (`messageLooksLikeCalendarListQuery`) → MODERATE + calendar list
- *    - recall / pending wording (`isLikelyRecallQuery`) → MODERATE
- *    - persisted agenda / scheduled event (`messageLooksLikePersistedAgendaScheduleRequest`) → MODERATE (narrow ES/EN lexical)
- *    - abstract life planning without filesystem path (`isLikelyAbstractLifePlanningWithoutPaths`) → SIMPLE
- *    - explicit chain phrases (`isLikelyChainedTask`) → COMPLEX
- *    - implicit multi-tool patterns (`impliesMultiToolWorkflow` from taskRoutingHints) → COMPLEX
- *    - persist file at absolute path (`messageIndicatesPersistedWriteToAbsolutePath`) → MODERATE + classifierBranch `write_file_lexical_hint`
- *    - factual / temporal lexical lists (`isLikelyFactualQuery`) → MODERATE + suggestedTool web_search
- *    - single-tool lexical cues (`isLikelySingleToolTask`) → MODERATE
+ * **Structural cues (stay in code)** — distinct from multilingual intent keyword lists:
+ * - Absolute path detection (`messageContainsLikelyAbsolutePath`, `messageIndicatesPersistedWriteToAbsolutePath`).
+ * - Optional calendar ambiguity fallback via `resolveCalendarListFastPathIntent` /
+ *     `resolveCalendarScheduleFastPathIntent` when the LLM omits `calendarIntent` (narrow ES/EN).
  *
- * 3. If no heuristic matches → LLM JSON classifier (`requestClassification`).
- *
- * 4. On LLM JSON parse failure → `fallbackClassification` uses `hasActionVerb` → logs `fallback`.
- *
- * Multilingual audit (high level — lexical heuristics do not adapt to PT/FR/de/zh/…):
- * - Classifier: trivialPattern; isLikelyRecallQuery; isLikelyPersistedAgendaOrScheduleIntent;
- *   isLikelyAbstractLifePlanningWithoutPaths; isLikelyChainedTask;
- *   isLikelyFactualQuery word lists; isLikelySingleToolTask; hasActionVerb.
- * - taskRoutingHints.impliesMultiToolWorkflow: ES/EN chain + web/read/write combinators only.
- * - More locale-agnostic cues (used only inside helpers): absolute path shapes in messageContainsLikelyAbsolutePath,
- *   file extensions in impliesMultiToolWorkflow (\\.md etc.).
- *
- * Duplicate gate: AmplifierLoop.amplify re-runs impliesMultiToolWorkflow on the raw user message even after
- * Classifier returned SIMPLE/MODERATE — intentional second line of defense before runSimpleModerateFastPath.
+ * Legacy lexical block (when `USE_LEXICAL_FASTPATH`): trivialPattern; calendar list/schedule; recall; scheduling;
+ * abstract life planning; chained / multi-tool lexical; persist path hints; factual word lists;
+ * single-tool cues; fallback `hasActionVerb`.
  */
 import { LLMProvider, Message } from '../providers/types.js';
 import {
   type AgentConfig,
+  type CalendarIntentHint,
   type ClassificationResult,
   type DelegationHint,
   ComplexityLevel,
@@ -43,6 +32,48 @@ import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+}
+
+/** `'true'` = run lexical ES/EN fast-paths before the classifier LLM. Default LLM-first. */
+export function classifierLexicalFastPathEnabled(): boolean {
+  return process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH === 'true';
+}
+
+function persistedCalendarCorpus(input: { message: string; originalMessage?: string }): string {
+  return [input.originalMessage, input.message].filter(Boolean).join('\n');
+}
+
+/**
+ * Whether SIMPLE/MODERATE fast path should attach SCHEDULE_PERSIST_LOCKED (calendar `add`).
+ * If `calendarIntent` is omitted, falls back to `messageLooksLikePersistedAgendaScheduleRequest`.
+ */
+export function resolveCalendarScheduleFastPathIntent(input: {
+  message: string;
+  originalMessage?: string;
+  suggestedTool?: 'web_search' | 'calendar';
+  calendarIntent?: CalendarIntentHint;
+}): boolean {
+  if (input.suggestedTool && input.suggestedTool !== 'calendar') return false;
+  if (input.calendarIntent === 'schedule') return true;
+  if (input.calendarIntent === 'list') return false;
+  return messageLooksLikePersistedAgendaScheduleRequest(persistedCalendarCorpus(input));
+}
+
+/**
+ * Whether SIMPLE/MODERATE fast path should attach CALENDAR_LIST_LOCKED (calendar `list`).
+ * If `calendarIntent` is omitted, falls back to list/query lexical helper (narrow ES/EN).
+ */
+export function resolveCalendarListFastPathIntent(input: {
+  message: string;
+  originalMessage?: string;
+  suggestedTool?: 'web_search' | 'calendar';
+  calendarIntent?: CalendarIntentHint;
+}): boolean {
+  if (input.suggestedTool && input.suggestedTool !== 'calendar') return false;
+  if (input.calendarIntent === 'list') return true;
+  if (input.calendarIntent === 'schedule') return false;
+  const c = persistedCalendarCorpus(input);
+  return messageLooksLikeCalendarListQuery(c) && !messageLooksLikePersistedAgendaScheduleRequest(c);
 }
 
 /** Optional third argument to {@link Classifier.classify} — user agent catalog + image attachment signal. */
@@ -187,6 +218,11 @@ export class Classifier {
       return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
     }
 
+    if (!classifierLexicalFastPathEnabled()) {
+      console.log('[Classifier] LEXICAL_FASTPATH disabled — classify via LLM JSON only');
+      return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
+    }
+
     const trivialPattern = /^(hola|hello|hi|hey|buenos días|buenas|good morning|gracias|thanks|ok|sí|no|chao|bye|adiós)[.!?]?$/i;
     if (trivialPattern.test(normalizedMessage)) {
       console.log('[Classifier] Fast-path trivial → SIMPLE');
@@ -200,6 +236,7 @@ export class Classifier {
         level: ComplexityLevel.MODERATE,
         reason: 'query Enzo persisted agenda / events for a day — must use calendar tool list (never web_search)',
         suggestedTool: 'calendar',
+        calendarIntent: 'list',
         classifierBranch: 'calendar_list_lexical',
       };
     }
@@ -215,6 +252,7 @@ export class Classifier {
         level: ComplexityLevel.MODERATE,
         reason: 'persisted calendar or timed reminder — must use calendar tool (never plain-chat “already scheduled”)',
         suggestedTool: 'calendar',
+        calendarIntent: 'schedule',
         classifierBranch: 'schedule_persist_lexical',
       };
     }
@@ -229,11 +267,21 @@ export class Classifier {
     }
     if (this.isLikelyChainedTask(normalizedMessage)) {
       logClassifierRouting('chained_explicit_lexical', ComplexityLevel.COMPLEX);
-      return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow', classifierBranch: 'chained_explicit_lexical' };
+      return {
+        level: ComplexityLevel.COMPLEX,
+        reason: 'detected explicit chained workflow',
+        classifierBranch: 'chained_explicit_lexical',
+        suppressSimpleModerateFastPath: true,
+      };
     }
     if (impliesMultiToolWorkflow(normalizedMessage)) {
       logClassifierRouting('multi_tool_implicit_classifier', ComplexityLevel.COMPLEX);
-      return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow', classifierBranch: 'multi_tool_implicit_classifier' };
+      return {
+        level: ComplexityLevel.COMPLEX,
+        reason: 'implicit multi-tool workflow',
+        classifierBranch: 'multi_tool_implicit_classifier',
+        suppressSimpleModerateFastPath: true,
+      };
     }
     if (messageIndicatesPersistedWriteToAbsolutePath(normalizedMessage)) {
       logClassifierRouting('write_file_lexical_hint', ComplexityLevel.MODERATE);
@@ -260,6 +308,25 @@ export class Classifier {
     }
 
     return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
+  }
+
+  private normalizeClassifierLlmOptionalFields(
+    parsed: Record<string, unknown>,
+    level: ComplexityLevel
+  ): Partial<ClassificationResult> {
+    const out: Partial<ClassificationResult> = {};
+    const suggested = parsed['suggestedTool'];
+    if (suggested === 'web_search' || suggested === 'calendar') {
+      out.suggestedTool = suggested;
+    }
+    const cal = parsed['calendarIntent'];
+    if (cal === 'list' || cal === 'schedule') {
+      out.calendarIntent = cal;
+    }
+    if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
+      out.suppressSimpleModerateFastPath = true;
+    }
+    return out;
   }
 
   private normalizeDelegationHint(
@@ -314,11 +381,13 @@ ${builtin}`;
       const llmBranch = fromLlmAlwaysBypass ? 'llm_always' : 'llm';
       logClassifierRouting(llmBranch, level);
       const delegationHint = this.normalizeDelegationHint(parsed.delegationHint, agents);
+      const hints = this.normalizeClassifierLlmOptionalFields(parsed as Record<string, unknown>, level);
       return {
         level,
         reason: parsed.reason || 'No reason provided',
         classifierBranch: llmBranch,
         ...(delegationHint ? { delegationHint } : {}),
+        ...hints,
       };
     } catch (error) {
       console.error('Classifier.classify() error:', error);
@@ -330,9 +399,12 @@ ${builtin}`;
     return `You are a task complexity classifier. Respond ONLY with JSON, no extra text.
 The user's message may be in ANY natural language — infer intent regardless of language; map to level using the SAME rules below.
 
+Core shape (always required):
 {"level":"SIMPLE","reason":"..."}
-{"level":"MODERATE","reason":"..."}
-{"level":"COMPLEX","reason":"..."}
+Optional keys (omit when irrelevant):
+- "suggestedTool": "web_search" — user needs grounded/current web facts.
+- "suggestedTool": "calendar" AND "calendarIntent": "list" | "schedule" — Enzo persisted agenda (SQLite): list/day query vs adding a timed event/reminder (never outsource to web_search).
+- "suppressSimpleModerateFastPath": true — REQUIRED when LEVEL is COMPLEX or when TWO OR MORE DISTINCT tool-backed steps are inseparable without an intermediate observation (implicit chains: web+write, read+write, analyze+report to file, reorganize folders with mkdir+mv). ALSO set **true** if you classify as MODERATE but the wording still hides a sequential multi-tool dependency (prefer raising to COMPLEX in that case).
 
 LEVELS — apply in order, first match wins:
 
@@ -388,7 +460,7 @@ Examples:
 "hola" → {"level":"SIMPLE","reason":"greeting"}
 "hola cómo estás?" → {"level":"SIMPLE","reason":"greeting"}
 "cuánto es 15% de 200?" → {"level":"SIMPLE","reason":"math calculation"}
-"what is the Atacama Desert?" → {"level":"MODERATE","reason":"factual question requiring web search"}
+"what is the Atacama Desert?" → {"level":"MODERATE","reason":"factual question requiring web search","suggestedTool":"web_search"}
 "search for AI news" → {"level":"MODERATE","reason":"single web search"}
 "list my Downloads folder" → {"level":"MODERATE","reason":"single file operation"}
 "remember that my name is Franco" → {"level":"MODERATE","reason":"single remember action"}
@@ -402,16 +474,16 @@ Examples:
 "enviame lo que generaste" → {"level":"MODERATE","reason":"send_file tool"}
 "¿qué tengo pendiente de Dash?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
 "¿recordás lo que dijimos del PR?" → {"level":"MODERATE","reason":"recall query — needs RecallTool"}
-"search what is the Atacama Desert and then create a file with a summary" → {"level":"COMPLEX","reason":"chained: search then write file"}
-"read file X and save a summary to file Y" → {"level":"COMPLEX","reason":"chained: read then write"}
+"search what is the Atacama Desert and then create a file with a summary" → {"level":"COMPLEX","reason":"chained: search then write file","suppressSimpleModerateFastPath":true}
+"read file X and save a summary to file Y" → {"level":"COMPLEX","reason":"chained: read then write","suppressSimpleModerateFastPath":true}
 "move those folders to IntroProgra" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv multiple items"}
 "meter esas carpetas en una carpeta nueva" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv"}
 "llama a https://api.x.com/data y guárdalo en un archivo" → {"level":"COMPLEX","reason":"chained: curl API call then write file"}
 "necesito gestionar tareas personales y de todos mis trabajos" → {"level":"SIMPLE","reason":"planning conversation, no concrete paths or file ops"}
 "ayuda con la gestión de mi día a día" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
-"¿podemos agendar un evento para las 15:55 horas del día de hoy? Es tomar medicamento." → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
-"schedule a dentist appointment tomorrow at 9:30" → {"level":"MODERATE","reason":"persisted timed event — calendar tool"}
-"¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list"}
+"¿podemos agendar un evento para las 15:55 horas del día de hoy? Es tomar medicamento." → {"level":"MODERATE","reason":"persisted timed event — calendar tool","suggestedTool":"calendar","calendarIntent":"schedule"}
+"schedule a dentist appointment tomorrow at 9:30" → {"level":"MODERATE","reason":"persisted timed event — calendar tool","suggestedTool":"calendar","calendarIntent":"schedule"}
+"¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list","suggestedTool":"calendar","calendarIntent":"list"}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
@@ -420,7 +492,7 @@ ${this.buildDelegationCatalogSection(agents)}
 HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
 
 OUTPUT — one JSON object only (no markdown, no prose):
-{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"}}
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","suppressSimpleModerateFastPath":true}
 
 delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
 - When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
@@ -559,6 +631,9 @@ ONLY JSON. NOTHING ELSE.`;
     level: ComplexityLevel;
     reason: string;
     delegationHint?: { agentId?: string; reason?: string };
+    suggestedTool?: string;
+    calendarIntent?: string;
+    suppressSimpleModerateFastPath?: boolean;
   } | null> {
     const response = await this.provider.complete({
       messages: [{ role: 'system', content: systemPrompt }, ...messages],
@@ -576,6 +651,9 @@ ONLY JSON. NOTHING ELSE.`;
       level: ComplexityLevel;
       reason: string;
       delegationHint?: { agentId?: string; reason?: string };
+      suggestedTool?: string;
+      calendarIntent?: string;
+      suppressSimpleModerateFastPath?: boolean;
     }>(response.content, {
       tryRepair: true,
     });
@@ -584,7 +662,8 @@ ONLY JSON. NOTHING ELSE.`;
     }
 
     const retrySystemPrompt = `Return ONLY valid JSON with one object:
-{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"}}
+{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional","calendarIntent":"optional","suppressSimpleModerateFastPath":optional}
+Keys suggestedTool/calendarIntent/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search or calendar only when documented in the primary classifier prompt.
 No markdown, no prose.`;
     const retryResponse = await this.provider.complete({
       messages: [{ role: 'system', content: retrySystemPrompt }, ...messages],
@@ -597,6 +676,9 @@ No markdown, no prose.`;
       level: ComplexityLevel;
       reason: string;
       delegationHint?: { agentId?: string; reason?: string };
+      suggestedTool?: string;
+      calendarIntent?: string;
+      suppressSimpleModerateFastPath?: boolean;
     }>(retryResponse.content, { tryRepair: true });
 
     return retryParsed ? retryParsed.value : null;

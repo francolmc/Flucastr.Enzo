@@ -47,9 +47,13 @@ import {
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
-  messageLooksLikeCalendarListQuery,
-  messageLooksLikePersistedAgendaScheduleRequest,
+  resolveCalendarListFastPathIntent,
+  resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
+
+function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
+  return process.env.ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true';
+}
 import type { MemoryService } from '../memory/MemoryService.js';
 import { MemoryLessonExtractor } from '../memory/MemoryLessonExtractor.js';
 
@@ -328,42 +332,52 @@ No markdown. No prose.`;
       this.log.info(`[AmplifierLoop] Multi-step skill detected: minRequiredSteps=${minRequiredSteps}`);
     }
 
-    const skipFastPathForMultiTool = impliesMultiToolWorkflow(input.message);
+    const skipFastPathForMultiTool =
+      Boolean(input.suppressSimpleModerateFastPath) ||
+      (amplifierImpliesMultiToolLexicalFallbackEnabled() && impliesMultiToolWorkflow(input.message));
     if (skipFastPathForMultiTool) {
       console.log(
         JSON.stringify({
           event: 'EnzoRouting',
           phase: 'amplifier_before_fast_path',
-          fastPathSkippedReason: 'implies_multi_tool_workflow',
+          fastPathSkippedReason: input.suppressSimpleModerateFastPath
+            ? 'classifier_suppress_simple_moderate_fast_path'
+            : 'implies_multi_tool_workflow',
           classifiedLevel: input.classifiedLevel,
         })
       );
     }
 
-    const calendarCorpusFastPath = [input.originalMessage, input.message].filter(Boolean).join('\n');
-    const lexicalCalendarListIntent =
+    const calendarRoutingInput = {
+      message: input.message,
+      originalMessage: input.originalMessage,
+      suggestedTool: input.suggestedTool,
+      calendarIntent: input.calendarIntent,
+    };
+    const scheduleIntentForCalendar = resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
+    const calendarListClassifierIntent =
       this.executableTools.some((t) => t.name === 'calendar') &&
-      messageLooksLikeCalendarListQuery(calendarCorpusFastPath) &&
-      !messageLooksLikePersistedAgendaScheduleRequest(calendarCorpusFastPath);
+      resolveCalendarListFastPathIntent(calendarRoutingInput) &&
+      !scheduleIntentForCalendar;
 
     let fastPathLevel = input.classifiedLevel;
-    if (fastPathLevel === ComplexityLevel.SIMPLE && lexicalCalendarListIntent) {
+    if (fastPathLevel === ComplexityLevel.SIMPLE && calendarListClassifierIntent) {
       fastPathLevel = ComplexityLevel.MODERATE;
       this.log.info(
-        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (Enzo persisted agenda list — calendar tool lexical)'
+        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (Enzo persisted agenda list — calendar classifier hint)'
       );
       console.log(
         JSON.stringify({
           event: 'EnzoRouting',
           phase: 'amplifier_before_fast_path',
           reclassifiedTo: 'MODERATE',
-          reason: 'calendar_list_lexical',
+          reason: 'calendar_list_classifier_hint',
           priorLevel: input.classifiedLevel,
         })
       );
     }
 
-    const calendarListBypassesMultiStepBlock = lexicalCalendarListIntent;
+    const calendarListBypassesMultiStepBlock = calendarListClassifierIntent;
 
     if (
       fastPathLevel === ComplexityLevel.SIMPLE &&
@@ -392,7 +406,7 @@ No markdown. No prose.`;
         JSON.stringify({
           event: 'EnzoRouting',
           phase: 'amplifier_fast_path',
-          calendarListLexicalBypassMultiStepSkill: true,
+          calendarListBypassMultiStepSkill: true,
         })
       );
     }
@@ -429,7 +443,7 @@ No markdown. No prose.`;
 
     if (skipFastPathForMultiTool && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
       this.log.info(
-        '[AmplifierLoop] Fast-path disabled: impliesMultiToolWorkflow (see taskRoutingHints; also used in Classifier before LLM)'
+        '[AmplifierLoop] Fast-path disabled: classifier suppressSimpleModerateFastPath and/or lexical multi-tool fallback (ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL)'
       );
     }
 

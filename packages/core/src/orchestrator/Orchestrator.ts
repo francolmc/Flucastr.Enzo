@@ -319,6 +319,10 @@ Use this profile information to personalize responses while respecting user requ
    * Picks a user {@link AgentConfig} preset (provider/model for the chat turn). Not related to delegation
    * specialists (claude_code, doc_agent, vision_agent).
    */
+  /**
+   * Resolves conversational preset. A substring match on `agent.name` runs before the classifier LLM
+   * (`parseFirstJsonObject`) for cheap exact-name UX; multilingual routing avoids growing keyword maps there.
+   */
   async routeAgentForMessage(message: string, userId: string): Promise<AgentConfig | undefined> {
     this.syncBaseProviderFromConfig();
     const trimmedMessage = (message || '').trim();

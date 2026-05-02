@@ -52,11 +52,27 @@ function testNoFloorWithoutImage(): void {
   assert(out.delegationHint === undefined, 'no hint');
 }
 
+function testFloorPreservesClassifierRoutingHints(): void {
+  const raw: ClassificationResult = {
+    level: ComplexityLevel.SIMPLE,
+    reason: 'casual',
+    classifierBranch: 'llm',
+    suppressSimpleModerateFastPath: true,
+    suggestedTool: 'calendar',
+    calendarIntent: 'list',
+  };
+  const out = applyClassificationFloors(raw, { hasImageContext: true, availableAgents: [visorAgent] });
+  assert(out.suppressSimpleModerateFastPath === true, 'preserve suppress hint through image floor');
+  assert(out.suggestedTool === 'calendar', 'preserve suggestedTool');
+  assert(out.calendarIntent === 'list', 'preserve calendarIntent');
+}
+
 async function run(): Promise<void> {
   testDefaultHintPrefersAnthropicPreset();
   testDefaultHintFallsBackToVisionAgent();
   testFloorBumpsSimpleToModerateWithHint();
   testNoFloorWithoutImage();
+  testFloorPreservesClassifierRoutingHints();
   console.log('ClassificationFloors tests passed.');
 }
 

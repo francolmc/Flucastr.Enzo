@@ -14,7 +14,7 @@ export interface RelevantSkill {
 }
 
 export type SkillResolveOptions = {
-  /** When ENZO_SKILLS_LLM_SELECTION=true, used together with withTimeout for semantic routing. */
+  /** When ENZO_SKILLS_LLM_SELECTION is true (default), used together with withTimeout for semantic reordering after heuristic scores. Set to false for heuristic-only selection. */
   llm?: LLMProvider;
   withTimeout?: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
 };
@@ -116,7 +116,7 @@ export class SkillResolver {
   }
 
   private semanticSelectionEnabled(): boolean {
-    return (process.env.ENZO_SKILLS_LLM_SELECTION ?? 'false').toLowerCase() === 'true'
+    return (process.env.ENZO_SKILLS_LLM_SELECTION ?? 'true').toLowerCase() === 'true'
   }
 
   private semanticMinHeuristic(): number {

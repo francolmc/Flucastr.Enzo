@@ -45,8 +45,8 @@ import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
-  messageLooksLikeCalendarListQuery,
-  messageLooksLikePersistedAgendaScheduleRequest,
+  resolveCalendarListFastPathIntent,
+  resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
@@ -415,24 +415,30 @@ If you include any text outside the JSON, the tool will not execute.
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
-  const schedulePersistCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
-  const lexicalSchedulePersist =
+  const calendarCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
+  const calendarRoutingInput = {
+    message: input.message,
+    originalMessage: input.originalMessage,
+    suggestedTool: input.suggestedTool,
+    calendarIntent: input.calendarIntent,
+  };
+  const classifierSchedulePersist =
     isModerate &&
     executableTools.some((t) => t.name === 'calendar') &&
-    messageLooksLikePersistedAgendaScheduleRequest(schedulePersistCorpus);
+    resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
 
-  const lexicalCalendarList =
+  const classifierCalendarList =
     isModerate &&
-    !lexicalSchedulePersist &&
     executableTools.some((t) => t.name === 'calendar') &&
-    messageLooksLikeCalendarListQuery(schedulePersistCorpus);
+    !classifierSchedulePersist &&
+    resolveCalendarListFastPathIntent(calendarRoutingInput);
 
-  const listWindowIso = lexicalCalendarList
-    ? computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(schedulePersistCorpus, input.runtimeHints)
+  const listWindowIso = classifierCalendarList
+    ? computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(calendarCorpus, input.runtimeHints)
     : null;
 
   const mandatoryCalendarBlock =
-    lexicalSchedulePersist
+    classifierSchedulePersist
       ? `
 
 ━━━ SCHEDULE_PERSIST_LOCKED ━━━
@@ -443,7 +449,7 @@ CLOCK LOCK — **no invented offset:** combine the civil **date** from the **Use
       : '';
 
   const mandatoryCalendarListBlock =
-    lexicalCalendarList && listWindowIso
+    classifierCalendarList && listWindowIso
       ? `
 
 ━━━ CALENDAR_LIST_LOCKED ━━━

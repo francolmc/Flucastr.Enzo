@@ -41,6 +41,17 @@ function assertCondition(condition: boolean, message: string): void {
 async function runTests() {
   console.log('Running Classifier proactive-path table tests...\n');
 
+  const prevLexical = process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH;
+  process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH = 'true';
+  const restoreLexical = () => {
+    if (prevLexical === undefined) {
+      delete process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH;
+    } else {
+      process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH = prevLexical;
+    }
+  };
+
+  try {
   const cHello = new Classifier(new QueueProvider([]));
   const r0 = await cHello.classify('hola', []);
   assertEq(r0.level, ComplexityLevel.SIMPLE, '"hola" should be SIMPLE');
@@ -115,6 +126,7 @@ async function runTests() {
   assertEq(rAgenda.level, ComplexityLevel.MODERATE, 'persisted timed agenda should be MODERATE');
   assertEq(rAgenda.classifierBranch, 'schedule_persist_lexical', 'agenda persist should hit schedule lexical branch');
   assertEq(rAgenda.suggestedTool, 'calendar', 'agenda lexical path should hint calendar tool');
+  assertEq(rAgenda.calendarIntent, 'schedule', 'agenda persist should set calendarIntent schedule');
   console.log(
     '✓ "podemos agendar … 15:55 … hoy … medicamento …" → MODERATE + schedule_persist_lexical + calendar hint'
   );
@@ -124,6 +136,7 @@ async function runTests() {
   assertEq(rList.level, ComplexityLevel.MODERATE, 'persisted agenda list-for-today should be MODERATE');
   assertEq(rList.classifierBranch, 'calendar_list_lexical', 'agenda list should hit calendar_list_lexical branch');
   assertEq(rList.suggestedTool, 'calendar', 'agenda list path should hint calendar tool');
+  assertEq(rList.calendarIntent, 'list', 'agenda list should set calendarIntent list');
   console.log('✓ "¿qué eventos tengo el día de hoy?" → MODERATE + calendar_list_lexical + calendar hint');
 
   const cAgendaProg = new Classifier(new QueueProvider([]));
@@ -131,6 +144,7 @@ async function runTests() {
   assertEq(rProg.level, ComplexityLevel.MODERATE, '"eventos programados … hoy" should be MODERATE');
   assertEq(rProg.classifierBranch, 'calendar_list_lexical', 'programados phrasing hits calendar_list_lexical');
   assertEq(rProg.suggestedTool, 'calendar', 'programados calendar hint');
+  assertEq(rProg.calendarIntent, 'list', 'programados phrasing is list intent');
   console.log('✓ "que eventos programados tengo para hoy?" → calendar_list_lexical');
 
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
@@ -149,6 +163,9 @@ async function runTests() {
   console.log('✓ ENZO_CLASSIFIER_LLM_ALWAYS skips trivial regex and uses llm_always branch');
 
   console.log('\nAll Classifier proactive-path table tests passed.');
+  } finally {
+    restoreLexical();
+  }
 }
 
 runTests().catch((error) => {

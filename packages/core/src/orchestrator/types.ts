@@ -69,6 +69,9 @@ export interface StageMetricsSnapshot {
 
 export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize' | 'verify', StageMetricsSnapshot>;
 
+/** When classifier suggests `calendar`, disambiguates fast-path prompts (list vs schedule). */
+export type CalendarIntentHint = 'list' | 'schedule';
+
 export interface AmplifierInput {
   message: string;
   originalMessage?: string; // Original message before any translation or processing
@@ -86,6 +89,12 @@ export interface AmplifierInput {
    */
   availableAgents: AgentConfig[];
   classifiedLevel?: ComplexityLevel;
+  /** Mirrors {@link ClassificationResult.suggestedTool} from orchestrator classify. */
+  suggestedTool?: 'web_search' | 'calendar';
+  /** Mirrors {@link ClassificationResult.calendarIntent}. */
+  calendarIntent?: CalendarIntentHint;
+  /** Mirrors {@link ClassificationResult.suppressSimpleModerateFastPath}. */
+  suppressSimpleModerateFastPath?: boolean;
   /** User's preferred language (e.g., 'es', 'en'). Defaults to 'es'. */
   userLanguage?: string;
   selectedAgent?: AgentConfig;
@@ -219,6 +228,13 @@ export interface ClassificationResult {
   reason: string;
   /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
   suggestedTool?: 'web_search' | 'calendar';
+  /**
+   * When true, skip SIMPLE/MODERATE one-shot fast path even if level is SIMPLE or MODERATE (multi-tool / safety).
+   * Set by classifier LLM JSON or lexical multi-tool branches; AmplifierLoop honors this instead of lexical-only gates.
+   */
+  suppressSimpleModerateFastPath?: boolean;
+  /** Meaningful when `suggestedTool` is `calendar` (omit when not listing vs scheduling persisted agenda). */
+  calendarIntent?: CalendarIntentHint;
   /**
    * When set, {@link AmplifierLoop} skips SIMPLE/MODERATE fast path so THINK can delegate to a catalog agent.
    */

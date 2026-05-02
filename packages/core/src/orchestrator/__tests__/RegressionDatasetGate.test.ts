@@ -21,11 +21,21 @@ class DatasetProvider implements LLMProvider {
     const userMessage = request.messages.filter((m) => m.role === 'user').at(-1)?.content ?? '';
     const normalized = userMessage.toLowerCase();
     let predicted: ComplexityLevel = ComplexityLevel.SIMPLE;
-    const hasChain = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
-    const hasToolVerb = /\b(busca|read|lee|create|crea|remember|guarda|list|ls)\b/i.test(normalized);
+    const hasExplicitChain = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
+    const hasImplicitReadThenWrite =
+      (/\blee\s+/i.test(userMessage) && /\b(y\s+)?(crea|crear|guarda|guardar|escribe|escribir)\b/i.test(normalized)) ||
+      (/\bread\s+/.test(normalized) && /\b(and\s+)?(create|save|write)\b/i.test(normalized));
+    const hasChain = hasExplicitChain || hasImplicitReadThenWrite;
+    const hasToolVerb =
+      /\b(busca|read|lee|create|crea|crear|remember|guarda|list|ls|agendar|schedule|recordatorio|reminder|archivo|file)\b/i.test(
+        normalized
+      );
+    const looksLikePersonalAgendaList =
+      /\b(eventos|citas|appointments|meetings)\b/i.test(normalized) &&
+      /\b(hoy|today|tomorrow|mañana|agenda|calendario|calendar)\b/i.test(normalized);
     if (hasChain) {
       predicted = ComplexityLevel.COMPLEX;
-    } else if (hasToolVerb) {
+    } else if (hasToolVerb || looksLikePersonalAgendaList) {
       predicted = ComplexityLevel.MODERATE;
     }
     return {

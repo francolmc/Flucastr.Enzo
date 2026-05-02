@@ -2,8 +2,11 @@ export { Orchestrator } from './Orchestrator.js';
 export {
   Classifier,
   type ClassifyOptions,
+  classifierLexicalFastPathEnabled,
   messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
+  resolveCalendarListFastPathIntent,
+  resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
 export { ModelSelector } from './ModelSelector.js';
 export { Decomposer } from './Decomposer.js';
