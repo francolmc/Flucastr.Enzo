@@ -5,7 +5,7 @@
  * - `ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH`:
  *     `true` — run ES/EN lexical shortcuts before the classifier LLM (legacy / rollback / multilingual gaps).
  *     **Default / unset / any other value** — skip those shortcuts and classify only via `requestClassification`,
- *     using extended JSON hints (`suggestedTool`, `calendarIntent`, `suppressSimpleModerateFastPath`).
+ *     using extended JSON hints (`suggestedTool`, `calendarIntent`, `mailboxIntent`, `prefersHostTools`, `suppressSimpleModerateFastPath`).
  * - `ENZO_CLASSIFIER_LLM_ALWAYS === 'true'` — identical to lexical off for routing; logs `classifierBranch: llm_always`.
  * - Amplifier rollback: `ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true'` re-enables lexical
  *     `impliesMultiToolWorkflow()` as a safety net alongside classifier output.
@@ -36,6 +36,37 @@ import {
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+}
+
+/** Exported for tests. Normalizes optional classifier JSON fields (including `prefersHostTools` vs `web_search`). */
+export function normalizeClassifierLlmHints(
+  parsed: Record<string, unknown>,
+  level: ComplexityLevel
+): Partial<ClassificationResult> {
+  const out: Partial<ClassificationResult> = {};
+  const prefersHostTools = parsed['prefersHostTools'] === true;
+  if (prefersHostTools) {
+    out.prefersHostTools = true;
+  }
+  const suggested = parsed['suggestedTool'];
+  const allowSuggested =
+    suggested === 'calendar' ||
+    (suggested === 'web_search' && !prefersHostTools);
+  if (allowSuggested) {
+    out.suggestedTool = suggested as ClassificationResult['suggestedTool'];
+  }
+  const cal = parsed['calendarIntent'];
+  if (cal === 'list' || cal === 'schedule') {
+    out.calendarIntent = cal;
+  }
+  const mb = parsed['mailboxIntent'];
+  if (mb === 'unread_stats' || mb === 'unread_summarize') {
+    out.mailboxIntent = mb as NonNullable<ClassificationResult['mailboxIntent']>;
+  }
+  if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
+    out.suppressSimpleModerateFastPath = true;
+  }
+  return out;
 }
 
 /** `'true'` = run lexical ES/EN fast-paths before the classifier LLM. Default LLM-first. */
@@ -343,23 +374,7 @@ export class Classifier {
     parsed: Record<string, unknown>,
     level: ComplexityLevel
   ): Partial<ClassificationResult> {
-    const out: Partial<ClassificationResult> = {};
-    const suggested = parsed['suggestedTool'];
-    if (suggested === 'web_search' || suggested === 'calendar') {
-      out.suggestedTool = suggested;
-    }
-    const cal = parsed['calendarIntent'];
-    if (cal === 'list' || cal === 'schedule') {
-      out.calendarIntent = cal;
-    }
-    const mb = parsed['mailboxIntent'];
-    if (mb === 'unread_stats' || mb === 'unread_summarize') {
-      out.mailboxIntent = mb as NonNullable<ClassificationResult['mailboxIntent']>;
-    }
-    if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
-      out.suppressSimpleModerateFastPath = true;
-    }
-    return out;
+    return normalizeClassifierLlmHints(parsed, level);
   }
 
   private normalizeDelegationHint(
@@ -435,7 +450,8 @@ The user's message may be in ANY natural language — infer intent regardless of
 Core shape (always required):
 {"level":"SIMPLE","reason":"..."}
 Optional keys (omit when irrelevant):
-- "suggestedTool": "web_search" — user needs grounded/current web facts.
+- "suggestedTool": "web_search" — user needs grounded/current **public** web facts only (never use for host-backed intents below).
+- "prefersHostTools": true — answer must come from THIS machine's **authenticated CLIs** and/or **registered Enzo tools**: the user's repos, namespaces, quotas, mail counts, persisted agenda, kubectl/docker context tied to whoever is logged into this host. **Never** combine with suggestedTool web_search together. Omit for pure public lookups.
 - "suggestedTool": "calendar" AND "calendarIntent": "list" | "schedule" — Enzo persisted agenda (SQLite): list/day query vs adding a timed event/reminder (never outsource to web_search).
 - "mailboxIntent": "unread_stats" — HOW MANY **unread** in connected mailboxes → tool \`email_unread_count\` (omit when not totals).
 - "mailboxIntent": "unread_summarize" — LIST or SUMMARIZE **actual unread threads** they have connected (Spanish/English wording like resumir/resume + sin leer + Gmail/Outlook, or lista de no leídos). **Never** SIMPLE with simulated mail — MODERATE: \`read_email\` with \`unread_only\`: true MUST run before paraphrasing; never invent employers/projects/subjects absent from RESULTADO (omit mailboxIntent otherwise).
@@ -470,6 +486,7 @@ MODERATE — needs exactly ONE tool:
   Even if it contains "and": "I am a developer and I live in Copiapó" = MODERATE
 - Queries about CURRENT system state (RAM, disk, processes, OS version, CPU usage)
   These REQUIRE execute_command — never classify as SIMPLE (model doesn't know real system state)
+- **Host-backed SaaS/account data on THIS machine:** "my repos on GitHub/GitLab…", "**my** org's …", kubectl/docker context for clusters **configured here**, listing resources visible to **their** authenticated CLIs → MODERATE + prefersHostTools true, omit suggestedTool web_search. The user is asking what's visible locally via tooling/session — NOT a generalized web crawl about the company's public site.
 - Call an HTTP/API endpoint when the user provides a URL → execute_command with curl
 - Questions about what the user has pending, captured, or said before are MODERATE — they need RecallTool, not web search.
 
@@ -523,6 +540,8 @@ Examples:
 "¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list","suggestedTool":"calendar","calendarIntent":"list"}
 "¿cuántos correos sin leer tengo en Gmail y Outlook?" → {"level":"MODERATE","reason":"mailbox unread totals — connected accounts on host","mailboxIntent":"unread_stats"}
 "¿Podés resumir los mails más importantes sin leer de Gmail y Outlook?" → {"level":"MODERATE","reason":"unread summaries from connected inbox rows","mailboxIntent":"unread_summarize"}
+"muéstrame mis repositorios en GitHub" → {"level":"MODERATE","reason":"host-authenticated repos via CLI/tools on machine","prefersHostTools":true}
+"list my GitHub repos" → {"level":"MODERATE","reason":"repos visible via host Git/GitHub tooling","prefersHostTools":true}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
@@ -531,7 +550,7 @@ ${this.buildDelegationCatalogSection(agents)}
 HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
 
 OUTPUT — one JSON object only (no markdown, no prose):
-{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","mailboxIntent":"optional unread_stats|unread_summarize","suppressSimpleModerateFastPath":true}
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","mailboxIntent":"optional unread_stats|unread_summarize","prefersHostTools": optional true|false,"suppressSimpleModerateFastPath":true}
 
 delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
 - When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
@@ -703,8 +722,8 @@ ONLY JSON. NOTHING ELSE.`;
     }
 
     const retrySystemPrompt = `Return ONLY valid JSON with one object:
-{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional","calendarIntent":"optional","mailboxIntent":"optional","suppressSimpleModerateFastPath":optional}
-Keys suggestedTool/calendarIntent/mailboxIntent/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search or calendar only when documented in the primary classifier prompt. Use mailboxIntent unread_stats vs unread_summarize only as defined in primary classifier bullets.
+{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional","calendarIntent":"optional","mailboxIntent":"optional","prefersHostTools":optional,"suppressSimpleModerateFastPath":optional}
+Keys suggestedTool/calendarIntent/mailboxIntent/prefersHostTools/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search or calendar only when documented in the primary classifier prompt. When prefersHostTools is true, never emit suggestedTool web_search. Use mailboxIntent unread_stats vs unread_summarize only as defined in primary classifier bullets.
 No markdown, no prose.`;
     const retryResponse = await this.provider.complete({
       messages: [{ role: 'system', content: retrySystemPrompt }, ...messages],

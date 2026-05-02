@@ -11,7 +11,11 @@ const __dirname = path.dirname(__filename);
 export interface SkillStep {
   id: string;
   description: string;
+  /** Registered Enzo/MCP tool name for a single-step fast-path lock (see orchestrator SKILL_FASTPATH_LOCKED). */
   tool?: string;
+  /** Hint for prompts when `tool` is `execute_command` (YAML may use camelCase or `command_hint`). */
+  commandHint?: string;
+  command_hint?: string;
 }
 
 export interface SkillMetadata {
@@ -22,6 +26,11 @@ export interface SkillMetadata {
   enabled?: boolean;
   /** Optional short phrases for intent tests / discovery (not required for scoring). */
   triggers?: string[];
+  /**
+   * When **exactly one** element is present and declares `tool` matching a runtime-registered Enzo/MCP tool,
+   * SIMPLE/MODERATE fast-path may inject `SKILL_FASTPATH_LOCKED`. Use optional `commandHint` / YAML `command_hint`
+   * to pin representative `execute_command` lines — other subcommands remain documented in MARKDOWN BODY.
+   */
   steps?: SkillStep[];
 }
 
@@ -162,6 +171,27 @@ export class SkillLoader {
 
     if (!metadata.name || !metadata.description) {
       throw new Error('Invalid SKILL.md: missing required fields (name, description)');
+    }
+
+    if (Array.isArray(metadata.steps)) {
+      const rawSteps = metadata.steps as unknown[];
+      metadata.steps = rawSteps.map((raw): SkillStep => {
+        const row = raw as Record<string, unknown>;
+        const id = typeof row.id === 'string' ? row.id.trim() : '';
+        const description = typeof row.description === 'string' ? row.description : '';
+        const tool = typeof row.tool === 'string' ? row.tool.trim() : '';
+        const commandHintCamel = typeof row.commandHint === 'string' ? row.commandHint.trim() : '';
+        const commandHintSnake = typeof row.command_hint === 'string' ? row.command_hint.trim() : '';
+        const out: SkillStep = { id, description };
+        if (tool !== '') {
+          out.tool = tool;
+        }
+        const hintPick = commandHintCamel || commandHintSnake;
+        if (hintPick) {
+          out.commandHint = hintPick;
+        }
+        return out;
+      });
     }
 
     const body = lines.slice(frontmatterEnd + 1).join('\n').trim();

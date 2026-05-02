@@ -55,6 +55,7 @@ import {
   messageLooksLikeMailboxUnreadStatsQuery,
   messageLooksLikeMailboxUnreadSummaryQuery,
 } from './mailboxUnreadIntent.js';
+import { resolveTopSkillDeclarativeExecutable } from './skillFastPathLock.js';
 
 function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
   return process.env.ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true';
@@ -330,6 +331,12 @@ No markdown. No prose.`;
     };
     rememberInjectedSkills(preResolvedSkills);
 
+    const skillDeclarativeExecutable = resolveTopSkillDeclarativeExecutable(
+      preResolvedSkills,
+      this.executableTools
+    );
+    const skillSingleStepBypassMultiTool = skillDeclarativeExecutable != null;
+
     const minRequiredSteps = totalToolActsForMultiStepPlan(preResolvedSkills);
 
     const hasMultiStepSkillRequirement = minRequiredSteps >= 2;
@@ -339,7 +346,10 @@ No markdown. No prose.`;
 
     const skipFastPathForMultiTool =
       Boolean(input.suppressSimpleModerateFastPath) ||
-      (amplifierImpliesMultiToolLexicalFallbackEnabled() && impliesMultiToolWorkflow(input.message));
+      (!skillSingleStepBypassMultiTool &&
+        amplifierImpliesMultiToolLexicalFallbackEnabled() &&
+        impliesMultiToolWorkflow(input.message));
+
     if (skipFastPathForMultiTool) {
       console.log(
         JSON.stringify({
@@ -444,6 +454,22 @@ No markdown. No prose.`;
       );
     }
 
+    if (fastPathLevel === ComplexityLevel.SIMPLE && skillSingleStepBypassMultiTool) {
+      fastPathLevel = ComplexityLevel.MODERATE;
+      this.log.info(
+        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (YAML declarative single-tool skill)'
+      );
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          reclassifiedTo: 'MODERATE',
+          reason: 'declarative_skill_single_tool_step',
+          priorLevel: input.classifiedLevel,
+        })
+      );
+    }
+
     if (calendarListBypassesMultiStepBlock && hasMultiStepSkillRequirement) {
       this.log.info(
         '[AmplifierLoop] Calendar list query: staying on SIMPLE/MODERATE fast path (calendar list locked prompt) despite multi-step skill plan'
@@ -457,10 +483,27 @@ No markdown. No prose.`;
       );
     }
 
+    if (skillSingleStepBypassMultiTool && hasMultiStepSkillRequirement) {
+      this.log.info(
+        '[AmplifierLoop] Declarative single-tool skill: staying on SIMPLE/MODERATE fast path despite multi-step text in other skills'
+      );
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_fast_path',
+          skillDeclarativeSingleToolBypassMultiStepSkill: true,
+        })
+      );
+    }
+
     if (
       (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
-      (!hasMultiStepSkillRequirement || calendarListBypassesMultiStepBlock) &&
-      (!skipFastPathForMultiTool || calendarListBypassesMultiStepBlock) &&
+      (!hasMultiStepSkillRequirement ||
+        calendarListBypassesMultiStepBlock ||
+        skillSingleStepBypassMultiTool) &&
+      (!skipFastPathForMultiTool ||
+        calendarListBypassesMultiStepBlock ||
+        skillSingleStepBypassMultiTool) &&
       !input.imageContext &&
       !input.delegationHint
     ) {

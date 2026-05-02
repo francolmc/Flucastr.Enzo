@@ -53,6 +53,7 @@ import {
   messageLooksLikeMailboxUnreadStatsQuery,
   messageLooksLikeMailboxUnreadSummaryQuery,
 } from '../mailboxUnreadIntent.js';
+import { resolveTopSkillDeclarativeExecutable } from '../skillFastPathLock.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
 const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
@@ -190,6 +191,20 @@ MAILBOX OUTPUT (mandatory):
 `
       : '';
 
+  const cliSynthRules =
+    params.execName === 'execute_command'
+      ? synthLang.startsWith('es')
+        ? `
+SALIDA DE CLI / SHELL (obligatorio):
+- Solo podés usar nombres, rutas, conteos y mensajes que aparezcan literalmente en RESULTADO.
+- No inventes repositorios, cuentas, servicios o totales que no correspondan línea a línea con la salida del comando.
+`
+        : `
+CLI / SHELL OUTPUT (mandatory):
+- Only cite names, paths, counts, and errors verbatim from RESULTADO — no fabricated repos, accounts, or totals.
+`
+      : '';
+
   const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
 ${params.relevantSkillsSection}
 ${params.requiredTemplateSection}
@@ -199,7 +214,7 @@ TOOL: ${params.execName}
 RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${evidenceForSynth}
 
-${calendarSynthRules}${mailSynthRules}
+${calendarSynthRules}${mailSynthRules}${cliSynthRules}
 Write a response to the user based on this real result.
 Do NOT invent or add information not present in the result.
 If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
@@ -517,12 +532,54 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
     : '';
 
+  const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
+  const hasCalendarListClassifierWindow = Boolean(classifierCalendarList && listWindowIso);
+  const skillFastPathLockActive =
+    isModerate &&
+    declarativeExecutable != null &&
+    !classifierSchedulePersist &&
+    !hasCalendarListClassifierWindow &&
+    !classifierMailboxUnread &&
+    !classifierMailboxUnreadSummary;
+
+  const mandatorySkillFastPathBlock =
+    skillFastPathLockActive && declarativeExecutable
+      ? `
+
+━━━ SKILL_FASTPATH_LOCKED ━━━
+Top RELEVANT SKILL **${declarativeExecutable.skillName}** declares exactly **one** registered tool step: **${declarativeExecutable.tool}**. Follow RELEVANT SKILLS fully for schemas and rationale.
+For this turn ONLY: respond with a **single** canonical JSON tool invocation and nothing else — no greetings, no "grant me access/upload a profile URL", no simulation, no fenced markdown around the JSON.${
+          declarativeExecutable.commandHint
+            ? `
+
+Strong shell hint when emitting **execute_command** (adapt to HOST OS/user paths if necessary):
+${declarativeExecutable.commandHint}`
+            : ''
+        }
+Do **not** use web_search for this locked workflow. Omit any prose outside the JSON line.${
+          declarativeExecutable.tool === 'execute_command'
+            ? ' Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}.'
+            : ''
+        }
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      : '';
+
+  const moderateRetryRequiresToolJsonOnly =
+    isModerate &&
+    (persistToPathRequested ||
+      classifierSchedulePersist ||
+      hasCalendarListClassifierWindow ||
+      classifierMailboxUnread ||
+      classifierMailboxUnreadSummary ||
+      skillFastPathLockActive);
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatorySkillFastPathBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
+${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
 
 ${toolsPrompt}
 ${skillListSection}
@@ -556,7 +613,8 @@ TOOL SELECTION — CRITICAL:
 - Create or overwrite a FILE with new content at a path the user gave → write_file with {"path":"verbatim absolute path","content":"full text"} — NOT execute_command for the file body (same policy as task decomposition)
 - List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
 - Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
-- Search the internet for information → web_search
+- User/account-visible data surfaced by **THIS host's** registered tools or authenticated CLIs (see RELEVANT SKILLS and any SKILL_FASTPATH_LOCKED block — e.g. local repo lists, kubectl context, tooling output tied to whoever is logged into this machine) → the mandated concrete tool (**not** web_search unless they clearly asked for public web news/articles)
+- Search the internet for information → web_search (public facts only — never as a shortcut for CLI/host-visible account data covered above)
 - Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
 - How many unread emails **this user has in connected Gmail/Outlook/IMAP inboxes on this machine** → email_unread_count (never prose-only simulation)
 - Summaries or "most important among unread / list unread" Gmail+Outlook/IMAP connected here → **read_email** with \`{"unread_only":true,"limit":32}\` **before** prose — never hypothetical projects or recurring themes not in RESULTADO (no NTT/Data/INACAP fluff unless literal in snippets)
@@ -576,9 +634,9 @@ SEARCH BEFORE ANSWERING:
 - For any fact about the real world (prices, people, companies, events, status),
   always verify with web_search before responding
 - Never answer factual questions from memory alone — memory can be outdated
-- The rule is: when in doubt → web_search. Only skip search for math, greetings,
-  questions explicitly about your capabilities or identity,
-  and **the user's own Enzo agenda / meetings / reminders for a named day or week**
+- The rule is: when in doubt → web_search — **unless** RELEVANT SKILLS / SKILL_FASTPATH_LOCKED / MAILBOX_* / CALENDAR_* blocks already mandate a registry tool whose data lives on THIS host (then obey that lock — no web_search surrogate)
+- Skip web_search entirely for math, greetings, questions strictly about capabilities/identity,
+  **local agenda / unread mail tooling already described above**, and **the user's own Enzo persisted agenda / meetings / reminders for a named day or week**
   ("hoy", "mañana", "mis eventos", "esta semana") → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to "their personal Google Calendar"
 - Never invent search results — use web_search
 - Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
@@ -644,7 +702,16 @@ Output ONLY one JSON object (no prose, no markdown fences):
 {"action":"tool","tool":"write_file","input":{"path":"<verbatim absolute path from the user's message>","content":"<complete file body>"}}
 
 Use the exact path from the user's message. Do not invent tool names.`
-      : `${buildAssistantIdentityPrompt(input)}
+      : moderateRetryRequiresToolJsonOnly
+        ? `${buildAssistantIdentityPrompt(input)}
+The prior reply was not valid tool JSON. This turn mandated a LOCKED canonical tool invocation (calendar, mailbox, host SKILL_FASTPATH, or persisted file body).
+
+Emit ONLY **one** JSON object (no prose, no markdown fences):
+{"action":"tool","tool":"<name>","input":{...}}
+where **<name>** MUST be copied exactly from: ${exactAllowlist}.${declarativeExecutable && skillFastPathLockActive ? ` Prefer "${declarativeExecutable.tool}".${declarativeExecutable.commandHint ? ` Align execute_command payloads with intent such as ${JSON.stringify(declarativeExecutable.commandHint)}.` : ''}` : ''}
+
+Do not substitute web_search for host-visible data blocks. Never invent tool names or describe actions you cannot execute via JSON here.`
+        : `${buildAssistantIdentityPrompt(input)}
 The prior reply was not valid tool JSON for a request that may need tools.
 
 Return EXACTLY ONE of:
@@ -678,7 +745,7 @@ Never invent tool names.`;
       if (extractedObj) {
         normalizedContent = extractedObj;
         log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced tool JSON');
-      } else if (retried.length > 0 && !persistToPathRequested) {
+      } else if (retried.length > 0 && !persistToPathRequested && !moderateRetryRequiresToolJsonOnly) {
         plainTextFromModerateRetry = retried;
         normalizedContent = '';
         log.info('[AmplifierLoop] SIMPLE path - strict moderation retry produced plain text');

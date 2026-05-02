@@ -94,6 +94,8 @@ export interface AmplifierInput {
   classifiedLevel?: ComplexityLevel;
   /** Mirrors {@link ClassificationResult.suggestedTool} from orchestrator classify. */
   suggestedTool?: 'web_search' | 'calendar';
+  /** Mirrors {@link ClassificationResult.prefersHostTools} (omit web_search bias for CLI/host data). */
+  prefersHostTools?: boolean;
   /** Mirrors {@link ClassificationResult.calendarIntent}. */
   calendarIntent?: CalendarIntentHint;
   /** Mirrors {@link ClassificationResult.mailboxIntent} (OAuth/IMAP unread counts). */
@@ -233,6 +235,11 @@ export interface ClassificationResult {
   reason: string;
   /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
   suggestedTool?: 'web_search' | 'calendar';
+  /**
+   * When true, routing treats the ask as answers from THIS host (CLIs / registered tools), not generic web lookup.
+   * Classifier MUST omit conflicting `suggestedTool: web_search` for this intent.
+   */
+  prefersHostTools?: boolean;
   /**
    * When true, skip SIMPLE/MODERATE one-shot fast path even if level is SIMPLE or MODERATE (multi-tool / safety).
    * Set by classifier LLM JSON or lexical multi-tool branches; AmplifierLoop honors this instead of lexical-only gates.
