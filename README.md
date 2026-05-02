@@ -185,13 +185,32 @@ Ejemplo valido:
           "user": "tu@gmail.com"
         },
         "enabled": true
+      },
+      {
+        "id": "gmail-oauth",
+        "label": "Gmail API",
+        "provider": "google",
+        "address": "tu@gmail.com",
+        "enabled": true
+      },
+      {
+        "id": "ms-oauth",
+        "label": "Microsoft 365",
+        "provider": "microsoft",
+        "address": "tu@ejemplo.onmicrosoft.com",
+        "microsoftTenantId": "common",
+        "enabled": true
       }
     ]
   }
 }
 ```
 
-Las contraseñas IMAP no van en el ejemplo: se guardan cifradas como `emailPassword_<id>Encrypted` dentro de `system` (ver `docs/config.md`).
+Las contraseñas IMAP no van en el ejemplo: se guardan cifradas como `emailPassword_<id>Encrypted` dentro de `system` (ver `docs/config.md`). Para Gmail/Outlook con **`provider`** `google` o `microsoft`, el refresh OAuth se guarda como `emailOAuthRefresh_<id>Encrypted`.
+
+- **Outlook / Microsoft 365 (recomendado en la UI)**: flujo OAuth **por código** (microsoft.com/link). Necesitás un **Application (client) ID** en Azure AD con permisos delegados `Mail.ReadWrite` y la app marcada como **Allow public client flows**; **no** hace falta registrar redirect `http://localhost:...` para ese camino. Variable típica: `ENZO_MICROSOFT_CLIENT_ID` (el client secret suele ir vacío). La API hace polling interno: dejá corriendo `pnpm -F @enzo/api dev` mientras completás el código en el navegador.
+- **Gmail API**: Google sigue pidiendo flujo con **redirect** (registrá `http://127.0.0.1:<puerto>/api/email/oauth/google/callback` en Google Cloud) y `ENZO_GOOGLE_CLIENT_ID` / `ENZO_GOOGLE_CLIENT_SECRET` según el tipo de cliente. Si no querés consola Google, usá la misma cuenta solo con **IMAP** (`provider` omitido o `imap`) y contraseña de aplicación.
+- **Redirect Microsoft (alternativo)**: si preferís el flujo clásico con callback, seguís pudiendo usar el botón «Alternativa redirect localhost» en Correo y registrar la URI en Azure; opcional `ENZO_PUBLIC_API_BASE_URL` si la URL base difiere del `system.port`.
 
 ## Seguridad
 

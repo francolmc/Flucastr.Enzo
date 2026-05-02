@@ -300,13 +300,38 @@ export interface Project {
 export interface EmailAccountConfigDTO {
   id: string;
   label: string;
-  imap: {
+  /** `imap` legacy; optional for OAuth-only rows. */
+  provider: 'imap' | 'google' | 'microsoft';
+  imap?: {
     host: string;
     port: number;
     user: string;
   };
+  address?: string;
+  microsoftTenantId?: string;
   enabled: boolean;
   hasPassword: boolean;
+  /** True when OAuth refresh token stored (Gmail/Microsoft). */
+  hasOAuth: boolean;
+}
+
+/** GET /api/email/oauth-apps */
+export interface EmailOAuthAppsStatusDTO {
+  google: {
+    persistedClientId: boolean;
+    persistedHasClientSecret: boolean;
+    envClientId: boolean;
+    envClientSecret: boolean;
+  };
+  microsoft: {
+    persistedClientId: boolean;
+    persistedHasClientSecret: boolean;
+    envClientId: boolean;
+    envClientSecret: boolean;
+  };
+  /** IDs guardados en config (la UI los edita; env tiene prioridad al conectar si está definido). */
+  googleClientId: string | null;
+  microsoftClientId: string | null;
 }
 
 /** Email preview row (API GET /api/email/recent) */

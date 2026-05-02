@@ -69,7 +69,11 @@ export class SearchEmailTool implements ExecutableTool {
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     try {
       if (this.emailService.getConfiguredAccounts().length === 0) {
-        return { success: true, output: 'No hay cuentas de email configuradas.' };
+        return {
+          success: true,
+          output:
+            'No hay cuentas listas para leer correo (IMAP + contraseña, o Gmail/Outlook con OAuth).',
+        };
       }
 
       const typed = input as unknown as SearchEmailInput;

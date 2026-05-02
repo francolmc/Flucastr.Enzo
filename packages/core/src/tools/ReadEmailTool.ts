@@ -76,7 +76,7 @@ export class ReadEmailTool implements ExecutableTool {
         return {
           success: true,
           output:
-            'No hay cuentas de email configuradas con contraseña guardada. Configurá cuentas en ~/.enzo/config.json y la contraseña desde la UI o la API.',
+            'No hay cuentas listas para leer correo (IMAP con contraseña o Gmail/Outlook con OAuth). Editá ~/.enzo/config.json y completá desde la página Correo.',
         };
       }
 

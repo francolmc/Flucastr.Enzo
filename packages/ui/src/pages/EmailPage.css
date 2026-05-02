@@ -169,3 +169,155 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.email-ms-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.email-ms-oauth-stack {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 0.75rem !important;
+}
+
+.email-device-instructions {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.email-device-instructions p {
+  margin: 0.35rem 0;
+}
+
+.email-oauth-note {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.email-setup-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  background: var(--bg-elevated);
+}
+
+.email-oauth-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.email-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.email-wide-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.email-small-print {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  margin: 0 0 0.75rem;
+}
+
+.email-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.email-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-end;
+}
+
+.email-add-row label,
+.email-field-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.81rem;
+  color: var(--text-secondary);
+  min-width: 120px;
+}
+
+.email-add-row input,
+.email-add-row select,
+.email-field-inline input,
+.email-field-inline select {
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  min-width: 0;
+}
+
+.email-field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.email-card-actions-spread {
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.email-card-actions-left,
+.email-card-actions-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.email-edit-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.email-edit-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.email-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.email-password-row.email-oauth-row {
+  flex-wrap: wrap;
+  align-items: center;
+}

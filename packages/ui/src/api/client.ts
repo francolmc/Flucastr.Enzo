@@ -21,6 +21,7 @@ import {
   Notification,
   Project,
   EmailAccountConfigDTO,
+  EmailOAuthAppsStatusDTO,
   EmailMessageDTO,
   CalendarEventDTO,
 } from '../types';
@@ -38,6 +39,12 @@ const API_QUICK_READ_TIMEOUT_MS = (() => {
   const raw = Number(ENV.VITE_API_QUICK_TIMEOUT_MS ?? 45000);
   if (Number.isNaN(raw) || raw < 5000) return 45000;
   return Math.min(raw, 120000);
+})();
+/** OAuth device-flow poll (Outlook) puede tardar minutos esperando autorización del usuario en el navegador. */
+const API_DEVICE_OAUTH_TIMEOUT_MS = (() => {
+  const raw = Number(ENV.VITE_API_DEVICE_OAUTH_TIMEOUT_MS ?? 920000);
+  if (Number.isNaN(raw) || raw < 120000) return 920000;
+  return Math.min(raw, 1200_000);
 })();
 
 function normalizeNetworkError(error: unknown, endpoint: string): Error {
@@ -652,6 +659,42 @@ class ApiClient {
     return data.accounts ?? [];
   }
 
+  async getEmailOAuthApps(): Promise<EmailOAuthAppsStatusDTO> {
+    return this.request<EmailOAuthAppsStatusDTO>(
+      '/email/oauth-apps',
+      undefined,
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async saveEmailOAuthApps(payload: Partial<Record<string, string>>): Promise<EmailOAuthAppsStatusDTO> {
+    return this.request<EmailOAuthAppsStatusDTO>(
+      '/email/oauth-apps',
+      { method: 'PUT', body: JSON.stringify(payload) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async createEmailAccount(payload: Record<string, unknown>): Promise<{ account: EmailAccountConfigDTO }> {
+    return this.request<{ account: EmailAccountConfigDTO }>(
+      '/email/accounts',
+      { method: 'POST', body: JSON.stringify(payload) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async updateEmailAccount(accountId: string, payload: Record<string, unknown>): Promise<{ account: EmailAccountConfigDTO }> {
+    return this.request<{ account: EmailAccountConfigDTO }>(
+      `/email/accounts/${encodeURIComponent(accountId)}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async deleteEmailAccount(accountId: string): Promise<void> {
+    await this.request(`/email/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' }, API_QUICK_READ_TIMEOUT_MS);
+  }
+
   async testEmailAccount(id: string): Promise<{ success: boolean; error?: string }> {
     return this.request(`/email/accounts/${encodeURIComponent(id)}/test`, {
       method: 'POST',
@@ -670,6 +713,51 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     });
+  }
+
+  async disconnectEmailOAuth(id: string): Promise<void> {
+    await this.request(`/email/accounts/${encodeURIComponent(id)}/oauth/disconnect`, {
+      method: 'POST',
+    });
+  }
+
+  async startEmailOAuthGoogle(accountId: string): Promise<{ authUrl: string }> {
+    return this.request(`/email/accounts/${encodeURIComponent(accountId)}/oauth/google/start`, {
+      method: 'POST',
+    });
+  }
+
+  async startEmailOAuthMicrosoft(accountId: string): Promise<{ authUrl: string }> {
+    return this.request(`/email/accounts/${encodeURIComponent(accountId)}/oauth/microsoft/start`, {
+      method: 'POST',
+    });
+  }
+
+  /** Outlook sin URI de redirect: código en microsoft.com/link (la API espera hasta ~15 min al completar). */
+  async startMicrosoftOAuthDevice(accountId: string): Promise<{
+    sessionId: string;
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete?: string;
+    message?: string;
+    expiresInSeconds?: number;
+  }> {
+    return this.request(
+      `/email/accounts/${encodeURIComponent(accountId)}/oauth/microsoft/device/start`,
+      { method: 'POST' },
+      API_QUICK_READ_TIMEOUT_MS
+    );
+  }
+
+  async completeMicrosoftOAuthDevice(sessionId: string): Promise<{ success?: boolean }> {
+    return this.request(
+      `/email/oauth/microsoft/device/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ sessionId }),
+      },
+      API_DEVICE_OAUTH_TIMEOUT_MS
+    );
   }
 
   async getRecentEmails(limit?: number): Promise<EmailMessageDTO[]> {

@@ -2,9 +2,34 @@ import fs from 'fs';
 import path from 'path';
 import { EncryptionService } from '../security/EncryptionService.js';
 import { VOICE_RESPONSE_TRIGGERS } from '../voice/VoiceTrigger.js';
-import { type EmailAccountConfig, type EmailConfig, emailPasswordEncryptedKey } from './emailConfig.js';
+import {
+  type EmailAccountConfig,
+  type EmailConfig,
+  emailOAuthRefreshEncryptedKey,
+  emailPasswordEncryptedKey,
+} from './emailConfig.js';
+import {
+  mergeEmailAccountPatch,
+  parseEmailAccountInput,
+  tryParseEmailAccountInput,
+} from './emailParsing.js';
 
 export type { EmailAccountConfig, EmailConfig } from './emailConfig.js';
+
+export interface EmailOAuthPersistedStatus {
+  google: {
+    persistedClientId: boolean;
+    persistedHasClientSecret: boolean;
+    envClientId: boolean;
+    envClientSecret: boolean;
+  };
+  microsoft: {
+    persistedClientId: boolean;
+    persistedHasClientSecret: boolean;
+    envClientId: boolean;
+    envClientSecret: boolean;
+  };
+}
 
 export interface ProviderConfig {
   name: string;
@@ -76,6 +101,11 @@ export interface StoredSystemConfig {
   ttsVoiceEn: string;
   /** Substrings that request a TTS response (must stay non-empty; empty saves reset to defaults). */
   voiceTriggers: string[];
+  /** Google OAuth client id for Gmail API (persisted; env `ENZO_GOOGLE_CLIENT_ID` overrides at runtime). */
+  googleOAuthClientId?: string;
+  googleOAuthClientSecretEncrypted?: string;
+  microsoftOAuthClientId?: string;
+  microsoftOAuthClientSecretEncrypted?: string;
 }
 
 export interface SystemConfigView {
@@ -249,24 +279,8 @@ function normalizeEmailConfig(loaded: unknown, defaults: EmailConfig): EmailConf
   }
   const accounts: EmailAccountConfig[] = [];
   for (const raw of acc) {
-    if (!raw || typeof raw !== 'object') continue;
-    const o = raw as Record<string, unknown>;
-    const id = typeof o.id === 'string' ? o.id.trim() : '';
-    const label = typeof o.label === 'string' ? o.label.trim() : '';
-    const enabled = typeof o.enabled === 'boolean' ? o.enabled : true;
-    const imap = o.imap;
-    if (!imap || typeof imap !== 'object') continue;
-    const im = imap as Record<string, unknown>;
-    const host = typeof im.host === 'string' ? im.host.trim() : '';
-    const port = typeof im.port === 'number' && Number.isFinite(im.port) ? im.port : 993;
-    const user = typeof im.user === 'string' ? im.user.trim() : '';
-    if (!id || !host || !user) continue;
-    accounts.push({
-      id,
-      label: label || id,
-      imap: { host, port, user },
-      enabled,
-    });
+    const row = tryParseEmailAccountInput(raw);
+    if (row) accounts.push(row);
   }
   return { accounts };
 }
@@ -676,8 +690,219 @@ export class ConfigService {
   getEmailConfig(): EmailConfig {
     this.syncConfigFromDisk();
     return {
-      accounts: this.config.email.accounts.map((a) => ({ ...a, imap: { ...a.imap } })),
+      accounts: this.config.email.accounts.map((a) => ({
+        ...a,
+        ...(a.imap ? { imap: { ...a.imap } } : {}),
+      })),
     };
+  }
+
+  /** OAuth client IDs guardados en disco (solo para edición desde la UI local). */
+  peekPersistedGoogleClientId(): string | null {
+    this.syncConfigFromDisk();
+    const v = (this.config.system.googleOAuthClientId || '').trim();
+    return v.length > 0 ? v : null;
+  }
+
+  peekPersistedMicrosoftClientId(): string | null {
+    this.syncConfigFromDisk();
+    const v = (this.config.system.microsoftOAuthClientId || '').trim();
+    return v.length > 0 ? v : null;
+  }
+
+  getGoogleOAuthCredentials(): { clientId: string | null; clientSecret: string | null } {
+    this.syncConfigFromDisk();
+    const envId = process.env.ENZO_GOOGLE_CLIENT_ID?.trim();
+    const envSecret = process.env.ENZO_GOOGLE_CLIENT_SECRET?.trim();
+    let clientSecret: string | null = envSecret && envSecret.length > 0 ? envSecret : null;
+    const enc = this.config.system.googleOAuthClientSecretEncrypted;
+    if (!clientSecret && enc) {
+      try {
+        clientSecret = this.encryptionService.decrypt(enc);
+      } catch {
+        clientSecret = null;
+      }
+    }
+    const idFromConfig = this.config.system.googleOAuthClientId?.trim();
+    const clientId =
+      (envId && envId.length > 0 ? envId : idFromConfig && idFromConfig.length > 0 ? idFromConfig : null) ||
+      null;
+    return { clientId, clientSecret };
+  }
+
+  getMicrosoftOAuthCredentials(): { clientId: string | null; clientSecret: string | null } {
+    this.syncConfigFromDisk();
+    const envId = process.env.ENZO_MICROSOFT_CLIENT_ID?.trim();
+    const envSecret = process.env.ENZO_MICROSOFT_CLIENT_SECRET?.trim();
+    let clientSecret: string | null = envSecret && envSecret.length > 0 ? envSecret : null;
+    const enc = this.config.system.microsoftOAuthClientSecretEncrypted;
+    if (!clientSecret && enc) {
+      try {
+        clientSecret = this.encryptionService.decrypt(enc);
+      } catch {
+        clientSecret = null;
+      }
+    }
+    const idFromConfig = this.config.system.microsoftOAuthClientId?.trim();
+    const clientId =
+      (envId && envId.length > 0 ? envId : idFromConfig && idFromConfig.length > 0 ? idFromConfig : null) ||
+      null;
+    return { clientId, clientSecret };
+  }
+
+  getEmailOAuthRefreshToken(accountId: string): string | null {
+    this.syncConfigFromDisk();
+    const key = emailOAuthRefreshEncryptedKey(accountId);
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    const encryptedValue = sys[key];
+    if (!encryptedValue) {
+      return null;
+    }
+    try {
+      return this.encryptionService.decrypt(encryptedValue);
+    } catch (error) {
+      console.error(`[ConfigService] Failed to decrypt OAuth refresh for "${accountId}":`, error);
+      return null;
+    }
+  }
+
+  setEmailOAuthRefreshToken(accountId: string, refreshToken: string): void {
+    this.syncConfigFromDisk();
+    const encrypted = this.encryptionService.encrypt(refreshToken);
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    sys[emailOAuthRefreshEncryptedKey(accountId)] = encrypted;
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  clearEmailOAuthRefreshToken(accountId: string): void {
+    this.syncConfigFromDisk();
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    delete sys[emailOAuthRefreshEncryptedKey(accountId)];
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  hasEmailOAuthRefresh(accountId: string): boolean {
+    this.syncConfigFromDisk();
+    const key = emailOAuthRefreshEncryptedKey(accountId);
+    const encrypted = (this.config.system as unknown as Record<string, string | undefined>)[key];
+    return typeof encrypted === 'string' && encrypted.length > 0;
+  }
+
+  getEmailOAuthPersistedStatus(): EmailOAuthPersistedStatus {
+    this.syncConfigFromDisk();
+    return {
+      google: {
+        persistedClientId: !!(this.config.system.googleOAuthClientId || '').trim(),
+        persistedHasClientSecret: !!this.config.system.googleOAuthClientSecretEncrypted,
+        envClientId: !!process.env.ENZO_GOOGLE_CLIENT_ID?.trim(),
+        envClientSecret: !!process.env.ENZO_GOOGLE_CLIENT_SECRET?.trim(),
+      },
+      microsoft: {
+        persistedClientId: !!(this.config.system.microsoftOAuthClientId || '').trim(),
+        persistedHasClientSecret: !!this.config.system.microsoftOAuthClientSecretEncrypted,
+        envClientId: !!process.env.ENZO_MICROSOFT_CLIENT_ID?.trim(),
+        envClientSecret: !!process.env.ENZO_MICROSOFT_CLIENT_SECRET?.trim(),
+      },
+    };
+  }
+
+  setPersistedGoogleOAuthApp(input: { clientId?: string; clientSecret?: string }): void {
+    this.syncConfigFromDisk();
+    if (input.clientId !== undefined) {
+      const v = typeof input.clientId === 'string' ? input.clientId.trim() : '';
+      if (v === '') {
+        delete this.config.system.googleOAuthClientId;
+      } else {
+        this.config.system.googleOAuthClientId = v;
+      }
+    }
+    if (input.clientSecret !== undefined) {
+      const raw = typeof input.clientSecret === 'string' ? input.clientSecret : '';
+      const v = raw.trim();
+      if (v === '') {
+        delete this.config.system.googleOAuthClientSecretEncrypted;
+      } else {
+        this.config.system.googleOAuthClientSecretEncrypted = this.encryptionService.encrypt(v);
+      }
+    }
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  setPersistedMicrosoftOAuthApp(input: { clientId?: string; clientSecret?: string }): void {
+    this.syncConfigFromDisk();
+    if (input.clientId !== undefined) {
+      const v = typeof input.clientId === 'string' ? input.clientId.trim() : '';
+      if (v === '') {
+        delete this.config.system.microsoftOAuthClientId;
+      } else {
+        this.config.system.microsoftOAuthClientId = v;
+      }
+    }
+    if (input.clientSecret !== undefined) {
+      const raw = typeof input.clientSecret === 'string' ? input.clientSecret : '';
+      const v = raw.trim();
+      if (v === '') {
+        delete this.config.system.microsoftOAuthClientSecretEncrypted;
+      } else {
+        this.config.system.microsoftOAuthClientSecretEncrypted = this.encryptionService.encrypt(v);
+      }
+    }
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  addEmailAccount(payload: unknown): EmailAccountConfig {
+    this.syncConfigFromDisk();
+    const acc = parseEmailAccountInput(payload);
+    const exists = this.config.email.accounts.some((a) => a.id === acc.id);
+    if (exists) {
+      throw new Error(`Ya existe una cuenta con id "${acc.id}"`);
+    }
+    this.config.email.accounts.push(acc);
+    this.saveConfig();
+    this.applySystemEnvironment();
+    return acc;
+  }
+
+  updateEmailAccount(accountId: string, patch: Record<string, unknown>): EmailAccountConfig {
+    this.syncConfigFromDisk();
+    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) {
+      throw new Error(`Unknown email account: ${accountId}`);
+    }
+    const next = mergeEmailAccountPatch(this.config.email.accounts[idx], patch);
+    if (next.id !== accountId) {
+      throw new Error('No está soportado cambiar el id; borrá y creá una cuenta nueva.');
+    }
+    this.config.email.accounts[idx] = next;
+    this.saveConfig();
+    this.applySystemEnvironment();
+    return next;
+  }
+
+  removeEmailAccount(accountId: string): void {
+    this.syncConfigFromDisk();
+    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) {
+      throw new Error(`Unknown email account: ${accountId}`);
+    }
+    this.config.email.accounts.splice(idx, 1);
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    delete sys[emailPasswordEncryptedKey(accountId)];
+    delete sys[emailOAuthRefreshEncryptedKey(accountId)];
+    this.saveConfig();
+    this.applySystemEnvironment();
+  }
+
+  clearEmailPassword(accountId: string): void {
+    this.syncConfigFromDisk();
+    const sys = this.config.system as unknown as Record<string, string | undefined>;
+    delete sys[emailPasswordEncryptedKey(accountId)];
+    this.saveConfig();
+    this.applySystemEnvironment();
   }
 
   getEmailPassword(accountId: string): string | null {
@@ -878,9 +1103,12 @@ export class ConfigService {
     delete copy.system.telegramBotTokenEncrypted;
     delete copy.system.tavilyApiKeyEncrypted;
 
+    delete copy.system.googleOAuthClientSecretEncrypted;
+    delete copy.system.microsoftOAuthClientSecretEncrypted;
+
     const sysCopy = copy.system as unknown as Record<string, unknown>;
     for (const k of Object.keys(sysCopy)) {
-      if (/^emailPassword_.+Encrypted$/u.test(k)) {
+      if (/^emailPassword_.+Encrypted$/u.test(k) || /^emailOAuthRefresh_.+Encrypted$/u.test(k)) {
         delete sysCopy[k];
       }
     }

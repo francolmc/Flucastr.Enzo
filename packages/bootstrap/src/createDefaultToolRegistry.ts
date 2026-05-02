@@ -12,6 +12,8 @@ import {
   EmailService,
   ReadEmailTool,
   SearchEmailTool,
+  SendEmailTool,
+  ModifyEmailTool,
   CalendarTool,
   CalendarService,
 } from '@enzo/core';
@@ -56,6 +58,10 @@ export function createDefaultToolRegistry(
   if (emailService && emailService.getConfiguredAccounts().length > 0) {
     registry.register(new ReadEmailTool(emailService));
     registry.register(new SearchEmailTool(emailService));
+  }
+  if (emailService && emailService.hasMutationCapableAccount()) {
+    registry.register(new SendEmailTool(emailService));
+    registry.register(new ModifyEmailTool(emailService));
   }
   return registry;
 }

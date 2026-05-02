@@ -1,5 +1,137 @@
+import crypto from 'node:crypto';
 import { Router, Request, Response } from 'express';
-import { ConfigService, EmailService } from '@enzo/core';
+import {
+  buildGoogleAuthorizationUrl,
+  buildMicrosoftAuthorizationUrl,
+  ConfigService,
+  EmailService,
+  exchangeGoogleAuthorizationCode,
+  exchangeMicrosoftAuthorizationCode,
+  pollMicrosoftDeviceUntilTokens,
+  requestMicrosoftDeviceCode,
+} from '@enzo/core';
+
+type OAuthProvider = 'google' | 'microsoft';
+
+interface OAuthPending {
+  accountId: string;
+  provider: OAuthProvider;
+  expires: number;
+}
+
+const oauthPendingByState = new Map<string, OAuthPending>();
+const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+
+function pruneOAuthStates(): void {
+  const now = Date.now();
+  for (const [k, v] of oauthPendingByState.entries()) {
+    if (v.expires <= now) oauthPendingByState.delete(k);
+  }
+}
+
+function mintOAuthState(accountId: string, provider: OAuthProvider): string {
+  pruneOAuthStates();
+  const token = crypto.randomBytes(24).toString('hex');
+  oauthPendingByState.set(token, {
+    accountId,
+    provider,
+    expires: Date.now() + OAUTH_STATE_TTL_MS,
+  });
+  return token;
+}
+
+function consumeOAuthState(stateRaw: unknown): OAuthPending | null {
+  pruneOAuthStates();
+  const state = typeof stateRaw === 'string' ? stateRaw.trim() : '';
+  if (!state) return null;
+  const row = oauthPendingByState.get(state);
+  if (!row || row.expires <= Date.now()) {
+    if (state) oauthPendingByState.delete(state);
+    return null;
+  }
+  oauthPendingByState.delete(state);
+  return row;
+}
+
+function oauthRedirectOrigin(configService: ConfigService): string {
+  const fromEnv = process.env.ENZO_PUBLIC_API_BASE_URL?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, '');
+  }
+  const port = configService.getSystemConfig().port || '3001';
+  const host = process.env.ENZO_API_BIND_HOST?.trim() || '127.0.0.1';
+  return `http://${host}:${port}`;
+}
+
+function oauthSuccessHtml(provider: OAuthProvider): string {
+  const name = provider === 'google' ? 'Gmail' : 'Outlook / Microsoft 365';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Listo</title></head><body>` +
+    `<p><strong>${name}</strong>: conectado. Podés cerrar esta ventana y volver a Enzo.</p>` +
+    `</body></html>`;
+}
+
+function oauthErrorHtml(msg: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error OAuth</title></head><body>` +
+    `<p>No se pudo completar OAuth: ${escapeHtml(msg)}</p>` +
+    `</body></html>`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Outlook device-code flow session (secret `device_code` never leaves API). */
+interface MicrosoftDevicePending {
+  accountId: string;
+  tenant: string;
+  deviceCode: string;
+  expiresAt: number;
+  intervalSec: number;
+}
+
+const microsoftDeviceSessions = new Map<string, MicrosoftDevicePending>();
+
+function pruneMicrosoftDeviceSessions(): void {
+  const now = Date.now();
+  for (const [k, v] of microsoftDeviceSessions.entries()) {
+    if (v.expiresAt <= now) microsoftDeviceSessions.delete(k);
+  }
+}
+
+function mintDeviceSession(args: {
+  accountId: string;
+  tenant: string;
+  deviceCode: string;
+  intervalSec: number;
+  ttlMs: number;
+}): string {
+  pruneMicrosoftDeviceSessions();
+  const id = crypto.randomBytes(24).toString('hex');
+  microsoftDeviceSessions.set(id, {
+    accountId: args.accountId,
+    tenant: args.tenant,
+    deviceCode: args.deviceCode,
+    intervalSec: args.intervalSec,
+    expiresAt: Date.now() + args.ttlMs,
+  });
+  return id;
+}
+
+function takeMicrosoftDeviceSession(sessionIdRaw: unknown): MicrosoftDevicePending | null {
+  pruneMicrosoftDeviceSessions();
+  const sessionId = typeof sessionIdRaw === 'string' ? sessionIdRaw.trim() : '';
+  if (!sessionId) return null;
+  const row = microsoftDeviceSessions.get(sessionId);
+  if (!row || row.expiresAt <= Date.now()) {
+    microsoftDeviceSessions.delete(sessionId);
+    return null;
+  }
+  return row;
+}
 
 export function createEmailRouter(configService: ConfigService): Router {
   const router = Router();
@@ -9,14 +141,126 @@ export function createEmailRouter(configService: ConfigService): Router {
       const svc = new EmailService(configService);
       const accounts = svc.listAccounts();
       res.json({
-        accounts: accounts.map(({ hasPassword, ...rest }) => ({
+        accounts: accounts.map(({ hasPassword, hasOAuth, ...rest }) => ({
           ...rest,
           hasPassword,
+          hasOAuth,
         })),
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
+    }
+  });
+
+  /** Estado de cliente OAuth Gmail/Graph guardado en config (variables de entorno tienen prioridad en runtime). */
+  router.get('/api/email/oauth-apps', (_req: Request, res: Response) => {
+    try {
+      const base = configService.getEmailOAuthPersistedStatus();
+      res.json({
+        ...base,
+        googleClientId: configService.peekPersistedGoogleClientId(),
+        microsoftClientId: configService.peekPersistedMicrosoftClientId(),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.put('/api/email/oauth-apps', (req: Request, res: Response) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+      const g: { clientId?: string; clientSecret?: string } = {};
+      const m: { clientId?: string; clientSecret?: string } = {};
+      if (typeof body.googleClientId === 'string') {
+        g.clientId = body.googleClientId;
+      }
+      if (typeof body.googleClientSecret === 'string') {
+        g.clientSecret = body.googleClientSecret;
+      }
+      if (typeof body.microsoftClientId === 'string') {
+        m.clientId = body.microsoftClientId;
+      }
+      if (typeof body.microsoftClientSecret === 'string') {
+        m.clientSecret = body.microsoftClientSecret;
+      }
+      if (Object.keys(g).length > 0) {
+        configService.setPersistedGoogleOAuthApp(g);
+      }
+      if (Object.keys(m).length > 0) {
+        configService.setPersistedMicrosoftOAuthApp(m);
+      }
+      res.json({
+        ...configService.getEmailOAuthPersistedStatus(),
+        googleClientId: configService.peekPersistedGoogleClientId(),
+        microsoftClientId: configService.peekPersistedMicrosoftClientId(),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post('/api/email/accounts', (req: Request, res: Response) => {
+    try {
+      const acc = configService.addEmailAccount(req.body);
+      const svc = new EmailService(configService);
+      const row = svc.listAccounts().find((a) => a.id === acc.id);
+      if (!row) {
+        res.status(201).json({
+          account: {
+            ...acc,
+            ...(acc.imap ? { imap: { ...acc.imap } } : {}),
+            hasPassword: false,
+            hasOAuth: false,
+          },
+        });
+        return;
+      }
+      const { hasPassword, hasOAuth, ...rest } = row;
+      res.status(201).json({
+        account: {
+          ...rest,
+          hasPassword,
+          hasOAuth,
+        },
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: msg });
+    }
+  });
+
+  router.put('/api/email/accounts/:id', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const patch = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+      configService.updateEmailAccount(id, patch);
+      const svc = new EmailService(configService);
+      const row = svc.listAccounts().find((a) => a.id === id);
+      if (!row) {
+        res.status(500).json({ error: 'Cuenta no encontrada tras actualizar' });
+        return;
+      }
+      const { hasPassword, hasOAuth, ...rest } = row;
+      res.json({ account: { ...rest, hasPassword, hasOAuth } });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const status = /Unknown email account/i.test(msg) ? 404 : 400;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  router.delete('/api/email/accounts/:id', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      configService.removeEmailAccount(id);
+      res.status(204).send();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const status = /Unknown email account/.test(msg) ? 404 : 500;
+      res.status(status).json({ error: msg });
     }
   });
 
@@ -33,6 +277,269 @@ export function createEmailRouter(configService: ConfigService): Router {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post('/api/email/accounts/:id/oauth/disconnect', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const accounts = configService.getEmailConfig().accounts;
+      const acc = accounts.find((a) => a.id === id);
+      if (!acc) {
+        res.status(404).json({ error: `Unknown account: ${id}` });
+        return;
+      }
+      if (acc.provider !== 'google' && acc.provider !== 'microsoft') {
+        res.status(400).json({ error: 'OAuth only applies to gmail or microsoft providers' });
+        return;
+      }
+      configService.clearEmailOAuthRefreshToken(id);
+      res.status(204).send();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post('/api/email/accounts/:id/oauth/google/start', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const accounts = configService.getEmailConfig().accounts;
+      const acc = accounts.find((a) => a.id === id);
+      if (!acc || acc.provider !== 'google') {
+        res.status(400).json({ error: `Account ${id} is not configured as provider "google"` });
+        return;
+      }
+      const { clientId } = configService.getGoogleOAuthCredentials();
+      if (!clientId) {
+        res.status(400).json({
+          error: 'Configure ENZO_GOOGLE_CLIENT_ID or system.googleOAuthClientId in ~/.enzo/config.json',
+        });
+        return;
+      }
+
+      const state = mintOAuthState(id, 'google');
+      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/google/callback`;
+      const authUrl = buildGoogleAuthorizationUrl({ clientId, redirectUri, state });
+      res.json({ authUrl, redirectUriHint: redirectUri });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.get('/api/email/oauth/google/callback', async (req: Request, res: Response) => {
+    try {
+      const code = typeof req.query.code === 'string' ? req.query.code.trim() : '';
+      const pending = consumeOAuthState(req.query.state);
+      if (!pending || pending.provider !== 'google') {
+        res.status(400).type('html').send(oauthErrorHtml('Estado OAuth inválido o expirado. Volvé a iniciar desde Correo.'));
+        return;
+      }
+      if (!code) {
+        const errRaw = typeof req.query.error_description === 'string' ? req.query.error_description : String(req.query.error ?? 'cancelled');
+        res.status(400).type('html').send(oauthErrorHtml(typeof errRaw === 'string' ? errRaw : 'Sin código'));
+        return;
+      }
+
+      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/google/callback`;
+      const { clientId, clientSecret } = configService.getGoogleOAuthCredentials();
+      if (!clientId) {
+        res.status(400).type('html').send(oauthErrorHtml('Cliente Google OAuth no configurado'));
+        return;
+      }
+
+      const tokens = await exchangeGoogleAuthorizationCode({
+        clientId,
+        clientSecret,
+        code,
+        redirectUri,
+      });
+      const refresh = tokens.refresh_token;
+      if (!refresh) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            oauthErrorHtml(
+              'Google no envió refresh_token (suele pasar si ya autorizaste esta app antes). Probá revocar el acceso de Enzo en la cuenta Google y repetir, o crear otro proyecto OAuth.'
+            )
+          );
+        return;
+      }
+      configService.setEmailOAuthRefreshToken(pending.accountId, refresh);
+      res.status(200).type('html').send(oauthSuccessHtml('google'));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).type('html').send(oauthErrorHtml(msg));
+    }
+  });
+
+  router.post('/api/email/accounts/:id/oauth/microsoft/start', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const accounts = configService.getEmailConfig().accounts;
+      const acc = accounts.find((a) => a.id === id);
+      if (!acc || acc.provider !== 'microsoft') {
+        res.status(400).json({ error: `Account ${id} is not configured as provider "microsoft"` });
+        return;
+      }
+      const { clientId } = configService.getMicrosoftOAuthCredentials();
+      if (!clientId) {
+        res.status(400).json({
+          error: 'Configure ENZO_MICROSOFT_CLIENT_ID or system.microsoftOAuthClientId in ~/.enzo/config.json',
+        });
+        return;
+      }
+
+      const state = mintOAuthState(id, 'microsoft');
+      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/microsoft/callback`;
+      const tenant = acc.microsoftTenantId?.trim() || 'common';
+      const authUrl = buildMicrosoftAuthorizationUrl({ tenant, clientId, redirectUri, state });
+      res.json({ authUrl, redirectUriHint: redirectUri });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** Microsoft OAuth without redirect URI: device login (microsoft.com/link). */
+  router.post('/api/email/accounts/:id/oauth/microsoft/device/start', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const accounts = configService.getEmailConfig().accounts;
+      const acc = accounts.find((a) => a.id === id);
+      if (!acc || acc.provider !== 'microsoft') {
+        res.status(400).json({ error: `Account ${id} is not provider "microsoft"` });
+        return;
+      }
+      const { clientId } = configService.getMicrosoftOAuthCredentials();
+      if (!clientId) {
+        res.status(400).json({
+          error: 'Define ENZO_MICROSOFT_CLIENT_ID (o system.microsoftOAuthClientId). Para Azure: registrar una app tipo cliente público, permisos delegados Mail.ReadWrite.',
+        });
+        return;
+      }
+
+      const tenant = acc.microsoftTenantId?.trim() || 'common';
+      const dev = await requestMicrosoftDeviceCode({
+        tenant,
+        clientId,
+      });
+
+      const ttlMs = Math.min(Math.max(dev.expires_in - 60, 60), 920) * 1000;
+      const sessionId = mintDeviceSession({
+        accountId: acc.id,
+        tenant,
+        deviceCode: dev.device_code,
+        intervalSec: dev.interval,
+        ttlMs,
+      });
+
+      res.json({
+        sessionId,
+        userCode: dev.user_code,
+        verificationUri: dev.verification_uri,
+        ...(dev.verification_uri_complete ? { verificationUriComplete: dev.verification_uri_complete } : {}),
+        message: dev.message,
+        expiresInSeconds: dev.expires_in,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post('/api/email/oauth/microsoft/device/complete', async (req: Request, res: Response) => {
+    req.socket.setTimeout(920_000);
+    try {
+      const sessionIdBody = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
+      const row = takeMicrosoftDeviceSession(sessionIdBody);
+      if (!row) {
+        res.status(400).json({ error: 'Sesión OAuth inválida o expirada. Iniciá de nuevo desde Correo.' });
+        return;
+      }
+
+      const { clientId, clientSecret } = configService.getMicrosoftOAuthCredentials();
+      if (!clientId) {
+        res.status(400).json({ error: 'Cliente Microsoft OAuth no configurado' });
+        return;
+      }
+
+      microsoftDeviceSessions.delete(sessionIdBody);
+
+      const ttlSec = Math.max(30, Math.floor((row.expiresAt - Date.now()) / 1000));
+      const tokens = await pollMicrosoftDeviceUntilTokens({
+        tenant: row.tenant,
+        clientId,
+        clientSecret,
+        deviceCode: row.deviceCode,
+        expiresInSeconds: ttlSec,
+        intervalSeconds: Math.max(row.intervalSec, 1),
+      });
+
+      const refresh = tokens.refresh_token;
+      if (!refresh) {
+        res.status(400).json({
+          error:
+            'Microsoft no devolvió refresh_token. Revisa la app Azure (delegado Mail.ReadWrite + offline_access) y que pueda ser cliente público.',
+        });
+        return;
+      }
+
+      configService.setEmailOAuthRefreshToken(row.accountId, refresh);
+      res.json({ success: true, accountId: row.accountId });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  router.get('/api/email/oauth/microsoft/callback', async (req: Request, res: Response) => {
+    try {
+      const code = typeof req.query.code === 'string' ? req.query.code.trim() : '';
+      const pending = consumeOAuthState(req.query.state);
+      if (!pending || pending.provider !== 'microsoft') {
+        res.status(400).type('html').send(oauthErrorHtml('Estado OAuth inválido o expirado.'));
+        return;
+      }
+      if (!code) {
+        const errRaw = typeof req.query.error_description === 'string' ? req.query.error_description : String(req.query.error ?? 'cancelled');
+        res.status(400).type('html').send(oauthErrorHtml(typeof errRaw === 'string' ? errRaw : 'Sin código'));
+        return;
+      }
+
+      const accounts = configService.getEmailConfig().accounts;
+      const acc = accounts.find((a) => a.id === pending.accountId);
+      const tenant = acc?.microsoftTenantId?.trim() || 'common';
+
+      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/microsoft/callback`;
+      const { clientId, clientSecret } = configService.getMicrosoftOAuthCredentials();
+      if (!clientId) {
+        res.status(400).type('html').send(oauthErrorHtml('Cliente Microsoft OAuth no configurado'));
+        return;
+      }
+
+      const tokens = await exchangeMicrosoftAuthorizationCode({
+        tenant,
+        clientId,
+        clientSecret,
+        code,
+        redirectUri,
+      });
+      const refresh = tokens.refresh_token;
+      if (!refresh) {
+        res
+          .status(400)
+          .type('html')
+          .send(oauthErrorHtml('Microsoft no devolvió refresh_token; revisá permisos offline_access y el tipo de app en Azure'));
+        return;
+      }
+      configService.setEmailOAuthRefreshToken(pending.accountId, refresh);
+      res.status(200).type('html').send(oauthSuccessHtml('microsoft'));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).type('html').send(oauthErrorHtml(msg));
     }
   });
 
