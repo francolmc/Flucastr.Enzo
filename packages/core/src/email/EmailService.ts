@@ -36,6 +36,13 @@ export interface EmailServiceResult {
   error?: string;
 }
 
+export interface EmailUnreadInboxRow {
+  accountId: string;
+  label: string;
+  provider: EmailAccountConfig['provider'];
+  unread: number;
+}
+
 export interface EmailSendResult {
   success: boolean;
   messageId?: string;
@@ -135,6 +142,49 @@ export class EmailService {
         messages: capped,
         accountsQueried: ids,
       };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Unread count per configured account (INBOX / equivalent). */
+  async getUnreadInboxCounts(accountIdFilter?: string): Promise<{
+    success: boolean;
+    rows?: EmailUnreadInboxRow[];
+    error?: string;
+  }> {
+    try {
+      const configured = this.getConfiguredAccounts();
+      const accounts =
+        accountIdFilter != null && accountIdFilter !== ''
+          ? configured.filter((c) => c.id === accountIdFilter)
+          : configured;
+      if (accounts.length === 0) {
+        return {
+          success: false,
+          error:
+            accountIdFilter?.trim()
+              ? `No cuenta con credenciales: ${accountIdFilter}`
+              : 'No hay cuentas habilitadas con credenciales de correo',
+        };
+      }
+      const rows: EmailUnreadInboxRow[] = [];
+      for (const acc of accounts) {
+        try {
+          const unread = await this.unreadCountForAccount(acc);
+          rows.push({
+            accountId: acc.id,
+            label: acc.label,
+            provider: acc.provider,
+            unread,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return { success: false, error: `Cuenta ${acc.id}: ${msg}` };
+        }
+      }
+      return { success: true, rows };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: msg };
@@ -367,6 +417,24 @@ export class EmailService {
       return g.getRecent({ folder, limit, since });
     }
     return [];
+  }
+
+  private async unreadCountForAccount(acc: EmailAccountConfig): Promise<number> {
+    if (acc.provider === 'imap') {
+      const pwd = this.configService.getEmailPassword(acc.id);
+      if (!pwd || !acc.imap?.host || !acc.imap.user) return 0;
+      const client = new IMAPClient(this.toImapOptions(acc as EmailAccountConfig & { imap: NonNullable<EmailAccountConfig['imap']> }, pwd));
+      return client.countUnseen({ folder: 'INBOX' });
+    }
+    if (acc.provider === 'google') {
+      const g = new GmailMailAdapter(this.configService, acc.id);
+      return g.getInboxUnreadCount();
+    }
+    if (acc.provider === 'microsoft') {
+      const g = new GraphMailAdapter(this.configService, acc.id);
+      return g.getInboxUnreadCount();
+    }
+    return 0;
   }
 
   private async searchForAccount(

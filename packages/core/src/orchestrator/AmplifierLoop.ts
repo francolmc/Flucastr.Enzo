@@ -50,6 +50,7 @@ import {
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
+import { messageLooksLikeMailboxUnreadStatsQuery } from './mailboxUnreadIntent.js';
 
 function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
   return process.env.ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true';
@@ -372,6 +373,24 @@ No markdown. No prose.`;
           phase: 'amplifier_before_fast_path',
           reclassifiedTo: 'MODERATE',
           reason: 'calendar_list_classifier_hint',
+          priorLevel: input.classifiedLevel,
+        })
+      );
+    }
+
+    const mailboxUnreadCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
+    const mailboxUnreadStatsIntentHint =
+      this.executableTools.some((t) => t.name === 'email_unread_count') &&
+      (input.mailboxIntent === 'unread_stats' || messageLooksLikeMailboxUnreadStatsQuery(mailboxUnreadCorpus));
+    if (fastPathLevel === ComplexityLevel.SIMPLE && mailboxUnreadStatsIntentHint) {
+      fastPathLevel = ComplexityLevel.MODERATE;
+      this.log.info('[AmplifierLoop] Reclassified SIMPLE → MODERATE (mailbox unread counts)');
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          reclassifiedTo: 'MODERATE',
+          reason: 'mailbox_unread_stats',
           priorLevel: input.classifiedLevel,
         })
       );

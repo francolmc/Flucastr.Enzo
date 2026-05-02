@@ -5,6 +5,7 @@ export {
   type EmailModifyInput,
   type EmailSendInput,
   type EmailSendResult,
+  type EmailUnreadInboxRow,
   type EmailAccountListRow,
   type EmailQuery,
   type EmailServiceResult,

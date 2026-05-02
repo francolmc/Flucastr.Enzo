@@ -14,6 +14,7 @@ import {
   SearchEmailTool,
   SendEmailTool,
   ModifyEmailTool,
+  EmailUnreadCountTool,
   CalendarTool,
   CalendarService,
 } from '@enzo/core';
@@ -56,6 +57,7 @@ export function createDefaultToolRegistry(
   }
   const emailService = configService ? new EmailService(configService) : undefined;
   if (emailService && emailService.getConfiguredAccounts().length > 0) {
+    registry.register(new EmailUnreadCountTool(emailService));
     registry.register(new ReadEmailTool(emailService));
     registry.register(new SearchEmailTool(emailService));
   }

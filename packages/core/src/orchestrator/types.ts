@@ -72,6 +72,9 @@ export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize' | '
 /** When classifier suggests `calendar`, disambiguates fast-path prompts (list vs schedule). */
 export type CalendarIntentHint = 'list' | 'schedule';
 
+/** Connected mailbox unread stats (single tool round-trip). */
+export type MailboxIntentHint = 'unread_stats';
+
 export interface AmplifierInput {
   message: string;
   originalMessage?: string; // Original message before any translation or processing
@@ -93,6 +96,8 @@ export interface AmplifierInput {
   suggestedTool?: 'web_search' | 'calendar';
   /** Mirrors {@link ClassificationResult.calendarIntent}. */
   calendarIntent?: CalendarIntentHint;
+  /** Mirrors {@link ClassificationResult.mailboxIntent} (OAuth/IMAP unread counts). */
+  mailboxIntent?: MailboxIntentHint;
   /** Mirrors {@link ClassificationResult.suppressSimpleModerateFastPath}. */
   suppressSimpleModerateFastPath?: boolean;
   /** User's preferred language (e.g., 'es', 'en'). Defaults to 'es'. */
@@ -235,6 +240,8 @@ export interface ClassificationResult {
   suppressSimpleModerateFastPath?: boolean;
   /** Meaningful when `suggestedTool` is `calendar` (omit when not listing vs scheduling persisted agenda). */
   calendarIntent?: CalendarIntentHint;
+  /** Unread inbox counts for configured Gmail/Outlook/IMAP via host tools (`email_unread_count`). */
+  mailboxIntent?: MailboxIntentHint;
   /**
    * When set, {@link AmplifierLoop} skips SIMPLE/MODERATE fast path so THINK can delegate to a catalog agent.
    */

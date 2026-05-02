@@ -75,7 +75,13 @@ export {
   type ConversionResult,
   type MarkItDownService,
 } from './files/index.js';
-export { ReadEmailTool, SearchEmailTool, SendEmailTool, ModifyEmailTool } from './tools/index.js';
+export {
+  ReadEmailTool,
+  SearchEmailTool,
+  SendEmailTool,
+  ModifyEmailTool,
+  EmailUnreadCountTool,
+} from './tools/index.js';
 export type { VisionService, VisionResult } from './vision/VisionService.js';
 export {
   EmailService,

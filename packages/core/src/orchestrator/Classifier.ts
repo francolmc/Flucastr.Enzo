@@ -29,6 +29,7 @@ import {
 } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+import { messageLooksLikeMailboxUnreadStatsQuery } from './mailboxUnreadIntent.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
@@ -240,6 +241,16 @@ export class Classifier {
         classifierBranch: 'calendar_list_lexical',
       };
     }
+    if (messageLooksLikeMailboxUnreadStatsQuery(normalizedMessage)) {
+      console.log('[Classifier] Fast-path mailbox unread counts → MODERATE');
+      logClassifierRouting('mailbox_unread_lexical', ComplexityLevel.MODERATE);
+      return {
+        level: ComplexityLevel.MODERATE,
+        reason: 'unread inbox counts for configured Gmail/Outlook/IMAP — email_unread_count (never manual instructions)',
+        mailboxIntent: 'unread_stats',
+        classifierBranch: 'mailbox_unread_lexical',
+      };
+    }
     if (this.isLikelyRecallQuery(normalizedMessage.toLowerCase())) {
       console.log('[Classifier] Fast-path recall query → MODERATE');
       logClassifierRouting('recall_lexical', ComplexityLevel.MODERATE);
@@ -323,6 +334,10 @@ export class Classifier {
     if (cal === 'list' || cal === 'schedule') {
       out.calendarIntent = cal;
     }
+    const mb = parsed['mailboxIntent'];
+    if (mb === 'unread_stats') {
+      out.mailboxIntent = 'unread_stats';
+    }
     if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
       out.suppressSimpleModerateFastPath = true;
     }
@@ -404,6 +419,7 @@ Core shape (always required):
 Optional keys (omit when irrelevant):
 - "suggestedTool": "web_search" — user needs grounded/current web facts.
 - "suggestedTool": "calendar" AND "calendarIntent": "list" | "schedule" — Enzo persisted agenda (SQLite): list/day query vs adding a timed event/reminder (never outsource to web_search).
+- "mailboxIntent": "unread_stats" — user asks HOW MANY **unread** emails/messages **they** have in **their** mailbox(es) configured in Enzo (Gmail, Outlook/Microsoft, or IMAP connected in the host). **Never** SIMPLE with “open Gmail yourself” prose — MODERATE and the runtime tool \`email_unread_count\` must run (omit \`mailboxIntent\` when not asking for unread totals).
 - "suppressSimpleModerateFastPath": true — REQUIRED when LEVEL is COMPLEX or when TWO OR MORE DISTINCT tool-backed steps are inseparable without an intermediate observation (implicit chains: web+write, read+write, analyze+report to file, reorganize folders with mkdir+mv). ALSO set **true** if you classify as MODERATE but the wording still hides a sequential multi-tool dependency (prefer raising to COMPLEX in that case).
 
 LEVELS — apply in order, first match wins:
@@ -417,6 +433,7 @@ SIMPLE — direct conversation, no tools needed:
 - Spanish: abstract "gestión del día a día", "necesito organizar mi tiempo" **without** agendar/programar/recording a concrete slot — still SIMPLE only if purely conversational tips
 
 MODERATE — needs exactly ONE tool:
+- **Unread email counts:** "how many unread in Gmail / Outlook / my inbox", "cuántos correos sin leer", etc., when mail is hosted on THIS Enzo installation → **mailboxIntent**: \`unread_stats\` (counts from connected accounts; never SIMPLE telling the user to check the website manually)
 - **Listing this user's own Enzo persisted agenda** for a named day or span (e.g. "mis eventos/citas hoy", "qué tengo en mi agenda mañana") → **calendar** \`list\` against the local SQLite agenda — **never** web_search, **never** answer "I have no access to your personal/Google calendar" (the data model is Enzo's \`calendar\` tool, not an external provider)
 - **Persisted agenda / reminders with a concrete time or day:** phrasing such as scheduling an appointment, adding to calendar/agenda/cita, programming a timed reminder/reminder at HH:MM, “un evento para las … hoy”. That **always requires the calendar tool** (SQLite) so it appears in the Enzo web agenda — never SIMPLE with prose pretending it was scheduled
 - Spanish: **agendar/programar/añadir al calendario** + concrete time (**15:55**, **hoy**, etc.) → MODERATE
@@ -484,6 +501,7 @@ Examples:
 "¿podemos agendar un evento para las 15:55 horas del día de hoy? Es tomar medicamento." → {"level":"MODERATE","reason":"persisted timed event — calendar tool","suggestedTool":"calendar","calendarIntent":"schedule"}
 "schedule a dentist appointment tomorrow at 9:30" → {"level":"MODERATE","reason":"persisted timed event — calendar tool","suggestedTool":"calendar","calendarIntent":"schedule"}
 "¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list","suggestedTool":"calendar","calendarIntent":"list"}
+"¿cuántos correos sin leer tengo en Gmail y Outlook?" → {"level":"MODERATE","reason":"mailbox unread totals — connected accounts on host","mailboxIntent":"unread_stats"}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
@@ -492,7 +510,7 @@ ${this.buildDelegationCatalogSection(agents)}
 HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
 
 OUTPUT — one JSON object only (no markdown, no prose):
-{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","suppressSimpleModerateFastPath":true}
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","mailboxIntent":"optional unread_stats","suppressSimpleModerateFastPath":true}
 
 delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
 - When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
@@ -633,6 +651,7 @@ ONLY JSON. NOTHING ELSE.`;
     delegationHint?: { agentId?: string; reason?: string };
     suggestedTool?: string;
     calendarIntent?: string;
+    mailboxIntent?: string;
     suppressSimpleModerateFastPath?: boolean;
   } | null> {
     const response = await this.provider.complete({
@@ -653,6 +672,7 @@ ONLY JSON. NOTHING ELSE.`;
       delegationHint?: { agentId?: string; reason?: string };
       suggestedTool?: string;
       calendarIntent?: string;
+      mailboxIntent?: string;
       suppressSimpleModerateFastPath?: boolean;
     }>(response.content, {
       tryRepair: true,
@@ -662,8 +682,8 @@ ONLY JSON. NOTHING ELSE.`;
     }
 
     const retrySystemPrompt = `Return ONLY valid JSON with one object:
-{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional","calendarIntent":"optional","suppressSimpleModerateFastPath":optional}
-Keys suggestedTool/calendarIntent/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search or calendar only when documented in the primary classifier prompt.
+{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional","calendarIntent":"optional","mailboxIntent":"optional","suppressSimpleModerateFastPath":optional}
+Keys suggestedTool/calendarIntent/mailboxIntent/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search or calendar only when documented in the primary classifier prompt. Use mailboxIntent unread_stats only for connected-mailbox unread counts.
 No markdown, no prose.`;
     const retryResponse = await this.provider.complete({
       messages: [{ role: 'system', content: retrySystemPrompt }, ...messages],
@@ -678,6 +698,7 @@ No markdown, no prose.`;
       delegationHint?: { agentId?: string; reason?: string };
       suggestedTool?: string;
       calendarIntent?: string;
+      mailboxIntent?: string;
       suppressSimpleModerateFastPath?: boolean;
     }>(retryResponse.content, { tryRepair: true });
 

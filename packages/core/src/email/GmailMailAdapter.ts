@@ -116,6 +116,14 @@ export class GmailMailAdapter {
     return google.gmail({ version: 'v1', auth });
   }
 
+  /** Unread count in INBOX (`labels.messagesUnread` for Gmail label INBOX). */
+  async getInboxUnreadCount(): Promise<number> {
+    const gmail = this.gmail();
+    const r = await gmail.users.labels.get({ userId: 'me', id: 'INBOX' });
+    const n = r.data.messagesUnread;
+    return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+  }
+
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
     try {
       const gmail = this.gmail();

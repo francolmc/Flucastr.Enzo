@@ -48,6 +48,7 @@ import {
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
+import { messageLooksLikeMailboxUnreadStatsQuery } from '../mailboxUnreadIntent.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
 const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
@@ -459,11 +460,26 @@ Ranges are UTC instants inclusive; the window matches the user's asked day scope
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
       : '';
 
+  const classifierMailboxUnread =
+    isModerate &&
+    executableTools.some((t) => t.name === 'email_unread_count') &&
+    (input.mailboxIntent === 'unread_stats' || messageLooksLikeMailboxUnreadStatsQuery(calendarCorpus));
+
+  const mandatoryMailboxUnreadBlock = classifierMailboxUnread
+    ? `
+
+━━━ MAILBOX_UNREAD_LOCKED ━━━
+The user asked for **counts of unread emails** in mailboxes configured on THIS Enzo host (Gmail, Outlook/Microsoft, IMAP connected in Correo — not hypothetical). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "open your browser yourself", no simulation).
+{"action":"tool","tool":"email_unread_count","input":{}}
+Optional: narrow to one mailbox with {"action":"tool","tool":"email_unread_count","input":{"accountId":"<configured id>"}} if they named a single account id. Plain text totals without executing this JSON are blocked here — the counts come from Gmail label INBOX unread, Outlook Graph inbox \`unreadItemCount\`, or IMAP UNSEEN SEARCH.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    : '';
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
 ${toolsPrompt}
@@ -489,6 +505,7 @@ Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\\n\\nFull file body the user asked for — never empty unless they asked for an empty file."}}
 {"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
 {"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
+{"action":"tool","tool":"email_unread_count","input":{}}
 
 ${toolUsageRule}
 
@@ -498,6 +515,7 @@ TOOL SELECTION — CRITICAL:
 - Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
 - Search the internet for information → web_search
 - Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
+- How many unread emails **this user has in connected Gmail/Outlook/IMAP inboxes on this machine** → email_unread_count (never prose-only simulation)
 - Call an HTTP/API endpoint when user provides a URL → execute_command with curl
   Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
 - Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)

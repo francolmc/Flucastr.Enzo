@@ -320,6 +320,17 @@ export class IMAPClient {
     });
   }
 
+  /** Count UNSEEN in folder (typically INBOX) via SEARCH. */
+  async countUnseen(options?: { folder?: string }): Promise<number> {
+    const folder = options?.folder ?? 'INBOX';
+    return this.withConnection(async (client) => {
+      await client.mailboxOpen(folder);
+      const uids = await client.search({ seen: false });
+      if (uids === false) return 0;
+      return uids.length;
+    });
+  }
+
   async testConnection(): Promise<boolean> {
     try {
       await this.probeInbox();

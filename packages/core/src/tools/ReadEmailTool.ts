@@ -56,7 +56,8 @@ function formatReadEmailOutput(
 
 export class ReadEmailTool implements ExecutableTool {
   name = 'read_email';
-  description = 'Read recent emails from configured accounts';
+  description =
+    'Read recent emails from configured accounts (subjects/snippets). To report HOW MANY unread messages per inbox totals, prefer email_unread_count instead.';
   parameters = {
     type: 'object' as const,
     properties: {

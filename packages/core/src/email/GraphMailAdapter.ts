@@ -111,6 +111,18 @@ export class GraphMailAdapter {
     return j.id;
   }
 
+  /** Unread messages in Well-Known Folder `inbox` (Graph `unreadItemCount`). */
+  async getInboxUnreadCount(): Promise<number> {
+    const r = await this.graphFetch('/me/mailFolders/inbox?$select=unreadItemCount');
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`Graph inbox unread: ${r.status} ${t}`);
+    }
+    const j = (await r.json()) as { unreadItemCount?: number };
+    const n = j.unreadItemCount;
+    return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+  }
+
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await this.graphFetch('/me?$select=displayName,mail');
