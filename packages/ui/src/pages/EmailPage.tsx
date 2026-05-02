@@ -873,7 +873,9 @@ export default function EmailPage() {
                         (otra opción): registro <strong>Web</strong> en Entra con <em>exactamente</em>{' '}
                         <code className="email-code-inline">{outlookRedirectHint}</code>; si ves <code className="email-code-inline">invalid_request redirect_uri</code>, el valor en Entra no coincide con ese string (scheme, host, puerto y path). Tras un proxy, fijá{' '}
                         <code className="email-code-inline">ENZO_PUBLIC_API_BASE_URL</code> o <code className="email-code-inline">ENZO_TRUST_PROXY</code>. Para{' '}
-                        <strong>@outlook.com / Hotmail personal</strong> probá Tenant <code>consumers</code> en la cuenta (Editar).
+                        <strong>@outlook.com / Hotmail personal</strong> probá Tenant <code>consumers</code> en la cuenta (Editar). Con login
+                        en pestaña: no repitas «Abrir login Microsoft», no recargues la pestaña del callback ni la abras desde el historial después
+                        de Authenticator — el código vence rápido y sólo sirve una vez.
                       </span>
                     </div>
                   )}

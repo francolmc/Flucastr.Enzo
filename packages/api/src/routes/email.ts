@@ -20,6 +20,8 @@ interface OAuthPending {
   expires: number;
   /** Igual que en el authorize inicial; obligatorio para el canje de código. */
   oauthRedirectUri?: string;
+  /** Tenant normalizado del `/authorize`; debe repetirse en `/token`. */
+  microsoftTenant?: string;
   /** PKCE verifier (solo Microsoft authorize → token). */
   microsoftCodeVerifier?: string;
 }
@@ -49,7 +51,8 @@ function mintOAuthState(accountId: string, provider: OAuthProvider, oauthRedirec
 /** Microsoft authorize + PKCE (recomendado para apps tipo SPA / entra público moderno). */
 function mintMicrosoftOAuthStateWithPkce(
   accountId: string,
-  redirectUriExact: string
+  redirectUriExact: string,
+  microsoftTenant: string
 ): { state: string; codeChallenge: string } {
   pruneOAuthStates();
   const verifier = crypto.randomBytes(32).toString('base64url');
@@ -61,6 +64,7 @@ function mintMicrosoftOAuthStateWithPkce(
     expires: Date.now() + OAUTH_STATE_TTL_MS,
     microsoftCodeVerifier: verifier,
     oauthRedirectUri: redirectUriExact,
+    microsoftTenant,
   });
   return { state, codeChallenge };
 }
@@ -173,6 +177,18 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function formatMicrosoftOAuthCallbackErrorMessage(rawMsg: string): string {
+  if (/code[^\n]{0,80}expired|The code has expired|AADSTS70000[^\n]{0,160}not valid/im.test(rawMsg)) {
+    return (
+      `${rawMsg}\n\n` +
+      'Si apareció Microsoft Authenticator: el navegador trae una URL con parámetro "code"; ese valor vence rápido y sólo puede usarse una vez al canjearlo con el servidor. ' +
+      'No recargues la pestaña del callback ni abrías el mismo enlace desde historial ni un segundo clic al login. ' +
+      'Cerrá la pestaña, volvé a Enzo → Correo y pulsá otra vez «Abrir login Microsoft»; después de autorizar esperá sin tocar atrás hasta ver «conectado».'
+    );
+  }
+  return rawMsg;
 }
 
 /** Outlook device-code flow session (secret `device_code` never leaves API). */
@@ -495,8 +511,8 @@ export function createEmailRouter(configService: ConfigService): Router {
       }
 
       const redirectUri = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
-      const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id, redirectUri);
       const tenant = normalizeMicrosoftTenantId(acc.microsoftTenantId);
+      const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id, redirectUri, tenant);
       const authUrl = buildMicrosoftAuthorizationUrl({
         tenant,
         clientId,
@@ -628,7 +644,7 @@ export function createEmailRouter(configService: ConfigService): Router {
 
       const accounts = configService.getEmailConfig().accounts;
       const acc = accounts.find((a) => a.id === pending.accountId);
-      const tenant = normalizeMicrosoftTenantId(acc?.microsoftTenantId);
+      const tenant = normalizeMicrosoftTenantId(pending.microsoftTenant ?? acc?.microsoftTenantId);
 
       const redirectUriFallback = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
       const redirectUri = pending.oauthRedirectUri ?? redirectUriFallback;
@@ -659,8 +675,8 @@ export function createEmailRouter(configService: ConfigService): Router {
       configService.setEmailOAuthRefreshToken(pending.accountId, refresh);
       res.status(200).type('html').send(oauthSuccessHtml('microsoft'));
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      res.status(500).type('html').send(oauthErrorHtml(msg));
+      const raw = error instanceof Error ? error.message : String(error);
+      res.status(500).type('html').send(oauthErrorHtml(formatMicrosoftOAuthCallbackErrorMessage(raw)));
     }
   });
 

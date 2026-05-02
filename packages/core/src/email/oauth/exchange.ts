@@ -23,6 +23,15 @@ export function microsoftTokenResponseSuggestsPublicClientNoSecret(description: 
   );
 }
 
+/** Tenant confidencial: falta secreto/certificado en el POST al token cuando el servidor lo reclama (v2 público habitual no matchea). */
+export function microsoftTokenResponseSuggestsMissingClientCredential(description: string): boolean {
+  return (
+    /AADSTS7000218/i.test(description) ||
+    /client_assertion'?/i.test(description) ||
+    /parameter.*client_secret.*client_assertion|'client_secret'.*'client_assertion'/i.test(description)
+  );
+}
+
 function microsoftTokenErrorText(json: Record<string, unknown>): string {
   const d =
     typeof json.error_description === 'string'
@@ -136,6 +145,8 @@ export async function exchangeMicrosoftAuthorizationCode(params: {
     typeof params.clientSecret === 'string' && params.clientSecret.trim().length > 0
       ? params.clientSecret.trim()
       : '';
+  const cv = typeof params.codeVerifier === 'string' ? params.codeVerifier.trim() : '';
+  const hasPkce = cv.length > 0;
 
   const makeBody = (withSecret: boolean): URLSearchParams => {
     const body = new URLSearchParams({
@@ -145,28 +156,42 @@ export async function exchangeMicrosoftAuthorizationCode(params: {
       redirect_uri: params.redirectUri,
     });
     if (withSecret && secret) body.set('client_secret', secret);
-    const cv = typeof params.codeVerifier === 'string' ? params.codeVerifier.trim() : '';
     if (cv) body.set('code_verifier', cv);
     return body;
   };
 
-  let r = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: makeBody(!!secret),
-  });
+  async function attempt(includeSecret: boolean): Promise<{ r: Response; json: Record<string, unknown> }> {
+    const body = makeBody(includeSecret);
+    const r = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    const json = (await r.json()) as Record<string, unknown>;
+    return { r, json };
+  }
 
-  let json = (await r.json()) as Record<string, unknown>;
-  if (!r.ok && secret) {
-    const msg = microsoftTokenErrorText(json);
-    if (microsoftTokenResponseSuggestsPublicClientNoSecret(msg)) {
-      r = await fetch(tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: makeBody(false),
-      });
-      json = (await r.json()) as Record<string, unknown>;
+  let r: Response;
+  let json: Record<string, unknown>;
+
+  if (secret && hasPkce) {
+    ({ r, json } = await attempt(false));
+    if (!r.ok) {
+      const msg = microsoftTokenErrorText(json);
+      if (microsoftTokenResponseSuggestsMissingClientCredential(msg)) {
+        ({ r, json } = await attempt(true));
+      }
     }
+  } else if (secret) {
+    ({ r, json } = await attempt(true));
+    if (!r.ok) {
+      const msg = microsoftTokenErrorText(json);
+      if (microsoftTokenResponseSuggestsPublicClientNoSecret(msg)) {
+        ({ r, json } = await attempt(false));
+      }
+    }
+  } else {
+    ({ r, json } = await attempt(false));
   }
 
   if (!r.ok) {
