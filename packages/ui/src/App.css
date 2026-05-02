@@ -1,6 +1,6 @@
 .app-container {
   display: flex;
-  height: 100vh;
+  flex: 1;
   min-height: 0;
   width: 100%;
   background-color: var(--bg-primary);
@@ -200,6 +200,8 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -270,12 +272,13 @@
 @media (max-width: 840px) {
   .app-container {
     flex-direction: column;
-    height: auto;
-    min-height: 100vh;
+    flex: 1;
+    min-height: 0;
   }
 
   .sidebar {
     width: 100%;
+    flex-shrink: 0;
     max-height: 42vh;
     border-right: none;
     border-bottom: 1px solid var(--border);

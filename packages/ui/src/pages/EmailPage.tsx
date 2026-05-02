@@ -156,7 +156,13 @@ export default function EmailPage() {
       const list = await apiClient.getRecentEmails(10);
       setMessages(list);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // Dominio esperado: aún sin IMAP/OAuth configurado para ninguna cuenta.
+      if (/no enabled email accounts|saved credentials \(imap password or oauth\)/iu.test(msg)) {
+        setMessages([]);
+        return;
+      }
+      setError(msg);
     } finally {
       setLoadingRecent(false);
     }
@@ -166,9 +172,15 @@ export default function EmailPage() {
     void loadAccounts();
   }, [loadAccounts]);
 
+  /** No pedir vista previa hasta tener al menos una cuenta con credenciales (evita 400 y ruido en consola). */
   useEffect(() => {
+    if (loadingAccounts) return;
+    if (!accounts.some((a) => accountReady(a))) {
+      setMessages([]);
+      return;
+    }
     void loadRecent();
-  }, [loadRecent]);
+  }, [loadingAccounts, accounts, loadRecent]);
 
   const handleSavePassword = async (id: string) => {
     const pwd = passwords[id]?.trim();
