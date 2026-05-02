@@ -1,4 +1,5 @@
 import type { EmailAccountConfig, EmailProviderKind, ImapConnectionConfig } from './emailConfig.js';
+import { normalizeMicrosoftTenantId } from './emailConfig.js';
 
 function parseImap(imapRaw: unknown): ImapConnectionConfig | undefined {
   if (imapRaw === undefined || imapRaw === null) return undefined;
@@ -64,7 +65,8 @@ export function parseEmailAccountInput(raw: unknown): EmailAccountConfig {
   let tenant = o.microsoftTenantId;
   let microsoftTenantId: string | undefined;
   if (typeof tenant === 'string' && tenant.trim().length > 0) {
-    microsoftTenantId = tenant.trim();
+    const n = normalizeMicrosoftTenantId(tenant.trim());
+    microsoftTenantId = n === 'common' ? undefined : n;
   }
 
   let imap: EmailAccountConfig['imap'];

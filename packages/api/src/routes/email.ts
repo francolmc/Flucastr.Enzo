@@ -7,6 +7,7 @@ import {
   EmailService,
   exchangeGoogleAuthorizationCode,
   exchangeMicrosoftAuthorizationCode,
+  normalizeMicrosoftTenantId,
   pollMicrosoftDeviceUntilTokens,
   requestMicrosoftDeviceCode,
 } from '@enzo/core';
@@ -92,7 +93,10 @@ async function microsoftDeviceInitWithConsumersFallback(params: {
     return { dev, resolvedTenant: tenant };
   } catch (e1) {
     const m1 = e1 instanceof Error ? e1.message : String(e1);
-    if (/AADSTS9002346|\/consumers endpoint/i.test(m1) && tenant !== 'consumers') {
+    const needConsumersFallback =
+      /AADSTS9002346|\/consumers endpoint/i.test(m1) ||
+      /userAudience|application must not be configured with 'Consumer'|use \/common\/ endpoint/i.test(m1);
+    if (needConsumersFallback && tenant !== 'consumers') {
       tenant = 'consumers';
       const dev = await requestMicrosoftDeviceCode({ tenant, clientId });
       return { dev, resolvedTenant: tenant };
@@ -492,7 +496,7 @@ export function createEmailRouter(configService: ConfigService): Router {
 
       const redirectUri = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
       const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id, redirectUri);
-      const tenant = acc.microsoftTenantId?.trim() || 'common';
+      const tenant = normalizeMicrosoftTenantId(acc.microsoftTenantId);
       const authUrl = buildMicrosoftAuthorizationUrl({
         tenant,
         clientId,
@@ -525,16 +529,13 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const tenantRequested = acc.microsoftTenantId?.trim() || 'common';
+      const tenantRequested = normalizeMicrosoftTenantId(acc.microsoftTenantId);
       const { dev, resolvedTenant } = await microsoftDeviceInitWithConsumersFallback({
         tenant: tenantRequested,
         clientId,
       });
 
-      if (
-        resolvedTenant === 'consumers' &&
-        (acc.microsoftTenantId?.trim().toLowerCase() || 'common') !== 'consumers'
-      ) {
+      if (resolvedTenant === 'consumers' && normalizeMicrosoftTenantId(acc.microsoftTenantId) !== 'consumers') {
         try {
           configService.updateEmailAccount(acc.id, { microsoftTenantId: 'consumers' });
         } catch (e) {
@@ -627,7 +628,7 @@ export function createEmailRouter(configService: ConfigService): Router {
 
       const accounts = configService.getEmailConfig().accounts;
       const acc = accounts.find((a) => a.id === pending.accountId);
-      const tenant = acc?.microsoftTenantId?.trim() || 'common';
+      const tenant = normalizeMicrosoftTenantId(acc?.microsoftTenantId);
 
       const redirectUriFallback = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
       const redirectUri = pending.oauthRedirectUri ?? redirectUriFallback;

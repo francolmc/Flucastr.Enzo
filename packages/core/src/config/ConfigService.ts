@@ -15,6 +15,7 @@ import {
 } from './emailParsing.js';
 
 export type { EmailAccountConfig, EmailConfig } from './emailConfig.js';
+export { normalizeMicrosoftTenantId } from './emailConfig.js';
 
 export interface EmailOAuthPersistedStatus {
   google: {

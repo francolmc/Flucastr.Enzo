@@ -1,6 +1,7 @@
 import { refreshMicrosoftAccessToken } from './oauth/exchange.js';
 
 import type { ConfigService } from '../config/ConfigService.js';
+import { normalizeMicrosoftTenantId } from '../config/emailConfig.js';
 import type { EmailMessage } from './IMAPClient.js';
 
 interface GraphMessageLite {
@@ -45,7 +46,7 @@ export class GraphMailAdapter {
   private tenant(): string {
     const accounts = this.configService.getEmailConfig().accounts;
     const acc = accounts.find((a) => a.id === this.accountId);
-    return acc?.microsoftTenantId?.trim() || 'common';
+    return normalizeMicrosoftTenantId(acc?.microsoftTenantId);
   }
 
   private getRefreshToken(): string | null {

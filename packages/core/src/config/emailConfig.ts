@@ -18,13 +18,21 @@ export interface EmailAccountConfig {
   imap?: ImapConnectionConfig;
   /** Mailbox address hint for Gmail/Graph UI (recommended for OAuth-only rows). */
   address?: string;
-  /** Azure AD tenant: `common`, `consumers`, `organizations`, or tenant GUID. Default `common`. */
+  /** Azure AD tenant: `common`, `consumers`, `organizations`, or tenant GUID. Default `common` (singular `consumer` is normalized to `consumers`). */
   microsoftTenantId?: string;
   enabled: boolean;
 }
 
 export interface EmailConfig {
   accounts: EmailAccountConfig[];
+}
+
+/** Segment for `login.microsoftonline.com/{tenant}/...`. Empty → `common`. Corrects typo `consumer` → `consumers`. */
+export function normalizeMicrosoftTenantId(raw: string | undefined | null): string {
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  if (!t) return 'common';
+  if (t.toLowerCase() === 'consumer') return 'consumers';
+  return t;
 }
 
 /** JSON key in `config.system` for encrypted IMAP password. */

@@ -644,8 +644,17 @@ export default function EmailPage() {
             </label>
             {newAccProvider === 'microsoft' ? (
               <label className="email-field-inline">
-                Tenant Microsoft (opcional)
-                <input value={newAccTenant} onChange={(e) => setNewAccTenant(e.target.value)} placeholder="common" />
+                Tenant Microsoft (opcional){' '}
+                <span className="email-muted email-small-print">
+                  Usá <code className="email-code-inline">consumers</code> para solo cuentas personales (.com); no existe{' '}
+                  <code className="email-code-inline">consumer</code>. Con Tenant <code className="email-code-inline">common</code> la app
+                  en Azure debe tener audiencia «Cualquier tipo de cuenta», no sólo consumidor.
+                </span>
+                <input
+                  value={newAccTenant}
+                  onChange={(e) => setNewAccTenant(e.target.value)}
+                  placeholder="common · consumers · organizations"
+                />
               </label>
             ) : null}
           </div>
@@ -916,7 +925,7 @@ export default function EmailPage() {
                             Tenant
                             <input
                               value={editForm.microsoftTenantId}
-                              placeholder="common"
+                              placeholder="consumers (personal), common…"
                               onChange={(e) =>
                                 setEditForm((f) => (f ? { ...f, microsoftTenantId: e.target.value } : f))
                               }
