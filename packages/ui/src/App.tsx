@@ -163,7 +163,13 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-content">
+      <main
+        className={
+          currentPage === 'chat'
+            ? 'main-content main-content--chat'
+            : 'main-content main-content--scroll'
+        }
+      >
         <header className="main-header">
           <div>
             <p className="main-header-kicker">Workspace Enzo</p>
@@ -178,9 +184,7 @@ function App() {
           </div>
         </header>
         <div
-          className={
-            currentPage === 'chat' ? 'main-body main-body-no-scroll' : 'main-body main-body-scroll'
-          }
+          className={currentPage === 'chat' ? 'main-body main-body-no-scroll' : 'main-body main-body-grow'}
         >
           {currentPage === 'dashboard' && (
             <DashboardPage onNavigate={(p) => setCurrentPage(p)} />

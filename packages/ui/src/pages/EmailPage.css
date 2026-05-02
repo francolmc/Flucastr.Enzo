@@ -1,4 +1,4 @@
-/* Content width; vertical scroll is on .main-body-scroll (App layout). */
+/* Content width; vertical scroll lives on `<main class="main-content--scroll">` (App layout). */
 .email-page.page-shell {
   max-width: 960px;
   width: 100%;
