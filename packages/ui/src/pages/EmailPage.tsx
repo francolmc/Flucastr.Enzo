@@ -426,26 +426,88 @@ export default function EmailPage() {
 
   const emptyConfigured = accounts.length === 0;
 
+  const gmailCallbackUrl = `http://127.0.0.1:${apiPortHint}/api/email/oauth/google/callback`;
+
   return (
     <div className="email-page">
       <h2 className="email-heading">Correo</h2>
       <p className="email-lead">
-        Configurá desde aquí cuentas, client OAuth y contraseña IMAP. Los datos se persisten en{' '}
-        <code>~/.enzo/config.json</code>.
-        <br />
-        <strong>Outlook</strong>: después de cargar Client ID aquí podés usar <em>código en el navegador</em> (sin
-        redirect localhost). <strong>Gmail API</strong>: completá Client ID/Secret y registrá en Google Console el
-        redirect <code>http://127.0.0.1:{apiPortHint}/api/email/oauth/google/callback</code>.
-        <br />Si ves “definido por variable de entorno”, la UI muestra valores guardados pero al conectar manda ENV.
+        Todo lo que guardás acá queda en este equipo (<code>~/.enzo/config.json</code>). Nadie más lo ve salvo vos.
       </p>
+
+      <section className="email-section email-guide" aria-labelledby="email-guide-title">
+        <h3 id="email-guide-title" className="email-guide-title">
+          Qué tenés que hacer (orden sugerido)
+        </h3>
+        <ol className="email-steps">
+          <li>
+            <strong>Solo si usás Gmail u Outlook:</strong> en{' '}
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
+              Google Cloud
+            </a>{' '}
+            o{' '}
+            <a href="https://entra.microsoft.com/" target="_blank" rel="noreferrer">
+              Microsoft Entra
+            </a>{' '}
+            registrá una app OAuth y obtené Client ID (y secret si aplica). Una sola vez, fuera de Enzo.
+          </li>
+          <li>
+            <strong>Más abajo — «Paso 1»:</strong> pegá esos valores, pulsá <strong>«Guardar aplicaciones OAuth»</strong>. Sin ese
+            guardado, no vas a poder conectar Gmail ni Outlook desde Enzo.
+          </li>
+          <li>
+            <strong>«Paso 2» — Agregar cuenta:</strong> definí un <strong>id</strong> corto sólo para Enzo (ej.{' '}
+            <code>mi-gmail</code>), etiqueta opcional y tipo gmail / microsoft / imap → <strong>Crear cuenta</strong>.
+          </li>
+          <li>
+            <strong>«Paso 3» — Tarjetas:</strong> Gmail → «Conectar Gmail». Outlook → «Solicitar código» (sin localhost) o
+            alternativa redirect. IMAP → contraseña + «Guardar». Luego «Probar conexión» si querés confirmar.
+          </li>
+        </ol>
+        <p className="email-muted email-guide-foot">
+          Si un campo dice <strong>(ENV)</strong>, el valor viene de variables de entorno y Enzo usará ese; lo que pongas en pantalla puede ser sólo visual.
+        </p>
+        <details className="email-details-tech">
+          <summary className="email-details-summary">Consolas externos, redirects y ayuda rápida</summary>
+          <div className="email-details-body">
+            <ul className="email-details-list">
+              <li>
+                <strong>Gmail (Google Cloud):</strong>{' '}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
+                  Credenciales
+                </a>
+                . Tipo habitual: OAuth client &quot;Web application&quot;. Agregá como redirect autorizado{' '}
+                <code className="email-code-inline">{gmailCallbackUrl}</code>.
+              </li>
+              <li>
+                <strong>Outlook (Microsoft Entra ID):</strong>{' '}
+                <a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noreferrer">
+                  Registro de aplicaciones
+                </a>
+                . Con <strong>Client ID</strong> guardado acá podés usar el flujo por <strong>código en el navegador</strong> sin
+                depender de redirect en localhost.
+              </li>
+              <li>
+                <strong>Secretos:</strong> si dejás el secret vacío al guardar, no se borra el ya guardado; si escribís y guardás,
+                reemplaza. En campos deshabilitados por ENV, no podés cambiar desde la UI.
+              </li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
       {error && <div className="email-error">{error}</div>}
+
+      {loadingAccounts && !oauthStatus ? (
+        <p className="email-muted email-loading-hint">Cargando valores guardados y formulario OAuth…</p>
+      ) : null}
 
       {oauthStatus && (
         <section className="email-section email-setup-card">
-          <h3 className="email-section-title">Client ID / secret OAuth (solo este equipo)</h3>
-          <p className="email-muted email-small-print">
-            Secreto: dejalo vacío y no se cambia · vacío después de enfocarlo y Guardar puede borrar el secreto
-            persistido si tu cliente lo permite.
+          <h3 className="email-section-title">Paso 1 — Client ID y secret (Gmail / Microsoft)</h3>
+          <p className="email-muted email-small-print email-section-hint">
+            Copiá desde la consola del proveedor. Guardá antes de abrir la ventana de login de Gmail o de pedir el código de
+            Microsoft.
           </p>
           <div className="email-oauth-fields">
             <label className="email-field-label">
@@ -516,11 +578,15 @@ export default function EmailPage() {
       )}
 
       <section className="email-section">
-        <h3 className="email-section-title">Agregar cuenta</h3>
+        <h3 className="email-section-title">Paso 2 — Agregar una cuenta de correo</h3>
+        <p className="email-muted email-small-print email-section-hint">
+          <strong>id</strong> es un nombre interno (sin espacios); no es tu email. Después conectás la casilla con el botón que
+          aparece en la tarjeta.
+        </p>
         <div className="email-add-form">
           <div className="email-add-row">
             <label className="email-field-inline">
-              id
+              id (interno)
               <input value={newAccId} onChange={(e) => setNewAccId(e.target.value)} placeholder="ej. gmail-lab" />
             </label>
             <label className="email-field-inline">
@@ -538,13 +604,15 @@ export default function EmailPage() {
           </div>
           <div className="email-add-row">
             <label className="email-field-inline">
-              Dirección (opcional)
-              <input value={newAccAddress} onChange={(e) => setNewAccAddress(e.target.value)} />
+              Email / dirección (opcional, para mostrar)
+              <input value={newAccAddress} onChange={(e) => setNewAccAddress(e.target.value)} placeholder="vos@..." />
             </label>
-            <label className="email-field-inline">
-              Tenant MS (opcional)
-              <input value={newAccTenant} onChange={(e) => setNewAccTenant(e.target.value)} />
-            </label>
+            {newAccProvider === 'microsoft' ? (
+              <label className="email-field-inline">
+                Tenant Microsoft (opcional)
+                <input value={newAccTenant} onChange={(e) => setNewAccTenant(e.target.value)} placeholder="common" />
+              </label>
+            ) : null}
           </div>
           {(newAccProvider === 'imap' || newAccProvider === 'google' || newAccProvider === 'microsoft') && (
             <>
@@ -589,11 +657,18 @@ export default function EmailPage() {
       </section>
 
       <section className="email-section">
-        <h3 className="email-section-title">Cuentas configuradas</h3>
+        <h3 className="email-section-title">Paso 3 — Conectar cada cuenta</h3>
+        <p className="email-muted email-small-print email-section-hint">
+          El escudo ⚠️ significa falta autorización (OAuth) o contraseña (IMAP). Usá los botones de la tarjeta; «Probar
+          conexión» confirma que ya anda.
+        </p>
         {loadingAccounts ? (
           <p>Cargando…</p>
         ) : emptyConfigured ? (
-          <div className="email-empty">Todavía no hay cuentas. Usá «Agregar cuenta» arriba.</div>
+          <div className="email-empty">
+            Todavía no hay cuentas. Completá el <strong>Paso 1</strong>, guardá OAuth, cargá datos en{' '}
+            <strong>Paso 2</strong> y pulsá <strong>Crear cuenta</strong>.
+          </div>
         ) : (
           <div className="email-cards">
             {accounts.map((acc) => {
@@ -687,7 +762,7 @@ export default function EmailPage() {
                       )}
                       <span className="email-muted email-oauth-note">
                         Completá Gmail Client ID arriba; en Google Console registrá el redirect{' '}
-                        <code>http://127.0.0.1:{apiPortHint}/api/email/oauth/google/callback</code>.
+                        <code className="email-code-inline">{gmailCallbackUrl}</code>.
                       </span>
                     </div>
                   ) : (
@@ -871,6 +946,9 @@ export default function EmailPage() {
       </section>
 
       <section className="email-section">
+        <p className="email-muted email-small-print email-section-hint" style={{ marginBottom: '0.75rem' }}>
+          Después de conectar alguna cuenta, podés revisar aquí algunos mensajes entrantes como comprobación.
+        </p>
         <div className="email-section-toolbar">
           <h3 className="email-section-title">Vista previa de emails recientes</h3>
           <button type="button" className="email-btn" onClick={() => void loadRecent()} disabled={loadingRecent}>
@@ -879,7 +957,8 @@ export default function EmailPage() {
         </div>
         {messages.length === 0 && !loadingRecent ? (
           <p className="email-muted">
-            Sin mensajes o sin ninguna cuenta con credenciales (IMAP guardada / OAuth OK).
+            No hay vista previa: o no hay mensajes nuevos o ninguna cuenta terminó el <strong>Paso 3</strong> (OAuth o
+            contraseña IMAP). Usá «Probar conexión» en la tarjeta y volvé a <strong>Actualizar</strong>.
           </p>
         ) : (
           <div className="email-table-wrap">

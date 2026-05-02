@@ -321,3 +321,88 @@
   flex-wrap: wrap;
   align-items: center;
 }
+
+.email-guide {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  background: var(--bg-elevated);
+}
+
+.email-guide-title {
+  margin: 0 0 0.6rem;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.email-steps {
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+  color: var(--text-primary);
+  font-size: 0.89rem;
+  line-height: 1.48;
+}
+
+.email-steps li {
+  margin-bottom: 0.5rem;
+}
+
+.email-steps li:last-child {
+  margin-bottom: 0;
+}
+
+.email-guide-foot {
+  margin: 0 0 0.15rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.email-details-tech {
+  margin-top: 0.65rem;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  padding: 0 0.75rem;
+  background: var(--bg-secondary);
+}
+
+.email-details-summary {
+  cursor: pointer;
+  padding: 0.65rem 0;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.email-details-summary:hover {
+  color: var(--accent);
+}
+
+.email-details-body {
+  padding-bottom: 0.75rem;
+}
+
+.email-details-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.email-details-list li {
+  margin-bottom: 0.45rem;
+}
+
+.email-code-inline {
+  font-size: 0.8em;
+  word-break: break-all;
+}
+
+.email-section-hint {
+  margin: -0.25rem 0 0.75rem;
+}
+
+.email-loading-hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.86rem;
+}
