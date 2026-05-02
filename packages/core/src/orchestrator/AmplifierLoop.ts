@@ -37,6 +37,7 @@ import { runActPhase, type AmplifierLoopPhaseDeps } from './amplifier/AmplifierA
 import { runObservePhase } from './amplifier/AmplifierObservePhase.js';
 import type { AgentRouterContract, DelegationRequest, DelegationResult } from './AgentRouter.js';
 import { DELEGATION_NOT_CONFIGURED } from './AgentRouter.js';
+import { isAnthropicDelegationAuthErrorMessage } from '../agents/anthropicDelegationUtils.js';
 import { runSynthesizePhase } from './amplifier/AmplifierSynthesizePhase.js';
 import { runVerifyBeforeSynthesizeIfEnabled } from './amplifier/AmplifierVerifyPhase.js';
 import {
@@ -1036,7 +1037,7 @@ Do NOT search for more information. Use what is provided.`;
               : `Done, operation completed.`;
           this.log.info('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
           return {
-            content: directContent,
+            content: this.prependAnthropicApiKeyNoticeToContent(directContent, input, steps),
             requestId,
             stepsUsed: steps,
             modelsUsed: Array.from(modelsUsed),
@@ -1068,10 +1069,15 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       const complexSynthStart = Date.now();
+      const complexSynthContext = this.maybeAugmentSynthesizeContextForVisionAuthFailure(
+        input,
+        steps,
+        verifiedComplex.context
+      );
       const synthesizeStep = await runSynthesizePhase(
         { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
         input,
-        verifiedComplex.context,
+        complexSynthContext,
         iteration,
         modelsUsed,
         preResolvedSkills
@@ -1080,7 +1086,11 @@ Do NOT search for more information. Use what is provided.`;
       steps.push(synthesizeStep);
 
       return {
-        content: synthesizeStep.output ?? verifiedComplex.context,
+        content: this.prependAnthropicApiKeyNoticeToContent(
+          synthesizeStep.output ?? complexSynthContext,
+          input,
+          steps
+        ),
         requestId,
         stepsUsed: steps,
         modelsUsed: Array.from(modelsUsed),
@@ -1387,10 +1397,16 @@ Do NOT search for more information. Use what is provided.`;
 
     // SYNTHESIZE: modelo base narra la respuesta final
     const finalSynthStart = Date.now();
+    const synthContext = this.maybeAugmentSynthesizeContextForVisionAuthFailure(
+      input,
+      steps,
+      verifiedMain.context
+    );
+
     const synthesizeStep = await runSynthesizePhase(
       { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
       input,
-      verifiedMain.context,
+      synthContext,
       iteration + 1,
       modelsUsed,
       preResolvedSkills
@@ -1400,7 +1416,11 @@ Do NOT search for more information. Use what is provided.`;
     input.onProgress?.(synthesizeStep);
 
     return {
-      content: synthesizeStep.output || verifiedMain.context,
+      content: this.prependAnthropicApiKeyNoticeToContent(
+        synthesizeStep.output || synthContext,
+        input,
+        steps
+      ),
       requestId,
       stepsUsed: steps,
       modelsUsed: Array.from(modelsUsed),
@@ -1410,6 +1430,75 @@ Do NOT search for more information. Use what is provided.`;
       stageMetrics,
       complexityUsed: input.classifiedLevel,
     };
+  }
+
+  /** User-visible banner with the Anthropic auth error surfaced in observes (delegation/tool), so small models cannot hide it. */
+  private prependAnthropicApiKeyNoticeToContent(
+    body: string,
+    input: AmplifierInput,
+    steps: Step[]
+  ): string {
+    const failure = AmplifierLoop.findAnthropicAuthFailureObserveOutput(steps);
+    if (!failure) return body;
+    const tech = AmplifierLoop.extractAnthropicAuthDetailForUi(failure);
+    const lang = (input.userLanguage || 'es').toLowerCase();
+    const es = lang.startsWith('es');
+    const headline = es ? '⚠️ **Clave API de Anthropic**' : '⚠️ **Anthropic API key issue**';
+    const detail = es ? `**Detalle (servidor):** \`${tech}\`` : `**Server detail:** \`${tech}\``;
+    const help = es
+      ? 'Revisá `ANTHROPIC_API_KEY` en el entorno donde corre Enzo (p. ej. systemd) y la clave del proveedor **anthropic** en la configuración local. Sin una clave válida no se puede usar Claude ni los agentes que dependen de Anthropic.'
+      : 'Verify `ANTHROPIC_API_KEY` in Enzo\'s runtime (e.g. systemd) and the stored **anthropic** provider key in Enzo\'s settings. Claude and Anthropic-backed agents cannot run until the key is valid.';
+    const box = `${headline}\n\n${detail}\n\n${help}`;
+    const trimmed = body.trim();
+    return trimmed.length ? `${box}\n\n---\n\n${trimmed}` : box;
+  }
+
+  private static findAnthropicAuthFailureObserveOutput(steps: Step[]): string | undefined {
+    for (const s of steps) {
+      if (s.type !== 'observe') continue;
+      const o = typeof s.output === 'string' ? s.output.trim() : '';
+      if (o.length > 0 && isAnthropicDelegationAuthErrorMessage(o)) return o;
+    }
+    return undefined;
+  }
+
+  private static extractAnthropicAuthDetailForUi(snippet: string): string {
+    const oneLine = snippet.replace(/\s+/g, ' ').trim();
+    const m = oneLine.match(/Anthropic\s+API\s+error:\s*(.+)$/i);
+    let core = (m?.[1] ?? oneLine.replace(/^Agent\s+\S+\s+failed:\s*/i, '')).trim();
+    core = core.replace(/`/g, "'");
+    if (core.length > 220) core = `${core.slice(0, 220)}…`;
+    return core || 'authentication failed';
+  }
+
+  /** If Anthropic vision failed on auth with an image attached, steer synthesis away from “describe the image yourself”. */
+  private maybeAugmentSynthesizeContextForVisionAuthFailure(
+    input: AmplifierInput,
+    steps: Step[],
+    baseContext: string
+  ): string {
+    const hasAttachedImageSynth = Boolean(
+      input.imageContext?.base64?.trim() && input.imageContext?.mimeType?.trim()
+    );
+    const visionObserveAuthFail = hasAttachedImageSynth
+      ? steps.some(
+          (s) =>
+            s.type === 'observe' &&
+            typeof s.output === 'string' &&
+            s.output.includes('Agent ') &&
+            s.output.includes('failed') &&
+            isAnthropicDelegationAuthErrorMessage(s.output)
+        )
+      : false;
+    if (!visionObserveAuthFail) return baseContext;
+    return [
+      baseContext,
+      '',
+      '[HOST DIRECTIVE — API credentials]',
+      'A vision delegate failed with Anthropic authentication (e.g. invalid x-api-key).',
+      "Reply in the user's language: ask the operator to set ANTHROPIC_API_KEY in the systemd/shell environment and/or fix the stored anthropic key in Enzo.",
+      'Do NOT ask the user to describe or type out the image; the bottleneck is remote API configuration.',
+    ].join('\n');
   }
 
   private phaseDeps(): AmplifierLoopPhaseDeps {

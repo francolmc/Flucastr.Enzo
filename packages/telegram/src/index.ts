@@ -198,7 +198,9 @@ async function main() {
     const ttsService = new EdgeTTSService({ configService });
     const visionService = new OllamaVisionService(configService);
     const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
-    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
+    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot, {
+      localVisionService: visionService,
+    });
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,

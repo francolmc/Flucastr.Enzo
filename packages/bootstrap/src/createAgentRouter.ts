@@ -1,4 +1,11 @@
-import type { AgentConfig, AgentRecord, ConfigService, MemoryService, NotificationGateway } from '@enzo/core';
+import type {
+  AgentConfig,
+  AgentRecord,
+  ConfigService,
+  MemoryService,
+  NotificationGateway,
+  VisionService,
+} from '@enzo/core';
 import { AgentRouter, ClaudeCodeAgent, DocAgent, UserAgentRunner, VisionAgent } from '@enzo/core';
 
 function mapAgentRecord(row: AgentRecord): AgentConfig {
@@ -38,18 +45,24 @@ async function listAgentsForUserFromDb(memoryService: MemoryService, userId: str
  * Wires the delegation router with concrete Anthropic-backed agents. Use the same `workspacePath`
  * as {@link createDefaultToolRegistry} so `write_file` from `<file path="...">` matches tool policy.
  */
+export type CreateAgentRouterOptions = {
+  /** Used when Anthropic vision fails (e.g. invalid API key) so Telegram still gets a pixel-based answer from Ollama. */
+  localVisionService?: VisionService;
+};
+
 export function createAgentRouter(
   configService: ConfigService,
   memoryService: MemoryService,
   notificationGateway: Pick<NotificationGateway, 'notify'>,
-  workspacePath?: string
+  workspacePath?: string,
+  options?: CreateAgentRouterOptions
 ): AgentRouter {
   const userAgentRunner = new UserAgentRunner(configService);
   return new AgentRouter({
     notificationGateway,
     claudeCodeAgent: new ClaudeCodeAgent(configService, workspacePath),
     docAgent: new DocAgent(configService, workspacePath),
-    visionAgent: new VisionAgent(configService),
+    visionAgent: new VisionAgent(configService, options?.localVisionService),
     resolveUserAgent: async (id) => {
       const row = await memoryService.getAgent(id);
       if (!row) return undefined;
