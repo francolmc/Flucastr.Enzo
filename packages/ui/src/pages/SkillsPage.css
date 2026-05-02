@@ -44,6 +44,7 @@
   padding: 1.1rem 1.25rem;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 0.85rem;
   /* Bleed past page-shell horizontal padding so the textarea uses full main column width */
   align-self: stretch;
@@ -121,10 +122,21 @@
   font-size: 0.9rem;
 }
 
-.skills-editor-textarea {
+/* Wrapper avoids intrinsic `cols`-based min-width fighting flex stretch in some engines */
+.skills-editor-textarea-wrap {
   display: block;
   width: 100%;
   min-width: 0;
+}
+
+.skills-editor-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  /* Prefer CSS sizing over implicit HTML cols (fixes ~20ch narrow box in flex layouts) */
+  field-sizing: fixed;
   min-height: 320px;
   padding: 0.85rem 1rem;
   border-radius: 10px;

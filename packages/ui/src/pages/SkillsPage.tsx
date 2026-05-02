@@ -242,14 +242,17 @@ export default function SkillsPage() {
           {loadingSource ? (
             <div className="loading skills-editor-loading">Cargando archivo…</div>
           ) : (
-            <textarea
-              className="skills-editor-textarea"
-              value={editorMarkdown}
-              onChange={(e) => setEditorMarkdown(e.target.value)}
-              spellCheck={false}
-              disabled={saving}
-              rows={18}
-            />
+            <div className="skills-editor-textarea-wrap">
+              <textarea
+                className="skills-editor-textarea"
+                value={editorMarkdown}
+                onChange={(e) => setEditorMarkdown(e.target.value)}
+                spellCheck={false}
+                disabled={saving}
+                rows={18}
+                cols={1}
+              />
+            </div>
           )}
         </section>
       )}
