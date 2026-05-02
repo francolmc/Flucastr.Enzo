@@ -17,6 +17,8 @@ interface OAuthPending {
   accountId: string;
   provider: OAuthProvider;
   expires: number;
+  /** Igual que en el authorize inicial; obligatorio para el canje de código. */
+  oauthRedirectUri?: string;
   /** PKCE verifier (solo Microsoft authorize → token). */
   microsoftCodeVerifier?: string;
 }
@@ -31,19 +33,23 @@ function pruneOAuthStates(): void {
   }
 }
 
-function mintOAuthState(accountId: string, provider: OAuthProvider): string {
+function mintOAuthState(accountId: string, provider: OAuthProvider, oauthRedirectUri?: string): string {
   pruneOAuthStates();
   const token = crypto.randomBytes(24).toString('hex');
   oauthPendingByState.set(token, {
     accountId,
     provider,
     expires: Date.now() + OAUTH_STATE_TTL_MS,
+    ...(oauthRedirectUri ? { oauthRedirectUri } : {}),
   });
   return token;
 }
 
 /** Microsoft authorize + PKCE (recomendado para apps tipo SPA / entra público moderno). */
-function mintMicrosoftOAuthStateWithPkce(accountId: string): { state: string; codeChallenge: string } {
+function mintMicrosoftOAuthStateWithPkce(
+  accountId: string,
+  redirectUriExact: string
+): { state: string; codeChallenge: string } {
   pruneOAuthStates();
   const verifier = crypto.randomBytes(32).toString('base64url');
   const codeChallenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -53,6 +59,7 @@ function mintMicrosoftOAuthStateWithPkce(accountId: string): { state: string; co
     provider: 'microsoft',
     expires: Date.now() + OAUTH_STATE_TTL_MS,
     microsoftCodeVerifier: verifier,
+    oauthRedirectUri: redirectUriExact,
   });
   return { state, codeChallenge };
 }
@@ -94,11 +101,50 @@ async function microsoftDeviceInitWithConsumersFallback(params: {
   }
 }
 
-function oauthRedirectOrigin(configService: ConfigService): string {
-  const fromEnv = process.env.ENZO_PUBLIC_API_BASE_URL?.trim();
-  if (fromEnv) {
-    return fromEnv.replace(/\/$/, '');
+/**
+ * URL base donde Microsoft/Google redirigirán (sin path). Orden:
+ * 1. ENZO_PUBLIC_API_BASE_URL explícito
+ * 2. Si ENZO_OAUTH_ORIGIN_FROM_REQUEST ≠ '0', derivar del request (Host / X-Forwarded-*)
+ * 3. http://127.0.0.1:{system.port}
+ */
+function oauthOriginFromRequest(req: Pick<Request, 'protocol' | 'get' | 'socket'>): string | null {
+  const xfProto = req.get?.('x-forwarded-proto')?.split(',')[0]?.trim()?.toLowerCase();
+  let proto =
+    xfProto === 'https' || xfProto === 'http'
+      ? xfProto
+      : (typeof req.protocol === 'string' ? req.protocol.replace(/:$/, '') : '') || '';
+
+  const xfHost = req.get?.('x-forwarded-host')?.split(',')[0]?.trim();
+  const hostRaw = xfHost || req.get?.('host')?.split(',')[0]?.trim();
+  if (!hostRaw || typeof hostRaw !== 'string') {
+    return null;
   }
+
+  const socketEncrypted =
+    !!(req.socket && typeof req.socket === 'object' && 'encrypted' in req.socket && req.socket.encrypted);
+  if (proto !== 'https' && proto !== 'http') {
+    proto = socketEncrypted ? 'https' : 'http';
+  }
+
+  try {
+    return new URL(`${proto}://${hostRaw}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+function resolveOAuthRedirectBase(req: Request | undefined, configService: ConfigService): string {
+  const envRaw = process.env.ENZO_PUBLIC_API_BASE_URL?.trim();
+  if (envRaw) {
+    return envRaw.replace(/\/$/, '');
+  }
+
+  const allowDerived = process.env.ENZO_OAUTH_ORIGIN_FROM_REQUEST !== '0';
+  if (req && allowDerived) {
+    const fromReq = oauthOriginFromRequest(req);
+    if (fromReq) return fromReq.replace(/\/$/, '');
+  }
+
   const port = configService.getSystemConfig().port || '3001';
   const host = process.env.ENZO_API_BIND_HOST?.trim() || '127.0.0.1';
   return `http://${host}:${port}`;
@@ -195,13 +241,18 @@ export function createEmailRouter(configService: ConfigService): Router {
   });
 
   /** Estado de cliente OAuth Gmail/Graph guardado en config (variables de entorno tienen prioridad en runtime). */
-  router.get('/api/email/oauth-apps', (_req: Request, res: Response) => {
+  router.get('/api/email/oauth-apps', (req: Request, res: Response) => {
     try {
       const base = configService.getEmailOAuthPersistedStatus();
+      const oauthRedirectBase = resolveOAuthRedirectBase(req, configService);
       res.json({
         ...base,
         googleClientId: configService.peekPersistedGoogleClientId(),
         microsoftClientId: configService.peekPersistedMicrosoftClientId(),
+        oauthRedirectBase,
+        googleOAuthRedirectUri: `${oauthRedirectBase}/api/email/oauth/google/callback`,
+        microsoftOAuthRedirectUri: `${oauthRedirectBase}/api/email/oauth/microsoft/callback`,
+        oauthOriginUsesPublicEnvVar: !!process.env.ENZO_PUBLIC_API_BASE_URL?.trim(),
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -232,10 +283,15 @@ export function createEmailRouter(configService: ConfigService): Router {
       if (Object.keys(m).length > 0) {
         configService.setPersistedMicrosoftOAuthApp(m);
       }
+      const oauthRedirectBasePut = resolveOAuthRedirectBase(req, configService);
       res.json({
         ...configService.getEmailOAuthPersistedStatus(),
         googleClientId: configService.peekPersistedGoogleClientId(),
         microsoftClientId: configService.peekPersistedMicrosoftClientId(),
+        oauthRedirectBase: oauthRedirectBasePut,
+        googleOAuthRedirectUri: `${oauthRedirectBasePut}/api/email/oauth/google/callback`,
+        microsoftOAuthRedirectUri: `${oauthRedirectBasePut}/api/email/oauth/microsoft/callback`,
+        oauthOriginUsesPublicEnvVar: !!process.env.ENZO_PUBLIC_API_BASE_URL?.trim(),
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -359,8 +415,8 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const state = mintOAuthState(id, 'google');
-      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/google/callback`;
+      const redirectUri = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/google/callback`;
+      const state = mintOAuthState(id, 'google', redirectUri);
       const authUrl = buildGoogleAuthorizationUrl({ clientId, redirectUri, state });
       res.json({ authUrl, redirectUriHint: redirectUri });
     } catch (error) {
@@ -383,7 +439,8 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/google/callback`;
+      const redirectUriFallback = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/google/callback`;
+      const redirectUri = pending.oauthRedirectUri ?? redirectUriFallback;
       const { clientId, clientSecret } = configService.getGoogleOAuthCredentials();
       if (!clientId) {
         res.status(400).type('html').send(oauthErrorHtml('Cliente Google OAuth no configurado'));
@@ -433,8 +490,8 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id);
-      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/microsoft/callback`;
+      const redirectUri = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
+      const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id, redirectUri);
       const tenant = acc.microsoftTenantId?.trim() || 'common';
       const authUrl = buildMicrosoftAuthorizationUrl({
         tenant,
@@ -572,7 +629,8 @@ export function createEmailRouter(configService: ConfigService): Router {
       const acc = accounts.find((a) => a.id === pending.accountId);
       const tenant = acc?.microsoftTenantId?.trim() || 'common';
 
-      const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/microsoft/callback`;
+      const redirectUriFallback = `${resolveOAuthRedirectBase(req, configService)}/api/email/oauth/microsoft/callback`;
+      const redirectUri = pending.oauthRedirectUri ?? redirectUriFallback;
       const { clientId, clientSecret } = configService.getMicrosoftOAuthCredentials();
       if (!clientId) {
         res.status(400).type('html').send(oauthErrorHtml('Cliente Microsoft OAuth no configurado'));

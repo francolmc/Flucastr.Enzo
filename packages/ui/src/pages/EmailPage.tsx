@@ -439,11 +439,14 @@ export default function EmailPage() {
 
   const emptyConfigured = accounts.length === 0;
 
-  const gmailCallbackUrl = `http://127.0.0.1:${apiPortHint}/api/email/oauth/google/callback`;
+  /** Lo que la API usa en authorize + token; debe coincidir con Google/Entra (no asumir solo el origin del browser). */
+  const gmailCallbackUrl =
+    oauthStatus?.googleOAuthRedirectUri ?? `http://127.0.0.1:${apiPortHint}/api/email/oauth/google/callback`;
   const outlookRedirectHint =
-    typeof globalThis.window !== 'undefined' && globalThis.window.location?.origin
+    oauthStatus?.microsoftOAuthRedirectUri ??
+    (typeof globalThis.window !== 'undefined' && globalThis.window.location?.origin
       ? `${globalThis.window.location.origin}/api/email/oauth/microsoft/callback`
-      : 'https://(tu-host-público)/api/email/oauth/microsoft/callback';
+      : 'https://(tu-host-público)/api/email/oauth/microsoft/callback');
 
   return (
     <div className="email-page page-shell">
@@ -502,7 +505,9 @@ export default function EmailPage() {
                   Registro de aplicaciones
                 </a>
                 . Con <strong>Client ID</strong> guardado acá podés usar el flujo por <strong>código en el navegador</strong> sin
-                depender de redirect en localhost.
+                depender de redirect en localhost. Si usás login por pestaña/redirección, en <strong>Authentication → Web → Redirect URIs</strong>{' '}
+                registrá exactamente{' '}
+                <code className="email-code-inline">{outlookRedirectHint}</code> (copiado desde la respuesta de la API abajo cuando cargue la página).
               </li>
               <li>
                 <strong>Secretos:</strong> si dejás el secret vacío al guardar, no se borra el ya guardado; si escribís y guardás,
@@ -526,6 +531,19 @@ export default function EmailPage() {
             Copiá desde la consola del proveedor. Guardá antes de abrir la ventana de login de Gmail o de pedir el código de
             Microsoft.
           </p>
+          {(oauthStatus.oauthRedirectBase || oauthStatus.googleOAuthRedirectUri || oauthStatus.microsoftOAuthRedirectUri) && (
+            <p className="email-muted email-small-print">
+              Redirects OAuth que está usando esta instancia de la API:{oauthStatus.oauthRedirectBase ? (
+                <>
+                  {' '}
+                  base <code className="email-code-inline">{oauthStatus.oauthRedirectBase}</code>
+                  {oauthStatus.oauthOriginUsesPublicEnvVar ? ' (via ENZO_PUBLIC_API_BASE_URL)' : ''}.
+                </>
+              ) : null}{' '}
+              Gmail: <code className="email-code-inline">{gmailCallbackUrl}</code>. Microsoft:{' '}
+              <code className="email-code-inline">{outlookRedirectHint}</code>.
+            </p>
+          )}
           <div className="email-oauth-fields">
             <label className="email-field-label">
               Gmail Client ID{' '}
@@ -840,9 +858,9 @@ export default function EmailPage() {
                         <code className="email-code-inline">Mail.ReadWrite</code> +{' '}
                         <code className="email-code-inline">offline_access</code>; activá{' '}
                         <strong>clientes públicos / flujo de código de dispositivo</strong> si usás «Solicitar código». Redirect
-                        (otra opción): registro <strong>Web</strong> con{' '}
-                        <code className="email-code-inline">{outlookRedirectHint}</code> (debe coincidir con{' '}
-                        <code className="email-code-inline">ENZO_PUBLIC_API_BASE_URL</code> detrás del proxy). Para{' '}
+                        (otra opción): registro <strong>Web</strong> en Entra con <em>exactamente</em>{' '}
+                        <code className="email-code-inline">{outlookRedirectHint}</code>; si ves <code className="email-code-inline">invalid_request redirect_uri</code>, el valor en Entra no coincide con ese string (scheme, host, puerto y path). Tras un proxy, fijá{' '}
+                        <code className="email-code-inline">ENZO_PUBLIC_API_BASE_URL</code> o <code className="email-code-inline">ENZO_TRUST_PROXY</code>. Para{' '}
                         <strong>@outlook.com / Hotmail personal</strong> probá Tenant <code>consumers</code> en la cuenta (Editar).
                       </span>
                     </div>

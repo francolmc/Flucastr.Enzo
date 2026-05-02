@@ -332,6 +332,12 @@ export interface EmailOAuthAppsStatusDTO {
   /** IDs guardados en config (la UI los edita; env tiene prioridad al conectar si está definido). */
   googleClientId: string | null;
   microsoftClientId: string | null;
+  /** Base que usó la API para armar redirect_uri (sirve para copiarla en Google/Azure). */
+  oauthRedirectBase?: string;
+  googleOAuthRedirectUri?: string;
+  microsoftOAuthRedirectUri?: string;
+  /** true si la base vino de ENZO_PUBLIC_API_BASE_URL. */
+  oauthOriginUsesPublicEnvVar?: boolean;
 }
 
 /** Email preview row (API GET /api/email/recent) */

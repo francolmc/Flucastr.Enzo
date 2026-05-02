@@ -100,6 +100,18 @@ const encryptionService = new EncryptionService(enzoSecret);
 const configService = new ConfigService(encryptionService);
 const systemConfig = configService.getSystemConfig();
 const app = express();
+
+const trustProxyHop = Number(process.env.ENZO_TRUST_PROXY ?? process.env.TRUST_PROXY ?? "0");
+if (trustProxyHop > 0) {
+  app.set("trust proxy", trustProxyHop);
+}
+
+if (!process.env.ENZO_PUBLIC_API_BASE_URL?.trim()) {
+  console.warn(
+    "[API] ENZO_PUBLIC_API_BASE_URL no está definida: el redirect OAuth puede derivarse del Host del request (véase ENZO_OAUTH_ORIGIN_FROM_REQUEST). Tras proxy HTTPS, definí la URL pública o ENZO_TRUST_PROXY=1 si hace falta."
+  );
+}
+
 const PORT = Number(systemConfig.port || "3001");
 const HOST = process.env.ENZO_API_HOST || "127.0.0.1";
 const uiPort = Number(systemConfig.uiPort || "5173");
