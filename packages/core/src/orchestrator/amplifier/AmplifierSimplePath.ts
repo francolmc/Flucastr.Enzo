@@ -627,6 +627,7 @@ Never invent tool names.`;
   }
 
   if (plainTextFromModerateRetry === null && !normalizedContent.startsWith('{')) {
+    const knownToolNames = new Set(mergedToolDefs.map((t) => t.name.toLowerCase()));
     const toolnamePattern = rawContent.match(/^(\w+)\s*(\{[\s\S]+)/);
     if (toolnamePattern) {
       const possibleTool = toolnamePattern[1].toLowerCase();
@@ -659,18 +660,32 @@ Never invent tool names.`;
           }
         }
       }
-      if (end !== -1) {
+      if (end !== -1 && knownToolNames.has(possibleTool)) {
         const argsJson = jsonPart.slice(0, end + 1);
         normalizedContent = `{"action":"tool","tool":"${possibleTool}","input":${argsJson}}`;
         log.info(`[AmplifierLoop] SIMPLE path - formato normalizado: ${normalizedContent.substring(0, 100)}`);
+      } else if (end !== -1) {
+        log.info(
+          `[AmplifierLoop] SIMPLE path - prefijo "${possibleTool}{...}" descartado (no es tool conocido)`
+        );
       }
     }
 
     if (!normalizedContent.startsWith('{')) {
       const embeddedJson = extractFirstJsonObject(rawContent);
       if (embeddedJson) {
-        normalizedContent = embeddedJson;
-        log.info('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
+        const parsedEmbedded = parseFirstJsonObject<any>(embeddedJson, { tryRepair: true });
+        const looksLikeToolCall =
+          !!parsedEmbedded?.value &&
+          typeof parsedEmbedded.value === 'object' &&
+          !Array.isArray(parsedEmbedded.value) &&
+          (parsedEmbedded.value.action === 'tool' || typeof parsedEmbedded.value.tool === 'string');
+        if (looksLikeToolCall) {
+          normalizedContent = embeddedJson;
+          log.info('[AmplifierLoop] SIMPLE path - JSON embebido detectado y extraído');
+        } else {
+          log.info('[AmplifierLoop] SIMPLE path - JSON embebido descartado (no es tool call canónico)');
+        }
       }
     }
   }
@@ -864,7 +879,15 @@ The assistant tried to call a tool that does not exist. Output EXACTLY one of:
       break attemptParseLoop;
     } catch (err) {
       log.warn('[AmplifierLoop] SIMPLE path - error procesando tool:', err);
-      finalContent = 'Tuve un problema procesando tu solicitud. ¿Podés reformularla?';
+      const rawTrimmed = rawContent.trim();
+      if (rawTrimmed.startsWith('{') || rawTrimmed.startsWith('[')) {
+        finalContent = 'Tuve un problema procesando tu solicitud. ¿Podés reformularla?';
+      } else {
+        log.info(
+          '[AmplifierLoop] SIMPLE path - parse falló pero rawContent es prosa; sirviendo respuesta natural'
+        );
+        finalContent = rawContent;
+      }
       break attemptParseLoop;
     }
   }
