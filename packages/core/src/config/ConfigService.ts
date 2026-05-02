@@ -308,7 +308,11 @@ export class ConfigService {
 
     // Load or initialize config
     this.config = this.loadConfig();
-    this.saveConfig();
+    try {
+      this.saveConfig();
+    } catch (error) {
+      console.error('[ConfigService] Could not persist config on startup — API will still run. Fix file permissions:', error);
+    }
     this.applySystemEnvironment();
   }
 
@@ -689,8 +693,10 @@ export class ConfigService {
 
   getEmailConfig(): EmailConfig {
     this.syncConfigFromDisk();
+    const raw = this.config.email?.accounts;
+    const accounts = Array.isArray(raw) ? raw : [];
     return {
-      accounts: this.config.email.accounts.map((a) => ({
+      accounts: accounts.map((a) => ({
         ...a,
         ...(a.imap ? { imap: { ...a.imap } } : {}),
       })),
@@ -956,6 +962,7 @@ export class ConfigService {
   getSystemConfig(): SystemConfigView {
     this.syncConfigFromDisk();
     const system = this.config.system;
+    const voiceTriggersSafe = normalizeVoiceTriggersList(system.voiceTriggers, VOICE_RESPONSE_TRIGGERS);
     return {
       ollamaBaseUrl: system.ollamaBaseUrl,
       anthropicModel: system.anthropicModel,
@@ -979,7 +986,7 @@ export class ConfigService {
       whisperLanguage: system.whisperLanguage,
       ttsVoiceEs: system.ttsVoiceEs,
       ttsVoiceEn: system.ttsVoiceEn,
-      voiceTriggers: [...system.voiceTriggers],
+      voiceTriggers: voiceTriggersSafe,
     };
   }
 
@@ -1093,8 +1100,19 @@ export class ConfigService {
 
   getConfig(): ModelsConfig {
     this.syncConfigFromDisk();
-    const copy = JSON.parse(JSON.stringify(this.config)) as ModelsConfig;
-    
+    let copy: ModelsConfig;
+    try {
+      copy = JSON.parse(JSON.stringify(this.config)) as ModelsConfig;
+    } catch (error) {
+      console.error('[ConfigService] JSON clone failed — trying structuredClone:', error);
+      try {
+        copy = structuredClone(this.config);
+      } catch (e2) {
+        console.error('[ConfigService] structuredClone failed — using in-memory defaults:', e2);
+        copy = structuredClone(getDefaultConfig());
+      }
+    }
+
     // Remove encrypted keys from copy
     for (const provider of Object.values(copy.providers)) {
       const p = provider as ProviderConfig;

@@ -31,7 +31,7 @@ export class MemoryService {
 
   constructor(dbPath?: string) {
     this.resolvedDbPath = dbPath || process.env.DB_PATH || './enzo.db';
-    this.db = DatabaseManager.getInstance(dbPath);
+    this.db = DatabaseManager.getInstance(this.resolvedDbPath);
   }
 
   /** Same path used to open the DB. */

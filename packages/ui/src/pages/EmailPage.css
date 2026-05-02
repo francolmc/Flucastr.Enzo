@@ -1,10 +1,5 @@
-/* Scrollable column inside .main-content (flex parent has overflow:hidden) */
+/* Content width; vertical scroll is on .main-body-scroll (App layout). */
 .email-page.page-shell {
-  flex: 1;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   max-width: 960px;
   width: 100%;
   margin-inline: auto;

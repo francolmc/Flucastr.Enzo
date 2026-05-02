@@ -177,19 +177,25 @@ function App() {
             <span className="badge">Operativo</span>
           </div>
         </header>
-        {currentPage === 'dashboard' && (
-          <DashboardPage onNavigate={(p) => setCurrentPage(p)} />
-        )}
-        {currentPage === 'memory' && <MemoryPage />}
-        {currentPage === 'projects' && <ProjectsPage />}
-        {currentPage === 'calendar' && <CalendarPage />}
-        {currentPage === 'echo' && <EchoPage />}
-        {currentPage === 'chat' && <ChatPage />}
-        {currentPage === 'stats' && <StatsPage />}
-        {currentPage === 'skills' && <SkillsPage />}
-        {currentPage === 'email' && <EmailPage />}
-        {currentPage === 'mcp' && <MCPPage />}
-        {currentPage === 'config' && <ConfigPage />}
+        <div
+          className={
+            currentPage === 'chat' ? 'main-body main-body-no-scroll' : 'main-body main-body-scroll'
+          }
+        >
+          {currentPage === 'dashboard' && (
+            <DashboardPage onNavigate={(p) => setCurrentPage(p)} />
+          )}
+          {currentPage === 'memory' && <MemoryPage />}
+          {currentPage === 'projects' && <ProjectsPage />}
+          {currentPage === 'calendar' && <CalendarPage />}
+          {currentPage === 'echo' && <EchoPage />}
+          {currentPage === 'chat' && <ChatPage />}
+          {currentPage === 'stats' && <StatsPage />}
+          {currentPage === 'skills' && <SkillsPage />}
+          {currentPage === 'email' && <EmailPage />}
+          {currentPage === 'mcp' && <MCPPage />}
+          {currentPage === 'config' && <ConfigPage />}
+        </div>
       </main>
     </div>
   );
