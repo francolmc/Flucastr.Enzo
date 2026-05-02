@@ -170,6 +170,7 @@ export class IMAPClient {
     folder?: string;
     limit?: number;
     since?: Date;
+    unreadOnly?: boolean;
   }): Promise<EmailMessage[]> {
     const folder = options.folder ?? 'INBOX';
     const limit = Math.max(1, Math.min(100, options.limit ?? 10));
@@ -178,6 +179,37 @@ export class IMAPClient {
     return this.withConnection(async (client) => {
       await client.mailboxOpen(folder);
       const mb = client.mailbox;
+
+      if (options.unreadOnly) {
+        const searched = await client.search({ seen: false });
+        let uids = searched === false ? [] : [...searched];
+        if (since) {
+          const sinceMs = since.getTime();
+          const filtered: number[] = [];
+          for await (const msg of client.fetch(uids, { uid: true, internalDate: true, envelope: true }, { uid: true })) {
+            const d = envelopeDate(msg.envelope, msg.internalDate);
+            if (d.getTime() >= sinceMs) {
+              filtered.push(typeof msg.uid === 'bigint' ? Number(msg.uid) : Number(msg.uid));
+            }
+          }
+          uids = filtered;
+        }
+        uids.sort((a, b) => b - a);
+        const slice = uids.slice(0, limit);
+        const outUn: EmailMessage[] = [];
+        for await (const msg of client.fetch(slice, {
+          envelope: true,
+          internalDate: true,
+          uid: true,
+          bodyStructure: true,
+          source: { maxLength: 96_000 },
+        }, { uid: true })) {
+          outUn.push(this.mapFetchToMessage(msg, folder));
+        }
+        outUn.sort((a, b) => b.date.getTime() - a.date.getTime());
+        return outUn.slice(0, limit);
+      }
+
       const exists = mb && typeof mb === 'object' ? mb.exists : 0;
       if (exists === 0) {
         return [];

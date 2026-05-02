@@ -165,15 +165,25 @@ export class GraphMailAdapter {
     };
   }
 
-  async getRecent(opts: { folder?: string; limit: number; since?: Date }): Promise<EmailMessage[]> {
+  async getRecent(opts: {
+    folder?: string;
+    limit: number;
+    since?: Date;
+    unreadOnly?: boolean;
+  }): Promise<EmailMessage[]> {
     const folderSeg = graphFolderSegment(opts.folder);
     const qp: string[] = [
       `$top=${encodeURIComponent(String(opts.limit))}`,
       `$orderby=${encodeURIComponent('receivedDateTime desc')}`,
-      `$select=${encodeURIComponent('id,subject,bodyPreview,receivedDateTime,from,toRecipients,hasAttachments')}`,
+      `$select=${encodeURIComponent('id,subject,bodyPreview,receivedDateTime,from,toRecipients,hasAttachments,isRead')}`,
     ];
+    const filterParts: string[] = [];
+    if (opts.unreadOnly) filterParts.push('isRead eq false');
     if (opts.since && !Number.isNaN(opts.since.getTime())) {
-      qp.push(`$filter=${encodeURIComponent(`receivedDateTime ge ${opts.since.toISOString()}`)}`);
+      filterParts.push(`receivedDateTime ge ${opts.since.toISOString()}`);
+    }
+    if (filterParts.length > 0) {
+      qp.push(`$filter=${encodeURIComponent(filterParts.join(' and '))}`);
     }
 
     const url = `/me/mailFolders/${folderSeg}/messages?${qp.join('&')}`;

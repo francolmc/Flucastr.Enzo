@@ -48,7 +48,11 @@ import {
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
-import { messageLooksLikeMailboxUnreadStatsQuery } from '../mailboxUnreadIntent.js';
+import {
+  mailboxUnreadSummaryLockCorpus,
+  messageLooksLikeMailboxUnreadStatsQuery,
+  messageLooksLikeMailboxUnreadSummaryQuery,
+} from '../mailboxUnreadIntent.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
 const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
@@ -169,6 +173,23 @@ CALENDAR OUTPUT (mandatory):
 `
       : '';
 
+  const mailSynthRules =
+    params.execName === 'read_email'
+      ? synthLang.startsWith('es')
+        ? `
+CORREO / BUZÓN (obligatorio):
+- Solo pueden aparecer hilos/listado con remitente, asunto y fecha/texto que ESTÉN textualmente en RESULTADO — cada ítem debe corresponderse con una entrada numerada/saliente de la herramienta.
+- Prohibido inventar empresas, proyectos (p. ej. clientes ficticios), eventos («Conferencia 2023»), cursos («INACAP…» titulados) o totales («5 correos sobre X») si no están soportados por líneas separadas del listado fuente.
+- Si el usuario pide los «más importantes», priorizá dentro de ese listado usando señales del propio contenido (asunto urgente, remitente institucional, palabras fuertes); no agregues mensajes nuevos fuera del resultado.
+`
+        : `
+MAILBOX OUTPUT (mandatory):
+- Mention only threads whose From/Subject/Date/snippet literals appear in RESULTADO — aligned with enumerated lines from the tool.
+- Forbidden: fabricated employers, recurring topics, invented counts (e.g. "5 mails about Project X") unless RESULTADO explicitly lists distinct rows you can cite.
+- If asked for "most important," rank **within** RESULTADO cues only — do not invent senders/topics.
+`
+      : '';
+
   const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
 ${params.relevantSkillsSection}
 ${params.requiredTemplateSection}
@@ -178,7 +199,7 @@ TOOL: ${params.execName}
 RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${evidenceForSynth}
 
-${calendarSynthRules}
+${calendarSynthRules}${mailSynthRules}
 Write a response to the user based on this real result.
 Do NOT invent or add information not present in the result.
 If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
@@ -197,12 +218,12 @@ ${
   const synthStart = Date.now();
   try {
     const synthesisResponse = await params.withTimeout(
-      params.      baseProvider.complete({
+      params.baseProvider.complete({
         messages: [
           { role: 'system', content: synthesisPrompt },
           { role: 'user', content: params.input.message },
         ],
-        temperature: params.execName === 'calendar' ? 0.35 : 0.7,
+        temperature: params.execName === 'calendar' || params.execName === 'read_email' ? 0.35 : 0.7,
         maxTokens: 512,
       }),
       180_000,
@@ -417,6 +438,11 @@ If you include any text outside the JSON, the tool will not execute.
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
   const calendarCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
+  const mailboxUnreadSummarizeCorpus = mailboxUnreadSummaryLockCorpus({
+    message: input.message,
+    originalMessage: input.originalMessage,
+    conversation: input.conversation,
+  });
   const calendarRoutingInput = {
     message: input.message,
     originalMessage: input.originalMessage,
@@ -475,11 +501,27 @@ Optional: narrow to one mailbox with {"action":"tool","tool":"email_unread_count
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
     : '';
 
+  const classifierMailboxUnreadSummary =
+    isModerate &&
+    executableTools.some((t) => t.name === 'read_email') &&
+    (input.mailboxIntent === 'unread_summarize' ||
+      messageLooksLikeMailboxUnreadSummaryQuery(mailboxUnreadSummarizeCorpus));
+
+  const mandatoryMailboxUnreadSummarizeBlock = classifierMailboxUnreadSummary
+    ? `
+
+━━━ MAILBOX_UNREAD_SUMMARY_LOCKED ━━━
+The user asked to **inspect or summarise UNREAD emails** among connected Gmail / Outlook / IMAP accounts on THIS host. For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no simulations, no "I need permission").
+{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":32}}
+Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unless they named exactly one mailbox id — unread_only MUST stay true unless they pivoted entirely away from unread. Afterwards you summarize ONLY lines returned by read_email — never fabricated subjects/companies/courses.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    : '';
+
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 
 ${toolsPrompt}
@@ -506,6 +548,7 @@ Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
 {"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
 {"action":"tool","tool":"email_unread_count","input":{}}
+{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":24}}
 
 ${toolUsageRule}
 
@@ -516,6 +559,7 @@ TOOL SELECTION — CRITICAL:
 - Search the internet for information → web_search
 - Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
 - How many unread emails **this user has in connected Gmail/Outlook/IMAP inboxes on this machine** → email_unread_count (never prose-only simulation)
+- Summaries or "most important among unread / list unread" Gmail+Outlook/IMAP connected here → **read_email** with \`{"unread_only":true,"limit":32}\` **before** prose — never hypothetical projects or recurring themes not in RESULTADO (no NTT/Data/INACAP fluff unless literal in snippets)
 - Call an HTTP/API endpoint when user provides a URL → execute_command with curl
   Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
 - Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)

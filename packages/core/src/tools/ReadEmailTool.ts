@@ -7,6 +7,14 @@ export interface ReadEmailInput {
   limit?: number;
   since?: string;
   folder?: string;
+  /** When true (or snake_case unread_only), only unread messages in the folder/bandeja. */
+  unread_only?: boolean;
+  unreadOnly?: boolean;
+}
+
+function coerceUnreadOnly(input: Record<string, unknown>): boolean {
+  const raw = input.unread_only ?? input.unreadOnly;
+  return raw === true || raw === 'true';
 }
 
 function formatBriefDate(date: Date, locale: string): string {
@@ -33,38 +41,62 @@ function formatBriefDate(date: Date, locale: string): string {
 function formatReadEmailOutput(
   messages: EmailMessage[],
   requestedLimit: number,
-  accountLabel: string | undefined,
-  locale: string
+  accountLabelSingle: string | undefined,
+  locale: string,
+  opts?: { unreadOnly?: boolean }
 ): string {
-  const head = accountLabel ? `Emails recientes (cuenta: ${accountLabel})` : `Emails recientes`;
-  const lines: string[] = [`📧 ${head}`, ``];
+  const unreadOnly = !!opts?.unreadOnly;
+  const headSuffix = unreadOnly ? 'sin leer' : 'recientes';
+  let head =
+    accountLabelSingle != null
+      ? `📧 Correos ${headSuffix} (cuenta: ${accountLabelSingle})`
+      : `📧 Correos ${headSuffix}${unreadOnly ? ' por cuenta configurada' : ''}`;
+  const lines: string[] = [head, ''];
   const shown = messages.slice(0, requestedLimit);
-  shown.forEach((msg, i) => {
+
+  let accHeader: string | undefined;
+  let shownIdx = 0;
+  shown.forEach((msg) => {
+    const mailboxKey =
+      (msg.accountLabel && msg.accountLabel.trim()) ||
+      msg.accountId ||
+      'cuenta';
+    if (!accountLabelSingle && mailboxKey !== accHeader) {
+      accHeader = mailboxKey;
+      lines.push(`— ${mailboxKey} —`, '');
+    }
+    shownIdx += 1;
     const prev = msg.preview.replace(/\s+/g, ' ').trim();
     lines.push(
-      `${i + 1}. De: ${msg.from} | Asunto: ${msg.subject}`,
+      `${shownIdx}. De: ${msg.from} | Asunto: ${msg.subject}`,
       `   Fecha: ${formatBriefDate(msg.date instanceof Date ? msg.date : new Date(msg.date), locale)} | Vista previa: "${prev.slice(0, 280)}${prev.length > 280 ? '…' : ''}"`,
       ``
     );
   });
   const rest = messages.length - shown.length;
   if (rest > 0) {
-    lines.push(`[${rest} emails más no mostrados. Pedí más si necesitás.]`);
+    lines.push(`[${rest} correos más no mostrados. Pedí subir «limit» o filtrar por cuenta.]`);
   }
+  lines.push('', 'IMPORTANTE PARA LA SÍNTESIS: solo existen estos mensajes — no inventar otros asuntos.');
   return lines.join('\n').trim();
 }
 
 export class ReadEmailTool implements ExecutableTool {
   name = 'read_email';
   description =
-    'Read recent emails from configured accounts (subjects/snippets). To report HOW MANY unread messages per inbox totals, prefer email_unread_count instead.';
+    'Fetch real email rows (from / subject / date / snippet) from connected Gmail/Outlook/IMAP — only what the APIs return. For ONLY numeric unread totals use email_unread_count. For summaries of unread mail you MUST pass unread_only:true (omit accountId for all mailboxes).';
   parameters = {
     type: 'object' as const,
     properties: {
       accountId: { type: 'string', description: 'Specific account id or omit for all' },
-      limit: { type: 'number', description: 'Max messages (default 10)' },
+      limit: { type: 'number', description: 'Max messages after merge across accounts (default 10; use ~24–36 for bilingual Gmail+Outlook)' },
       since: { type: 'string', description: 'ISO date or today / yesterday / this week' },
       folder: { type: 'string', description: 'IMAP folder (default INBOX)' },
+      unread_only: {
+        type: 'boolean',
+        description:
+          'If true, fetch only unread in INBOX (Gmail is:unread; Outlook isRead eq false; IMAP UNSEEN). Required for unread summaries/lists.',
+      },
     },
     required: [],
   };
@@ -82,6 +114,7 @@ export class ReadEmailTool implements ExecutableTool {
       }
 
       const typed = input as ReadEmailInput;
+      const unreadOnly = coerceUnreadOnly(input);
       const limit = Math.max(1, Math.min(50, typed.limit ?? 10));
       const since = typed.since ? new Date(typed.since) : undefined;
       const accountId = typeof typed.accountId === 'string' ? typed.accountId.trim() : undefined;
@@ -89,9 +122,10 @@ export class ReadEmailTool implements ExecutableTool {
 
       const result = await this.emailService.getRecent({
         accountId: accountId || undefined,
-        limit: limit + 5,
+        limit,
         since,
         folder,
+        unreadOnly,
       });
 
       if (!result.success) {
@@ -109,7 +143,7 @@ export class ReadEmailTool implements ExecutableTool {
         label = accounts.find((a) => a.id === accountId)?.label;
       }
 
-      const formatted = formatReadEmailOutput(messages, limit, label, 'es-AR');
+      const formatted = formatReadEmailOutput(messages, limit, label, 'es-AR', { unreadOnly });
 
       return {
         success: true,

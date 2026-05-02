@@ -50,7 +50,11 @@ import {
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
-import { messageLooksLikeMailboxUnreadStatsQuery } from './mailboxUnreadIntent.js';
+import {
+  mailboxUnreadSummaryLockCorpus,
+  messageLooksLikeMailboxUnreadStatsQuery,
+  messageLooksLikeMailboxUnreadSummaryQuery,
+} from './mailboxUnreadIntent.js';
 
 function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
   return process.env.ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true';
@@ -391,6 +395,29 @@ No markdown. No prose.`;
           phase: 'amplifier_before_fast_path',
           reclassifiedTo: 'MODERATE',
           reason: 'mailbox_unread_stats',
+          priorLevel: input.classifiedLevel,
+        })
+      );
+    }
+
+    const mailboxUnreadSummarizeCorpus = mailboxUnreadSummaryLockCorpus({
+      message: input.message,
+      originalMessage: input.originalMessage,
+      conversation: input.conversation,
+    });
+    const mailboxUnreadSummarizeHint =
+      this.executableTools.some((t) => t.name === 'read_email') &&
+      (input.mailboxIntent === 'unread_summarize' ||
+        messageLooksLikeMailboxUnreadSummaryQuery(mailboxUnreadSummarizeCorpus));
+    if (fastPathLevel === ComplexityLevel.SIMPLE && mailboxUnreadSummarizeHint) {
+      fastPathLevel = ComplexityLevel.MODERATE;
+      this.log.info('[AmplifierLoop] Reclassified SIMPLE → MODERATE (mailbox unread list/summary)');
+      console.log(
+        JSON.stringify({
+          event: 'EnzoRouting',
+          phase: 'amplifier_before_fast_path',
+          reclassifiedTo: 'MODERATE',
+          reason: 'mailbox_unread_summarize',
           priorLevel: input.classifiedLevel,
         })
       );

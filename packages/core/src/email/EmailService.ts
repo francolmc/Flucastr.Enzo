@@ -10,6 +10,8 @@ export interface EmailQuery {
   limit?: number;
   since?: Date;
   query?: string;
+  /** When true, only unread messages in the folder (Gmail is:unread, Graph isRead eq false, IMAP \\Seen off). */
+  unreadOnly?: boolean;
 }
 
 export interface EmailSendInput {
@@ -116,15 +118,21 @@ export class EmailService {
 
       const merged: EmailMessage[] = [];
       const ids: string[] = [];
-      const limit = options.limit ?? 10;
+      const limit = Math.max(1, Math.min(100, options.limit ?? 10));
       const folder = options.folder ?? 'INBOX';
+      const unreadOnly = !!options.unreadOnly;
+      const perAccountFetch =
+        accounts.length > 1 && !(options.accountId != null && options.accountId !== '')
+          ? Math.min(50, Math.max(5, Math.ceil(limit / accounts.length)))
+          : limit;
 
       for (const acc of accounts) {
         ids.push(acc.id);
         const batch = await this.recentForAccount(acc, {
           folder,
-          limit,
+          limit: perAccountFetch,
           since: options.since,
+          unreadOnly,
         });
         for (const m of batch) {
           merged.push({
@@ -399,22 +407,22 @@ export class EmailService {
 
   private async recentForAccount(
     acc: EmailAccountConfig,
-    opts: { folder: string; limit: number; since?: Date }
+    opts: { folder: string; limit: number; since?: Date; unreadOnly?: boolean }
   ): Promise<EmailMessage[]> {
-    const { folder, limit, since } = opts;
+    const { folder, limit, since, unreadOnly } = opts;
     if (acc.provider === 'imap') {
       const pwd = this.configService.getEmailPassword(acc.id);
       if (!pwd || !acc.imap?.host || !acc.imap.user) return [];
       const client = new IMAPClient(this.toImapOptions(acc as EmailAccountConfig & { imap: NonNullable<EmailAccountConfig['imap']> }, pwd));
-      return client.getRecent({ folder, limit, since });
+      return client.getRecent({ folder, limit, since, unreadOnly });
     }
     if (acc.provider === 'google') {
       const g = new GmailMailAdapter(this.configService, acc.id);
-      return g.getRecent({ folder, limit, since });
+      return g.getRecent({ folder, limit, since, unreadOnly });
     }
     if (acc.provider === 'microsoft') {
       const g = new GraphMailAdapter(this.configService, acc.id);
-      return g.getRecent({ folder, limit, since });
+      return g.getRecent({ folder, limit, since, unreadOnly });
     }
     return [];
   }

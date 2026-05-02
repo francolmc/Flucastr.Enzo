@@ -139,12 +139,14 @@ export class GmailMailAdapter {
     folder?: string;
     limit: number;
     since?: Date;
+    unreadOnly?: boolean;
     labelIdsFallback?: string[];
   }): Promise<EmailMessage[]> {
     const gmail = this.gmail();
     const qParts = [
       gmailFolderToSearchFragment(opts.folder),
       sinceQuery(opts.since),
+      opts.unreadOnly ? 'is:unread' : '',
     ].filter(Boolean);
     const q = qParts.join(' ');
 

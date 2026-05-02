@@ -72,8 +72,8 @@ export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize' | '
 /** When classifier suggests `calendar`, disambiguates fast-path prompts (list vs schedule). */
 export type CalendarIntentHint = 'list' | 'schedule';
 
-/** Connected mailbox unread stats (single tool round-trip). */
-export type MailboxIntentHint = 'unread_stats';
+/** Connected mailbox: unread counts vs listing/summarizing unread messages (tools on host). */
+export type MailboxIntentHint = 'unread_stats' | 'unread_summarize';
 
 export interface AmplifierInput {
   message: string;
