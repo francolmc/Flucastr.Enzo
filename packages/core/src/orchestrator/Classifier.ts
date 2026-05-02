@@ -14,6 +14,8 @@
  * - Absolute path detection (`messageContainsLikelyAbsolutePath`, `messageIndicatesPersistedWriteToAbsolutePath`).
  * - Optional calendar ambiguity fallback via `resolveCalendarListFastPathIntent` /
  *     `resolveCalendarScheduleFastPathIntent` when the LLM omits `calendarIntent` (narrow ES/EN).
+ * - When classifier sets `prefersHostTools`, those lexical calendar fallbacks are skipped unless
+ *     `suggestedTool: calendar` or an explicit matching `calendarIntent` is present (avoid "lista …"/repo vs agenda noise).
  *
  * Legacy lexical block (when `USE_LEXICAL_FASTPATH`): trivialPattern; calendar list/schedule; recall; scheduling;
  * abstract life planning; chained / multi-tool lexical; persist path hints; factual word lists;
@@ -87,7 +89,15 @@ export function resolveCalendarScheduleFastPathIntent(input: {
   originalMessage?: string;
   suggestedTool?: 'web_search' | 'calendar';
   calendarIntent?: CalendarIntentHint;
+  prefersHostTools?: boolean;
 }): boolean {
+  if (
+    input.prefersHostTools === true &&
+    input.suggestedTool !== 'calendar' &&
+    input.calendarIntent !== 'schedule'
+  ) {
+    return false;
+  }
   if (input.suggestedTool && input.suggestedTool !== 'calendar') return false;
   if (input.calendarIntent === 'schedule') return true;
   if (input.calendarIntent === 'list') return false;
@@ -103,7 +113,15 @@ export function resolveCalendarListFastPathIntent(input: {
   originalMessage?: string;
   suggestedTool?: 'web_search' | 'calendar';
   calendarIntent?: CalendarIntentHint;
+  prefersHostTools?: boolean;
 }): boolean {
+  if (
+    input.prefersHostTools === true &&
+    input.suggestedTool !== 'calendar' &&
+    input.calendarIntent !== 'list'
+  ) {
+    return false;
+  }
   if (input.suggestedTool && input.suggestedTool !== 'calendar') return false;
   if (input.calendarIntent === 'list') return true;
   if (input.calendarIntent === 'schedule') return false;

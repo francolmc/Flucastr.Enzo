@@ -463,6 +463,7 @@ If you include any text outside the JSON, the tool will not execute.
     originalMessage: input.originalMessage,
     suggestedTool: input.suggestedTool,
     calendarIntent: input.calendarIntent,
+    prefersHostTools: input.prefersHostTools,
   };
   const classifierSchedulePersist =
     isModerate &&
@@ -542,6 +543,28 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
     !classifierMailboxUnread &&
     !classifierMailboxUnreadSummary;
 
+  const hostToolsClassifierLockActive =
+    isModerate &&
+    input.prefersHostTools === true &&
+    declarativeExecutable == null &&
+    !classifierSchedulePersist &&
+    !hasCalendarListClassifierWindow &&
+    !classifierMailboxUnread &&
+    !classifierMailboxUnreadSummary &&
+    executableTools.some((t) => t.name === 'execute_command');
+
+  const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
+    ? `
+
+━━━ HOST_TOOLS_CLASSIFIER_LOCKED ━━━
+The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** integrations / authenticated CLIs (see RELEVANT SKILLS and execute_command), NOT web_search and NOT unsolicited **calendar**.
+For this turn ONLY: respond with exactly **ONE** canonical JSON tool call.
+Prefer **execute_command** when GitHub/GitLab/Docker/kubectl/shell tooling matches what the user asked (build the command line from HOST context + SKILLS — no fabricated calendar ranges).
+Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}
+Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings — "lista … repositorios" is NOT agenda.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    : '';
+
   const mandatorySkillFastPathBlock =
     skillFastPathLockActive && declarativeExecutable
       ? `
@@ -571,13 +594,14 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
       hasCalendarListClassifierWindow ||
       classifierMailboxUnread ||
       classifierMailboxUnreadSummary ||
-      skillFastPathLockActive);
+      skillFastPathLockActive ||
+      hostToolsClassifierLockActive);
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatorySkillFastPathBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 ${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
 
@@ -704,7 +728,7 @@ Output ONLY one JSON object (no prose, no markdown fences):
 Use the exact path from the user's message. Do not invent tool names.`
       : moderateRetryRequiresToolJsonOnly
         ? `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON. This turn mandated a LOCKED canonical tool invocation (calendar, mailbox, host SKILL_FASTPATH, or persisted file body).
+The prior reply was not valid tool JSON. This turn mandated a LOCKED canonical tool invocation (calendar, mailbox, prefersHostTools/host CLI, SKILL_FASTPATH, or persisted file body).
 
 Emit ONLY **one** JSON object (no prose, no markdown fences):
 {"action":"tool","tool":"<name>","input":{...}}

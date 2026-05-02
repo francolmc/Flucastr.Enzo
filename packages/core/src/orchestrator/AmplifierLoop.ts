@@ -368,6 +368,7 @@ No markdown. No prose.`;
       originalMessage: input.originalMessage,
       suggestedTool: input.suggestedTool,
       calendarIntent: input.calendarIntent,
+      prefersHostTools: input.prefersHostTools,
     };
     const scheduleIntentForCalendar = resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
     const calendarListClassifierIntent =
