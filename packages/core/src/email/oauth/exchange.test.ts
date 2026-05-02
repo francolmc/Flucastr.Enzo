@@ -24,16 +24,22 @@ function run(): void {
   assert.equal(gpu.searchParams.get('scope'), GOOGLE_MAIL_SCOPE);
 
   const redirectUriMs = 'http://127.0.0.1:3001/api/email/oauth/microsoft/callback';
-  const m = buildMicrosoftAuthorizationUrl({
+  const mk = buildMicrosoftAuthorizationUrl({
     tenant: 'common',
     clientId: 'ms-client-id',
     redirectUri: redirectUriMs,
     state: 's2',
+    pkce: {
+      codeChallenge: 'CcKbyFMybTQWdkiXQXwOR9mYBQuqsMVdGer5o7JUdQY',
+      codeChallengeMethod: 'S256',
+    },
   });
-  assert(m.includes('/common/oauth2/v2.0/authorize'));
-  const mpu = new URL(m);
+  assert(mk.includes('/common/oauth2/v2.0/authorize'));
+  const mpu = new URL(mk);
   assert.equal(mpu.searchParams.get('client_id'), 'ms-client-id');
   assert.equal(mpu.searchParams.get('state'), 's2');
+  assert.equal(mpu.searchParams.get('code_challenge_method'), 'S256');
+  assert(mpu.searchParams.get('code_challenge')?.length);
 
   console.log('Test: OAuth URL builders encode expected OAuth 2 authorize parameters');
 }

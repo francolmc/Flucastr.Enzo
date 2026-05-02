@@ -17,6 +17,8 @@ interface OAuthPending {
   accountId: string;
   provider: OAuthProvider;
   expires: number;
+  /** PKCE verifier (solo Microsoft authorize → token). */
+  microsoftCodeVerifier?: string;
 }
 
 const oauthPendingByState = new Map<string, OAuthPending>();
@@ -40,6 +42,21 @@ function mintOAuthState(accountId: string, provider: OAuthProvider): string {
   return token;
 }
 
+/** Microsoft authorize + PKCE (recomendado para apps tipo SPA / entra público moderno). */
+function mintMicrosoftOAuthStateWithPkce(accountId: string): { state: string; codeChallenge: string } {
+  pruneOAuthStates();
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const state = crypto.randomBytes(24).toString('hex');
+  oauthPendingByState.set(state, {
+    accountId,
+    provider: 'microsoft',
+    expires: Date.now() + OAUTH_STATE_TTL_MS,
+    microsoftCodeVerifier: verifier,
+  });
+  return { state, codeChallenge };
+}
+
 function consumeOAuthState(stateRaw: unknown): OAuthPending | null {
   pruneOAuthStates();
   const state = typeof stateRaw === 'string' ? stateRaw.trim() : '';
@@ -51,6 +68,30 @@ function consumeOAuthState(stateRaw: unknown): OAuthPending | null {
   }
   oauthPendingByState.delete(state);
   return row;
+}
+
+/** Registros Azure «solo cuenta Microsoft personal» exigen autoridad `/consumers` (AADSTS9002346 si usás `/common`). */
+async function microsoftDeviceInitWithConsumersFallback(params: {
+  tenant: string;
+  clientId: string;
+}): Promise<{
+  dev: Awaited<ReturnType<typeof requestMicrosoftDeviceCode>>;
+  resolvedTenant: string;
+}> {
+  const clientId = params.clientId;
+  let tenant = (params.tenant || '').trim() || 'common';
+  try {
+    const dev = await requestMicrosoftDeviceCode({ tenant, clientId });
+    return { dev, resolvedTenant: tenant };
+  } catch (e1) {
+    const m1 = e1 instanceof Error ? e1.message : String(e1);
+    if (/AADSTS9002346|\/consumers endpoint/i.test(m1) && tenant !== 'consumers') {
+      tenant = 'consumers';
+      const dev = await requestMicrosoftDeviceCode({ tenant, clientId });
+      return { dev, resolvedTenant: tenant };
+    }
+    throw e1;
+  }
 }
 
 function oauthRedirectOrigin(configService: ConfigService): string {
@@ -392,10 +433,16 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const state = mintOAuthState(id, 'microsoft');
+      const { state, codeChallenge } = mintMicrosoftOAuthStateWithPkce(id);
       const redirectUri = `${oauthRedirectOrigin(configService)}/api/email/oauth/microsoft/callback`;
       const tenant = acc.microsoftTenantId?.trim() || 'common';
-      const authUrl = buildMicrosoftAuthorizationUrl({ tenant, clientId, redirectUri, state });
+      const authUrl = buildMicrosoftAuthorizationUrl({
+        tenant,
+        clientId,
+        redirectUri,
+        state,
+        pkce: { codeChallenge, codeChallengeMethod: 'S256' },
+      });
       res.json({ authUrl, redirectUriHint: redirectUri });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -421,16 +468,27 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
-      const tenant = acc.microsoftTenantId?.trim() || 'common';
-      const dev = await requestMicrosoftDeviceCode({
-        tenant,
+      const tenantRequested = acc.microsoftTenantId?.trim() || 'common';
+      const { dev, resolvedTenant } = await microsoftDeviceInitWithConsumersFallback({
+        tenant: tenantRequested,
         clientId,
       });
+
+      if (
+        resolvedTenant === 'consumers' &&
+        (acc.microsoftTenantId?.trim().toLowerCase() || 'common') !== 'consumers'
+      ) {
+        try {
+          configService.updateEmailAccount(acc.id, { microsoftTenantId: 'consumers' });
+        } catch (e) {
+          console.warn('[email] No se pudo guardar microsoftTenantId=consumers en config:', e);
+        }
+      }
 
       const ttlMs = Math.min(Math.max(dev.expires_in - 60, 60), 920) * 1000;
       const sessionId = mintDeviceSession({
         accountId: acc.id,
-        tenant,
+        tenant: resolvedTenant,
         deviceCode: dev.device_code,
         intervalSec: dev.interval,
         ttlMs,
@@ -443,6 +501,7 @@ export function createEmailRouter(configService: ConfigService): Router {
         ...(dev.verification_uri_complete ? { verificationUriComplete: dev.verification_uri_complete } : {}),
         message: dev.message,
         expiresInSeconds: dev.expires_in,
+        ...(resolvedTenant !== tenantRequested ? { authorityUsed: resolvedTenant as 'consumers' } : {}),
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -520,12 +579,15 @@ export function createEmailRouter(configService: ConfigService): Router {
         return;
       }
 
+      const verifier = pending.microsoftCodeVerifier ?? null;
+
       const tokens = await exchangeMicrosoftAuthorizationCode({
         tenant,
         clientId,
         clientSecret,
         code,
         redirectUri,
+        codeVerifier: verifier,
       });
       const refresh = tokens.refresh_token;
       if (!refresh) {

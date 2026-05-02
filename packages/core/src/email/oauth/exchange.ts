@@ -5,7 +5,14 @@
 
 export const GOOGLE_MAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
 
-export const MICROSOFT_MAIL_SCOPES = ['offline_access', 'Mail.ReadWrite', 'User.Read'].join(' ');
+/** Microsoft v2 delegated scopes — URIs Graph (evitan rechazos con tenant / device flow). */
+export const MICROSOFT_MAIL_SCOPES = [
+  'openid',
+  'profile',
+  'offline_access',
+  'https://graph.microsoft.com/User.Read',
+  'https://graph.microsoft.com/Mail.ReadWrite',
+].join(' ');
 
 export type GoogleTokenExchangeResult = {
   access_token: string;
@@ -76,6 +83,8 @@ export function buildMicrosoftAuthorizationUrl(params: {
   clientId: string;
   redirectUri: string;
   state: string;
+  /** SPA / muchas registraciones moderadas Azure exigen PKCE sobre el código. */
+  pkce?: { codeChallenge: string; codeChallengeMethod: 'S256' };
 }): string {
   const u = new URL(
     `https://login.microsoftonline.com/${encodeURIComponent(params.tenant)}/oauth2/v2.0/authorize`
@@ -86,6 +95,10 @@ export function buildMicrosoftAuthorizationUrl(params: {
   u.searchParams.set('scope', MICROSOFT_MAIL_SCOPES);
   u.searchParams.set('response_mode', 'query');
   u.searchParams.set('state', params.state);
+  if (params.pkce) {
+    u.searchParams.set('code_challenge', params.pkce.codeChallenge);
+    u.searchParams.set('code_challenge_method', params.pkce.codeChallengeMethod);
+  }
   return u.toString();
 }
 
@@ -95,6 +108,8 @@ export async function exchangeMicrosoftAuthorizationCode(params: {
   clientSecret: string | null;
   code: string;
   redirectUri: string;
+  /** Obligatorio si el authorize se hizo con `code_challenge` (PKCE). */
+  codeVerifier?: string | null;
 }): Promise<MicrosoftTokenExchangeResult> {
   const body = new URLSearchParams({
     client_id: params.clientId,
@@ -104,6 +119,10 @@ export async function exchangeMicrosoftAuthorizationCode(params: {
   });
   if (params.clientSecret) {
     body.set('client_secret', params.clientSecret);
+  }
+  const cv = typeof params.codeVerifier === 'string' ? params.codeVerifier.trim() : '';
+  if (cv) {
+    body.set('code_verifier', cv);
   }
 
   const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(params.tenant)}/oauth2/v2.0/token`;

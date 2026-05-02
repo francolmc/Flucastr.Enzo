@@ -217,26 +217,27 @@ export default function EmailPage() {
   };
 
   const openOAuthPopup = async (accountId: string, kind: 'google' | 'microsoft') => {
-    let tab: Window | null = null;
-    try {
-      tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
-    } catch {
-      tab = null;
-    }
     try {
       setError(null);
-      const { authUrl } =
+      const res =
         kind === 'google'
           ? await apiClient.startEmailOAuthGoogle(accountId)
           : await apiClient.startEmailOAuthMicrosoft(accountId);
-      if (tab) {
-        tab.location.href = authUrl;
-      } else {
-        window.location.assign(authUrl);
+      const authUrl = res.authUrl;
+      if (typeof authUrl !== 'string' || !authUrl.startsWith('http')) {
+        setError('La API no devolvió una URL de autorización válida.');
+        return;
       }
-      setTimeout(() => void loadAccounts(), 3000);
+      const w = window.open(authUrl, '_blank', 'noopener,noreferrer');
+      if (!w) {
+        setError(
+          'El navegador bloqueó la ventana emergente. Permití popups para este sitio y reintentá, o abrí esta URL manualmente:\n\n' +
+            authUrl
+        );
+        return;
+      }
+      setTimeout(() => void loadAccounts(), kind === 'google' ? 3000 : 4000);
     } catch (e) {
-      if (tab) tab.close();
       setError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -439,6 +440,10 @@ export default function EmailPage() {
   const emptyConfigured = accounts.length === 0;
 
   const gmailCallbackUrl = `http://127.0.0.1:${apiPortHint}/api/email/oauth/google/callback`;
+  const outlookRedirectHint =
+    typeof globalThis.window !== 'undefined' && globalThis.window.location?.origin
+      ? `${globalThis.window.location.origin}/api/email/oauth/microsoft/callback`
+      : 'https://(tu-host-público)/api/email/oauth/microsoft/callback';
 
   return (
     <div className="email-page page-shell">
@@ -803,7 +808,7 @@ export default function EmailPage() {
                           </button>
                         )}
                         <button type="button" className="email-btn ghost" onClick={() => void openOAuthPopup(acc.id, 'microsoft')}>
-                          Alternativa redirect localhost
+                          Abrir login Microsoft (nueva pestaña)
                         </button>
                         {acc.hasOAuth && (
                           <button
@@ -830,6 +835,16 @@ export default function EmailPage() {
                           <p>{msDeviceDraft[acc.id].message ?? 'Luego pulsá «Ya autoricé» aquí.'}</p>
                         </div>
                       )}
+                      <span className="email-muted email-oauth-note">
+                        Outlook: en Entra necesitás permisos delegados Graph{' '}
+                        <code className="email-code-inline">Mail.ReadWrite</code> +{' '}
+                        <code className="email-code-inline">offline_access</code>; activá{' '}
+                        <strong>clientes públicos / flujo de código de dispositivo</strong> si usás «Solicitar código». Redirect
+                        (otra opción): registro <strong>Web</strong> con{' '}
+                        <code className="email-code-inline">{outlookRedirectHint}</code> (debe coincidir con{' '}
+                        <code className="email-code-inline">ENZO_PUBLIC_API_BASE_URL</code> detrás del proxy). Para{' '}
+                        <strong>@outlook.com / Hotmail personal</strong> probá Tenant <code>consumers</code> en la cuenta (Editar).
+                      </span>
                     </div>
                   )}
                   {editingAccountId === acc.id && editForm ? (
