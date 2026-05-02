@@ -588,14 +588,17 @@ export default function EmailPage() {
               />
             </label>
             <label className="email-field-label">
-              Microsoft Client secret
+              Microsoft Client secret{' '}
+              <span className="email-muted email-small-print">
+                Si en Entra tu app es <strong>pública</strong> (solo personal + flujo SPA/dispositivo, sin secreto web), dejalo vacío; Enzo igual puede intercambiar el código sin secret si Azure lo permite.
+              </span>
               {oauthStatus.microsoft.envClientSecret ? <span className="email-muted"> (ENV)</span> : null}
               <input
                 type="password"
                 className="email-wide-input"
                 disabled={oauthStatus.microsoft.envClientSecret}
                 placeholder={
-                  oauthStatus.microsoft.persistedHasClientSecret ? '••• dejá vacío para no cambiar' : 'Opcional'
+                  oauthStatus.microsoft.persistedHasClientSecret ? '••• dejá vacío para no cambiar' : 'Vacío si la app Azure es cliente público'
                 }
                 value={oauthMsClientSecret}
                 onChange={(e) => {

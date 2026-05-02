@@ -14,6 +14,26 @@ export const MICROSOFT_MAIL_SCOPES = [
   'https://graph.microsoft.com/Mail.ReadWrite',
 ].join(' ');
 
+/** Azure rechaza si el registro es cliente público y el body lleva secret (p. ej. AADSTS900232). */
+export function microsoftTokenResponseSuggestsPublicClientNoSecret(description: string): boolean {
+  return (
+    /Public clients can't send a client secret/i.test(description) ||
+    /can't send plain text secrets/i.test(description) ||
+    /AADSTS900232/i.test(description)
+  );
+}
+
+function microsoftTokenErrorText(json: Record<string, unknown>): string {
+  const d =
+    typeof json.error_description === 'string'
+      ? json.error_description
+      : typeof json.suberror === 'string'
+        ? json.suberror
+        : '';
+  const raw = typeof json.error === 'string' ? `${json.error} ${d}`.trim() : d;
+  return raw || JSON.stringify(json);
+}
+
 export type GoogleTokenExchangeResult = {
   access_token: string;
   refresh_token?: string;
@@ -111,30 +131,46 @@ export async function exchangeMicrosoftAuthorizationCode(params: {
   /** Obligatorio si el authorize se hizo con `code_challenge` (PKCE). */
   codeVerifier?: string | null;
 }): Promise<MicrosoftTokenExchangeResult> {
-  const body = new URLSearchParams({
-    client_id: params.clientId,
-    grant_type: 'authorization_code',
-    code: params.code,
-    redirect_uri: params.redirectUri,
-  });
-  if (params.clientSecret) {
-    body.set('client_secret', params.clientSecret);
-  }
-  const cv = typeof params.codeVerifier === 'string' ? params.codeVerifier.trim() : '';
-  if (cv) {
-    body.set('code_verifier', cv);
-  }
-
   const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(params.tenant)}/oauth2/v2.0/token`;
-  const r = await fetch(tokenUrl, {
+  const secret =
+    typeof params.clientSecret === 'string' && params.clientSecret.trim().length > 0
+      ? params.clientSecret.trim()
+      : '';
+
+  const makeBody = (withSecret: boolean): URLSearchParams => {
+    const body = new URLSearchParams({
+      client_id: params.clientId,
+      grant_type: 'authorization_code',
+      code: params.code,
+      redirect_uri: params.redirectUri,
+    });
+    if (withSecret && secret) body.set('client_secret', secret);
+    const cv = typeof params.codeVerifier === 'string' ? params.codeVerifier.trim() : '';
+    if (cv) body.set('code_verifier', cv);
+    return body;
+  };
+
+  let r = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
+    body: makeBody(!!secret),
   });
 
-  const json = (await r.json()) as Record<string, unknown>;
+  let json = (await r.json()) as Record<string, unknown>;
+  if (!r.ok && secret) {
+    const msg = microsoftTokenErrorText(json);
+    if (microsoftTokenResponseSuggestsPublicClientNoSecret(msg)) {
+      r = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: makeBody(false),
+      });
+      json = (await r.json()) as Record<string, unknown>;
+    }
+  }
+
   if (!r.ok) {
-    const msg = typeof json.error_description === 'string' ? json.error_description : JSON.stringify(json);
+    const msg = microsoftTokenErrorText(json);
     throw new Error(`Microsoft token exchange failed: ${msg}`);
   }
   const access_token = typeof json.access_token === 'string' ? json.access_token : '';
@@ -152,25 +188,43 @@ export async function refreshMicrosoftAccessToken(params: {
   clientSecret: string | null;
   refreshToken: string;
 }): Promise<MicrosoftTokenExchangeResult> {
-  const body = new URLSearchParams({
-    client_id: params.clientId,
-    grant_type: 'refresh_token',
-    refresh_token: params.refreshToken,
-  });
-  if (params.clientSecret) {
-    body.set('client_secret', params.clientSecret);
-  }
-
   const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(params.tenant)}/oauth2/v2.0/token`;
-  const r = await fetch(tokenUrl, {
+  const secret =
+    typeof params.clientSecret === 'string' && params.clientSecret.trim().length > 0
+      ? params.clientSecret.trim()
+      : '';
+
+  const makeBody = (withSecret: boolean): URLSearchParams => {
+    const body = new URLSearchParams({
+      client_id: params.clientId,
+      grant_type: 'refresh_token',
+      refresh_token: params.refreshToken,
+    });
+    if (withSecret && secret) body.set('client_secret', secret);
+    return body;
+  };
+
+  let r = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
+    body: makeBody(!!secret),
   });
 
-  const json = (await r.json()) as Record<string, unknown>;
+  let json = (await r.json()) as Record<string, unknown>;
+  if (!r.ok && secret) {
+    const msg = microsoftTokenErrorText(json);
+    if (microsoftTokenResponseSuggestsPublicClientNoSecret(msg)) {
+      r = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: makeBody(false),
+      });
+      json = (await r.json()) as Record<string, unknown>;
+    }
+  }
+
   if (!r.ok) {
-    const msg = typeof json.error_description === 'string' ? json.error_description : JSON.stringify(json);
+    const msg = microsoftTokenErrorText(json);
     throw new Error(`Microsoft token refresh failed: ${msg}`);
   }
   const access_token = typeof json.access_token === 'string' ? json.access_token : '';

@@ -3,7 +3,7 @@
  */
 
 import type { MicrosoftTokenExchangeResult } from './exchange.js';
-import { MICROSOFT_MAIL_SCOPES } from './exchange.js';
+import { MICROSOFT_MAIL_SCOPES, microsoftTokenResponseSuggestsPublicClientNoSecret } from './exchange.js';
 
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
@@ -99,6 +99,25 @@ export async function pollMicrosoftDeviceUntilTokens(params: {
   let intervalMs = Math.max(1000, params.intervalSeconds * 1000);
   const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(params.tenant)}/oauth2/v2.0/token`;
 
+  const secret =
+    typeof params.clientSecret === 'string' && params.clientSecret.trim().length > 0
+      ? params.clientSecret.trim()
+      : '';
+
+  const postPoll = async (withSecret: boolean): Promise<Response> => {
+    const body = new URLSearchParams({
+      grant_type: DEVICE_GRANT,
+      client_id: params.clientId,
+      device_code: params.deviceCode,
+    });
+    if (withSecret && secret) body.set('client_secret', secret);
+    return fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+  };
+
   while (Date.now() < deadlineMs) {
     if (params.signal?.aborted) {
       throw new Error('Device login cancelled');
@@ -110,22 +129,16 @@ export async function pollMicrosoftDeviceUntilTokens(params: {
       throw new Error('Device login cancelled');
     }
 
-    const body = new URLSearchParams({
-      grant_type: DEVICE_GRANT,
-      client_id: params.clientId,
-      device_code: params.deviceCode,
-    });
-    if (params.clientSecret?.trim()) {
-      body.set('client_secret', params.clientSecret.trim());
+    let r = await postPoll(!!secret);
+    let json = (await r.json()) as Record<string, unknown>;
+    if (!r.ok && secret) {
+      const desc =
+        typeof json.error_description === 'string' ? json.error_description : JSON.stringify(json);
+      if (microsoftTokenResponseSuggestsPublicClientNoSecret(desc)) {
+        r = await postPoll(false);
+        json = (await r.json()) as Record<string, unknown>;
+      }
     }
-
-    const r = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-
-    const json = (await r.json()) as Record<string, unknown>;
     const err = typeof json.error === 'string' ? json.error : '';
 
     if (r.ok) {
