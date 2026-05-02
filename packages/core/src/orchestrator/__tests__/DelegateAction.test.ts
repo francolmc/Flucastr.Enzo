@@ -128,11 +128,59 @@ async function testAmplifierLoopIntegration() {
   console.log('✓ AmplifierLoop: router → observe → further THINK');
 }
 
+async function testImagePayloadCoercesDelegateWhenThinkIsProseOnly() {
+  const proseOnly =
+    'Entendido, Franco. Dime cuál es el contenido de la imagen y estaré encantado de ayudarte.';
+  const provider = new QueueProvider([proseOnly, '{"action":"none"}', 'Synth done.']);
+  let delegatedAgent = '';
+  let delegatedTask = '';
+  const router: AgentRouterContract = {
+    async delegate(request: DelegationRequest): Promise<DelegationResult> {
+      delegatedAgent = request.agent;
+      delegatedTask = request.task;
+      return { success: true, agent: request.agent, output: 'VIS_OK_DETAIL' };
+    },
+  };
+  const loop = new AmplifierLoop(provider, [], {
+    log: createDefaultAmplifierLoopLog(),
+    maxIterations: 8,
+    verifyBeforeSynthesize: false,
+    agentRouter: router,
+  });
+  const hostMessage = `[Franco mandó una imagen: x.jpg]
+Está guardado en /tmp/x.jpg.
+
+Instrucción del usuario (caption): ¿qué ves en la imagen?`;
+  const result = await loop.amplify({
+    message: hostMessage,
+    conversationId: 'c-img',
+    userId: 'u1',
+    history: [],
+    availableTools: [...AVAILABLE_TOOLS],
+    availableSkills: [],
+    availableAgents: [],
+    classifiedLevel: ComplexityLevel.MODERATE,
+    delegationHint: { agentId: 'vision_agent', reason: 'user requested image analysis' },
+    imageContext: { base64: 'AABBCCEEZZ', mimeType: 'image/jpeg' },
+  });
+  assert(delegatedAgent === 'vision_agent', `delegate agent: ${delegatedAgent}`);
+  assert(
+    delegatedTask.includes('¿qué ves') || delegatedTask.includes('qué ves'),
+    `task should carry caption; got ${delegatedTask}`
+  );
+  assert(
+    result.stepsUsed.some((s) => s.type === 'observe' && s.output?.includes('VIS_OK_DETAIL')),
+    'observe should reflect vision delegation'
+  );
+  console.log('✓ AmplifierLoop: imageContext + prose THINK → coerced delegate');
+}
+
 async function runTests() {
   console.log('DelegateAction tests\n');
   await testResolver();
   await testActPhase();
   await testAmplifierLoopIntegration();
+  await testImagePayloadCoercesDelegateWhenThinkIsProseOnly();
   console.log('\nAll delegate action tests passed.');
 }
 

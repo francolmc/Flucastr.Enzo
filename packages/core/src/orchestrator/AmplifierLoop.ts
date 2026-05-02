@@ -135,6 +135,25 @@ export class AmplifierLoop {
   /**
    * After THINK+resolve yield `delegate`, run the external agent and build trace + observe steps.
    */
+  /**
+   * When Telegram (or host) attaches pixels, local THINK models often emit prose instead of
+   * `{"action":"delegate",...}` — {@link CapabilityResolver} then yields `none` and the user
+   * sees "describe the image yourself". If the classifier already picked a delegation target and
+   * we have not run delegate yet, force one delegate with a concrete task.
+   */
+  private buildVisionDelegationCoercionTask(input: AmplifierInput): string {
+    const msg = input.message;
+    const cap = msg.match(/Instrucción del usuario \(caption\):\s*([\s\S]+?)$/im);
+    if (cap?.[1]?.trim()) {
+      return `Answer the user's question about the attached image: ${cap[1].trim().trimEnd()}`;
+    }
+    const singleLine = msg.replace(/\s+/g, ' ').trim();
+    if (singleLine.length > 0 && singleLine.length <= 2000) {
+      return `Use the attached image bytes. Fulfill every instruction in this host message:\n${msg}`;
+    }
+    return `Describe the attached image in detail (content, text/code if any, structure of diagrams).`;
+  }
+
   private async processDelegationInLoop(
     d: { agent: string; task: string; reason: string },
     iteration: number,
@@ -1112,6 +1131,41 @@ Do NOT search for more information. Use what is provided.`;
         target: resolvedAction.target,
         reason: resolvedAction.reason
       });
+
+      const hasImagePayloadCoerce =
+        Boolean(input.imageContext?.base64?.trim()) &&
+        Boolean(String(input.imageContext?.mimeType ?? '').trim());
+      const alreadyHadDelegateAct = steps.some((s) => s.type === 'act' && s.action === 'delegate');
+      const hintAgentId = input.delegationHint?.agentId?.trim();
+      if (
+        resolvedAction.type === 'none' &&
+        hasImagePayloadCoerce &&
+        this.agentRouter &&
+        !alreadyHadDelegateAct
+      ) {
+        const agentTarget = hintAgentId && hintAgentId.length > 0 ? hintAgentId : 'vision_agent';
+        const task = this.buildVisionDelegationCoercionTask(input);
+        const reasonHint =
+          input.delegationHint?.reason?.trim() ||
+          'Image bytes attached; host requires delegation to vision-capable agent.';
+        resolvedAction = {
+          type: 'delegate',
+          target: agentTarget,
+          reason: reasonHint,
+          input: { task },
+        };
+        console.log(
+          JSON.stringify({
+            event: 'EnzoRouting',
+            phase: 'amplifier_coerce_image_delegate',
+            agentId: agentTarget,
+            triggeredBy: 'think_none_or_non_json_with_image_payload',
+          })
+        );
+        this.log.info(
+          `[AmplifierLoop] Iteration ${iteration} - Coerced THINK → delegate("${agentTarget}") — local model emitted no usable delegate JSON despite imageContext`
+        );
+      }
 
       // Bloquear "none" mientras no se hayan completado todos los pasos requeridos por el skill.
       // Contamos solo acciones de tipo tool; ejecutar una "skill" no equivale a completar un paso.
