@@ -1037,7 +1037,7 @@ Do NOT search for more information. Use what is provided.`;
               : `Done, operation completed.`;
           this.log.info('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
           return {
-            content: this.prependAnthropicApiKeyNoticeToContent(directContent, input, steps),
+            content: AmplifierLoop.wrapUserFacingAmplifierBody(directContent, input, steps),
             requestId,
             stepsUsed: steps,
             modelsUsed: Array.from(modelsUsed),
@@ -1086,7 +1086,7 @@ Do NOT search for more information. Use what is provided.`;
       steps.push(synthesizeStep);
 
       return {
-        content: this.prependAnthropicApiKeyNoticeToContent(
+        content: AmplifierLoop.wrapUserFacingAmplifierBody(
           synthesizeStep.output ?? complexSynthContext,
           input,
           steps
@@ -1416,7 +1416,7 @@ Do NOT search for more information. Use what is provided.`;
     input.onProgress?.(synthesizeStep);
 
     return {
-      content: this.prependAnthropicApiKeyNoticeToContent(
+      content: AmplifierLoop.wrapUserFacingAmplifierBody(
         synthesizeStep.output || synthContext,
         input,
         steps
@@ -1432,12 +1432,64 @@ Do NOT search for more information. Use what is provided.`;
     };
   }
 
-  /** User-visible banner with the Anthropic auth error surfaced in observes (delegation/tool), so small models cannot hide it. */
-  private prependAnthropicApiKeyNoticeToContent(
-    body: string,
-    input: AmplifierInput,
+  /**
+   * Prefer showing the delegated agent’s real output (vision) before synthesis: small base models
+   * often ignore compressed observe context and invent tool plans.
+   */
+  private static wrapUserFacingAmplifierBody(body: string, input: AmplifierInput, steps: Step[]): string {
+    const withDelegation = AmplifierLoop.prependSuccessfulImageDelegationBlock(input, steps, body);
+    return AmplifierLoop.prependAnthropicApiKeyBannerToBody(withDelegation, input, steps);
+  }
+
+  private static hasAttachedImageInput(input: AmplifierInput): boolean {
+    return Boolean(input.imageContext?.base64?.trim() && input.imageContext?.mimeType?.trim());
+  }
+
+  private static extractSuccessfulDelegationObserve(
     steps: Step[]
+  ): { agentId: string; body: string } | undefined {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const s = steps[i];
+      if (s?.type !== 'observe') continue;
+      const o = (typeof s.output === 'string' ? s.output : '').trim();
+      if (!/^Agent\s+\S+\s+completed:\s*/i.test(o)) continue;
+      const m = o.match(/^Agent\s+(\S+)\s+completed:\s*([\s\S]*)$/i);
+      if (!m) continue;
+      let extracted = (m[2] ?? '').trim();
+      const filesIdx = extracted.indexOf('\n\nFiles:');
+      if (filesIdx >= 0) extracted = extracted.slice(0, filesIdx).trim();
+      if (!extracted) continue;
+      return { agentId: m[1]!, body: extracted };
+    }
+    return undefined;
+  }
+
+  private static prependSuccessfulImageDelegationBlock(
+    input: AmplifierInput,
+    steps: Step[],
+    synthesized: string
   ): string {
+    if (!AmplifierLoop.hasAttachedImageInput(input)) return synthesized.trim();
+
+    const d = AmplifierLoop.extractSuccessfulDelegationObserve(steps);
+    if (!d) return synthesized.trim();
+
+    const lang = (input.userLanguage || 'es').toLowerCase();
+    const es = lang.startsWith('es');
+    const agentLine = es
+      ? `_Se delegó la imagen al agente:_ \`${d.agentId}\``
+      : `_Image turn delegated to agent:_ \`${d.agentId}\``;
+    const bodyBlock = es ? `**Salida del agente**\n\n${d.body}` : `**Agent output**\n\n${d.body}`;
+    const header = `${agentLine}\n\n${bodyBlock}`;
+    const rest = synthesized.trim();
+    if (!rest.length) return header;
+    const caveat = es
+      ? '\n\n---\n\n_(Lo que sigue viene del modelo principal del orquestador; si pide que describas la imagen o contradice lo de arriba, priorizá la salida del agente.)_\n\n'
+      : '\n\n---\n\n_(Below: primary orchestrator model; if it asks you to describe the image or contradicts the block above, prefer the agent output.)_\n\n';
+    return `${header}${caveat}${rest}`.trim();
+  }
+
+  private static prependAnthropicApiKeyBannerToBody(body: string, input: AmplifierInput, steps: Step[]): string {
     const failure = AmplifierLoop.findAnthropicAuthFailureObserveOutput(steps);
     if (!failure) return body;
     const tech = AmplifierLoop.extractAnthropicAuthDetailForUi(failure);
