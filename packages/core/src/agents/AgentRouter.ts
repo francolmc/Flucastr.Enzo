@@ -1,5 +1,6 @@
 import type { NotificationGateway } from '../echo/NotificationGateway.js';
 import type { AgentConfig } from '../orchestrator/types.js';
+import { isAnthropicDelegationAuthErrorMessage } from './anthropicDelegationUtils.js';
 import type { ClaudeCodeAgent } from './ClaudeCodeAgent.js';
 import type { DocAgent } from './DocAgent.js';
 import type { VisionAgent } from './VisionAgent.js';
@@ -51,6 +52,10 @@ export type AgentRouterOptions = {
   /** Resolve DB-backed user preset by id for {@link UserAgentRunner} delegation. */
   resolveUserAgent?: (id: string) => Promise<AgentConfig | undefined>;
   userAgentRunner?: UserAgentRunner;
+  /**
+   * When {@link VisionAgent} fails with Anthropic auth, try these Anthropic presets in order (same resolution as classifier catalog).
+   */
+  listAnthropicAgentsForVisionFallback?: (userId: string) => Promise<AgentConfig[]>;
 };
 
 export class AgentRouter implements AgentRouterContract {
@@ -60,6 +65,7 @@ export class AgentRouter implements AgentRouterContract {
   private readonly visionAgent: VisionAgent;
   private readonly resolveUserAgent?: (id: string) => Promise<AgentConfig | undefined>;
   private readonly userAgentRunner?: UserAgentRunner;
+  private readonly listAnthropicAgentsForVisionFallback?: (userId: string) => Promise<AgentConfig[]>;
 
   constructor(options: AgentRouterOptions) {
     this.notificationGateway = options.notificationGateway;
@@ -68,6 +74,7 @@ export class AgentRouter implements AgentRouterContract {
     this.visionAgent = options.visionAgent;
     this.resolveUserAgent = options.resolveUserAgent;
     this.userAgentRunner = options.userAgentRunner;
+    this.listAnthropicAgentsForVisionFallback = options.listAnthropicAgentsForVisionFallback;
   }
 
   async delegate(request: DelegationRequest): Promise<DelegationResult> {
@@ -101,7 +108,28 @@ export class AgentRouter implements AgentRouterContract {
   }
 
   private async runVisionAgent(request: DelegationRequest): Promise<DelegationResult> {
-    return this.visionAgent.execute(request);
+    const primary = await this.visionAgent.execute(request);
+    if (primary.success) return primary;
+
+    const err = primary.error ?? '';
+    const fallback =
+      this.listAnthropicAgentsForVisionFallback && this.userAgentRunner
+        ? await this.listAnthropicAgentsForVisionFallback(request.context.userId)
+        : [];
+    const shouldTryAnthropicPreset =
+      isAnthropicDelegationAuthErrorMessage(err) && fallback.length > 0 && this.userAgentRunner;
+
+    if (!shouldTryAnthropicPreset) return primary;
+
+    let last = primary;
+    for (const preset of fallback) {
+      if ((preset.provider || '').toLowerCase() !== 'anthropic' || !(preset.model || '').trim()) continue;
+      const r = await this.userAgentRunner.execute(request, preset);
+      if (r.success) return r;
+      last = r;
+      if (!isAnthropicDelegationAuthErrorMessage(r.error ?? '')) break;
+    }
+    return last;
   }
 
   private async notifyIfConfigured(userId: string, displayName: string): Promise<void> {

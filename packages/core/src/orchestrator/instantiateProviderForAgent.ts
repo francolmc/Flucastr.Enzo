@@ -5,6 +5,7 @@ import { AnthropicProvider } from '../providers/AnthropicProvider.js';
 import { OpenAIProvider } from '../providers/OpenAIProvider.js';
 import { GeminiProvider } from '../providers/GeminiProvider.js';
 import type { AgentConfig } from './types.js';
+import { collectAnthropicApiKeys } from '../agents/anthropicDelegationUtils.js';
 
 /**
  * Builds a concrete {@link LLMProvider} for a user agent preset (same rules as {@link Orchestrator} runtime).
@@ -32,7 +33,14 @@ export async function instantiateProviderForAgent(
     const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
     provider = new OllamaProvider(ollamaBaseUrl, modelName);
   } else if (providerName === 'anthropic') {
-    const apiKey = configService?.getProviderApiKey('anthropic') || process.env.ANTHROPIC_API_KEY;
+    const keys: string[] =
+      configService != null
+        ? collectAnthropicApiKeys(configService)
+        : (() => {
+            const e = process.env.ANTHROPIC_API_KEY?.trim();
+            return e ? [e] : [];
+          })();
+    const apiKey = keys[0]?.trim();
     if (!apiKey) {
       throw new Error('Anthropic API key is not configured');
     }

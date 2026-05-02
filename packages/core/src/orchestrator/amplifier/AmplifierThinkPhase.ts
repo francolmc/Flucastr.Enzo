@@ -148,6 +148,11 @@ DELEGATION RULES — read carefully:
 - Always try first. Delegate only when you realize mid-reasoning that you cannot proceed
 - The "task" string must be concrete and self-contained: the specialist receives ranked user memories, a short conversation/tool-trace summary built by the host, and optional image bytes — not the full raw chat. Put essential requirements, constraints, and success criteria in "task".
 
+WHEN DELEGATION FAILS — especially if a prior observation mentions API authentication failures (invalid API key, unauthorized, HTTP 401/403):
+- Do not tell the user you intrinsically "cannot see" images or lack a modality if the observation clearly indicates backend credentials or remote API rejection — distinguish configuration/service errors from model limits.
+- If the catalog lists another Anthropic specialist that could reasonably handle the same multimodal task, you may emit one further {"action":"delegate"} toward a different agent id (not repetition loops).
+- If no suitable specialist remains, use {"action":"none"} with a short factual message for the operator: verify ANTHROPIC_API_KEY in the deployment environment and any stored anthropic keys in configuration.
+
 PROACTIVE SEARCH RULE:
 Before answering any question about facts, people, companies, prices, events,
 or anything that could have changed, use web_search.

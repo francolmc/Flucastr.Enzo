@@ -262,6 +262,120 @@ async function testVisionAgentRoutesToExecute() {
   assert(lastTask === 'Describe axes', 'vision task');
 }
 
+async function testVisionAuthFailureTriesAnthropicPresetFallback() {
+  const claude: Pick<ClaudeCodeAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'claude_code', output: '', error: 'no' };
+    },
+  };
+  const doc: Pick<DocAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'doc_agent', output: '', error: 'no' };
+    },
+  };
+  let visionAttempts = 0;
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      visionAttempts++;
+      return {
+        success: false,
+        agent: 'vision_agent',
+        output: '',
+        error: 'Anthropic API error: invalid x-api-key',
+      };
+    },
+  };
+  let runnerPresetId = '';
+  const userRunner = {
+    async execute(_req: DelegationRequest, agent: AgentConfig): Promise<DelegationResult> {
+      runnerPresetId = agent.id;
+      return { success: true, agent: agent.id, output: 'from-preset-vision' };
+    },
+  };
+  const preset: AgentConfig = {
+    id: 'visor-preset',
+    name: 'Visor',
+    description: '',
+    provider: 'anthropic',
+    model: 'claude-test',
+  };
+  const router = new AgentRouter({
+    claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
+    docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
+    userAgentRunner: userRunner as unknown as UserAgentRunner,
+    listAnthropicAgentsForVisionFallback: async () => [preset],
+  });
+  const r = await router.delegate({
+    agent: 'vision_agent',
+    task: 'Describe image',
+    reason: '',
+    context: {
+      userId: 'u1',
+      memories: [],
+      conversationSummary: '',
+      imageBase64: 'abc',
+      imageMimeType: 'image/jpeg',
+    },
+  });
+  assert(r.success && r.output === 'from-preset-vision', JSON.stringify(r));
+  assert(runnerPresetId === 'visor-preset', runnerPresetId);
+  assert(visionAttempts === 1, `vision_attempts=${visionAttempts}`);
+}
+
+async function testVisionFailureNonAuthDoesNotFallback() {
+  const claude: Pick<ClaudeCodeAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'claude_code', output: '', error: 'no' };
+    },
+  };
+  const doc: Pick<DocAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return { success: false, agent: 'doc_agent', output: '', error: 'no' };
+    },
+  };
+  const vision: Pick<VisionAgent, 'execute'> = {
+    async execute(): Promise<DelegationResult> {
+      return {
+        success: false,
+        agent: 'vision_agent',
+        output: '',
+        error: 'Anthropic API error: overloaded',
+      };
+    },
+  };
+  let runnerCalls = 0;
+  const userRunner = {
+    async execute(): Promise<DelegationResult> {
+      runnerCalls++;
+      return { success: true, agent: 'x', output: '' };
+    },
+  };
+  const router = new AgentRouter({
+    claudeCodeAgent: claude as unknown as ClaudeCodeAgent,
+    docAgent: doc as unknown as DocAgent,
+    visionAgent: vision as unknown as VisionAgent,
+    userAgentRunner: userRunner as unknown as UserAgentRunner,
+    listAnthropicAgentsForVisionFallback: async () => [
+      { id: 'p', name: 'P', description: '', provider: 'anthropic', model: 'm' },
+    ],
+  });
+  const r = await router.delegate({
+    agent: 'vision_agent',
+    task: 't',
+    reason: '',
+    context: {
+      userId: 'u1',
+      memories: [],
+      conversationSummary: '',
+      imageBase64: 'abc',
+      imageMimeType: 'image/jpeg',
+    },
+  });
+  assert(!r.success && (r.error || '').includes('overloaded'), JSON.stringify(r));
+  assert(runnerCalls === 0, 'runner should not run for non-auth vision failure');
+}
+
 async function testMemoryAfterDelegationResult() {
   const rememberLog: string[] = [];
   const memoryService: Pick<MemoryService, 'remember'> = {
@@ -307,6 +421,8 @@ async function runTests() {
   await testClaudeCodeRoutesToExecute();
   await testDocAgentRoutesToExecute();
   await testVisionAgentRoutesToExecute();
+  await testVisionAuthFailureTriesAnthropicPresetFallback();
+  await testVisionFailureNonAuthDoesNotFallback();
   await testUserPresetRoutesToUserAgentRunner();
   await testUnknownAgentNoThrow();
   await testNotifyRunsBeforeExecute();
