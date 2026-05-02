@@ -173,6 +173,59 @@ export function coerceCalendarFastPathEnvelope(
   return merged;
 }
 
+/** Shell binaries models sometimes put in `"tool"` though only `execute_command` is registered. */
+const KNOWN_SHELL_CLI_ALIASES = new Set([
+  'gh',
+  'git',
+  'docker',
+  'kubectl',
+  'helm',
+  'pnpm',
+  'npm',
+  'yarn',
+  'brew',
+  'curl',
+  'wget',
+  'ssh',
+  'scp',
+  'pulumi',
+  'terraform',
+]);
+
+/**
+ * Models often emit `{"action":"tool","tool":"gh","input":{"command":"repo list"}}` even though the only
+ * host bridge is **`execute_command`**. Rewrite to a single shell line when envelope action is canonical `tool`.
+ */
+export function coerceCliAliasToolToExecuteCommand(
+  envelopeAction: string,
+  toolCandidate: string,
+  toolInput: Record<string, unknown>,
+  executableTools: ExecutableTool[]
+): { command: string } | null {
+  if (!executableTools.some((t) => t.name === 'execute_command')) return null;
+  const bin = toolCandidate.trim().toLowerCase();
+  if (!bin || !KNOWN_SHELL_CLI_ALIASES.has(bin)) return null;
+
+  const act = envelopeAction.trim().toLowerCase();
+  if (act !== 'tool' && act !== 'herramienta') return null;
+
+  let comando =
+    typeof toolInput.command === 'string'
+      ? toolInput.command.trim()
+      : typeof toolInput['comando'] === 'string'
+        ? String(toolInput['comando']).trim()
+        : '';
+  const args = typeof toolInput.args === 'string' ? toolInput.args.trim() : '';
+  const combined = [comando, args].filter(Boolean).join(' ').trim();
+  if (!combined) return null;
+
+  const lc = combined.toLowerCase();
+  if (lc === bin || lc.startsWith(`${bin} `) || lc.startsWith(`${bin}\t`)) {
+    return { command: combined };
+  }
+  return { command: `${bin} ${combined}` };
+}
+
 export function normalizeFastPathToolCall(
   parsed: any,
   executableTools: ExecutableTool[]
@@ -190,7 +243,12 @@ export function normalizeFastPathToolCall(
     }
   }
 
-  let toolName = String(normalized.tool ?? normalized.action ?? '').toLowerCase();
+  let toolName = String(normalized.tool ?? '').toLowerCase();
+  const envelopeActionRaw = String(normalized.action ?? '');
+  /** When present, `tool` identifies the executable; legacy shapes use `action` as tool name instead. */
+  if (!normalized.tool || String(normalized.tool).trim() === '') {
+    toolName = String(normalized.action ?? '').toLowerCase();
+  }
 
   let toolInput: Record<string, unknown> = {};
   const rawIn = normalized.input;
@@ -212,10 +270,21 @@ export function normalizeFastPathToolCall(
     knownToolNames.add(tool.name.toLowerCase());
   }
   if (!knownToolNames.has(toolName) && toolName !== 'none' && toolName !== '') {
-    const originalAction = String(normalized.action ?? '').toLowerCase();
+    const originalAction = envelopeActionRaw.toLowerCase();
     if (originalAction === 'execute_command' || originalAction === 'ejecutar_comando' || originalAction === 'ejecutar') {
       toolInput = { command: toolName };
       toolName = 'execute_command';
+    } else {
+      const shim = coerceCliAliasToolToExecuteCommand(
+        envelopeActionRaw,
+        toolName,
+        toolInput,
+        executableTools
+      );
+      if (shim) {
+        toolInput = shim;
+        toolName = 'execute_command';
+      }
     }
   }
 

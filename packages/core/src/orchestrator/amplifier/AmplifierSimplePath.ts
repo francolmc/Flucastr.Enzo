@@ -560,6 +560,7 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
 The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** integrations / authenticated CLIs (see RELEVANT SKILLS and execute_command), NOT web_search and NOT unsolicited **calendar**.
 For this turn ONLY: respond with exactly **ONE** canonical JSON tool call.
 Prefer **execute_command** when GitHub/GitLab/Docker/kubectl/shell tooling matches what the user asked (build the command line from HOST context + SKILLS — no fabricated calendar ranges).
+The registered **tool** id is always **execute_command** — never use raw shell binaries (\`gh\`, \`git\`, \`docker\`, …) as the JSON \`tool\` field (they belong inside \`input.command\`).
 Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}
 Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings — "lista … repositorios" is NOT agenda.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
@@ -581,7 +582,7 @@ ${declarativeExecutable.commandHint}`
         }
 Do **not** use web_search for this locked workflow. Omit any prose outside the JSON line.${
           declarativeExecutable.tool === 'execute_command'
-            ? ' Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}.'
+            ? ' Canonical shape uses **execute_command** as tool id — never `"tool":"gh"`; put **gh …** inside **input.command** only: {"action":"tool","tool":"execute_command","input":{"command":"..."}}.'
             : ''
         }
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
