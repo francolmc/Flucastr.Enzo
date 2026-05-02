@@ -100,19 +100,25 @@ export async function executeOrchestratorProcess(
 
   const agents = await b.listAgentsForUser(input.userId);
 
+  const hasImagePayload = Boolean(
+    (input.imageContext?.base64 && String(input.imageContext.base64).trim()) &&
+      String(input.imageContext?.mimeType ?? '').trim()
+  );
   const classifyStart = Date.now();
-  const rawClassification = input.classifiedLevel
+  /** Photo turns must re-run classifier with catalog + hasImageHint; telegram pre-only level drops delegationHint. */
+  const usePreclassified = input.classifiedLevel != null && !hasImagePayload;
+  const rawClassification = usePreclassified
     ? {
-        level: input.classifiedLevel,
+        level: input.classifiedLevel!,
         reason: 'pre-classified',
         classifierBranch: 'pre_classified',
       }
     : await new Classifier(runtimeProvider).classify(input.message, classifierMessages, {
         availableAgents: agents,
-        hasImageContext: !!(input.imageContext?.base64 && input.imageContext?.mimeType),
+        hasImageContext: hasImagePayload,
       });
   const classification = applyClassificationFloors(rawClassification, {
-    hasImageContext: !!(input.imageContext?.base64 && input.imageContext?.mimeType),
+    hasImageContext: hasImagePayload,
     availableAgents: agents,
   });
   const classifyDurationMs = Date.now() - classifyStart;
@@ -123,6 +129,9 @@ export async function executeOrchestratorProcess(
       phase: 'orchestrator_after_classify',
       classifierBranch: classification.classifierBranch ?? 'unset',
       level: classification.level,
+      hasImagePayload,
+      telegramPreclassifiedOverriddenForImage: !usePreclassified && input.classifiedLevel != null && hasImagePayload,
+      delegationHint: classification.delegationHint?.agentId ?? null,
     })
   );
 

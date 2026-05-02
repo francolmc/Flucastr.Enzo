@@ -558,44 +558,35 @@ async function handleIncomingPhoto(
 
     const { conversationId, requestId, explicitAgentId } = await preloadMessageContext(ctx, userId);
 
-    if (visionResult.success && visionResult.description) {
-      let messageText = `[${who} mandó una imagen: ${savedOriginalName}]`;
-      if (savedPath) {
-        messageText += `\nEstá guardado en ${savedPath}`;
-      }
-      messageText += `\n\nContenido de la imagen: ${visionResult.description}`;
-      if (captionTrim) {
-        messageText += `\n\n[Caption] ${captionTrim}`;
-      }
-      runBackgroundProcessing(ctx, userId, messageText, conversationId, explicitAgentId, requestId);
-      return;
-    }
-
-    // Any outcome other than "Ollama produced a non-empty description" still has raw image bytes —
-    // forward imageContext so the orchestrator can delegate to a vision-capable catalog agent.
+    // Siempre reenviar pixels en imageContext si hay buffer: el fast-path de texto no ve imágenes —
+    // aunque Ollama haya devuelto texto, puede ser inútil o alucinado; los bytes permiten vision_agent / presets.
     const pathLine = savedPath ? `Archivo: ${savedOriginalName} en ${savedPath}.` : `Archivo: ${savedOriginalName}.`;
-    const ollamaHint =
-      visionResult.success && !visionResult.description?.trim()
-        ? '\n[Nota interna: Ollama devolvió descripción vacía — los píxeles van en imageContext.]'
-        : !visionResult.success
-          ? `\n[Nota interna: pre-análisis local falló — ${visionResult.error ?? 'sin detalle'}. Los píxeles van en imageContext.]`
-          : '';
+    const ollamaLocal =
+      visionResult.success && visionResult.description?.trim()
+        ? `\n\n[Resumen modelo local Ollama solo como pista — verificar con visión:]\n${visionResult.description.trim()}`
+        : visionResult.success && !visionResult.description?.trim()
+          ? '\n\n[Nota: Ollama devolvió descripción vacía — la fuente de verdad son los píxeles en imageContext.]'
+          : `\n\n[Nota: pre-análisis local falló — ${visionResult.error ?? 'sin detalle'}. La fuente de verdad son los píxeles en imageContext.]`;
 
-    let delegateMessage = `${who} envió una imagen.${ollamaHint}
+    let messageText = `[${who} mandó una imagen: ${savedOriginalName}]`;
+    if (savedPath) {
+      messageText += `\nEstá guardado en ${savedPath}.`;
+    }
+    messageText += `${ollamaLocal}
 
 El asistente principal no debe inventar contenido visual sin delegar. Elegí en THINK un agente del catálogo que pueda analizar imágenes (preset del usuario o vision_agent) y delegá con una tarea concreta.
 
 Tarea sugerida: Describí en detalle el contenido de la imagen. Si hay código, texto o mensajes de error, transcribilos exactamente. Si hay un diagrama o gráfico, describí su estructura y contenido.`;
     if (captionTrim) {
-      delegateMessage += `\n\nInstrucción del usuario (caption): ${captionTrim}`;
+      messageText += `\n\nInstrucción del usuario (caption): ${captionTrim}`;
     }
-    delegateMessage += `\n\n${pathLine}`;
+    messageText += `\n\n${pathLine}`;
 
     if (!visionResult.success && visionResult.canRetry) {
       await safeReply(ctx, '🔍 Analizando la imagen con un agente especializado...');
     }
 
-    runBackgroundProcessing(ctx, userId, delegateMessage, conversationId, explicitAgentId, requestId, undefined, {
+    runBackgroundProcessing(ctx, userId, messageText, conversationId, explicitAgentId, requestId, undefined, {
       base64: buffer.toString('base64'),
       mimeType: 'image/jpeg',
     });
