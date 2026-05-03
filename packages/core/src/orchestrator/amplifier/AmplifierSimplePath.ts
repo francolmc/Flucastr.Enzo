@@ -616,8 +616,9 @@ Exact tool names registered in this runtime (includes MCP as listed above): ${ex
 
 CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
 Never invent tool names. If you cannot complete the task with these tools, respond in plain text.
-MCP tools appear as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill name from RELEVANT SKILLS as the "tool" value; skills are instructions only.
+MCP tools appear as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill id, skill title, product name, or CLI/binary name mentioned in prose as your JSON **tool** — those belong inside **execute_command**.input.**command**, not as **tool**.
 WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
+WRONG: {"action":"tool","tool":"<anything_not_in_exact_allowlist>","input":{}}
 RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
 
 Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):

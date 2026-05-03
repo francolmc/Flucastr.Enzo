@@ -56,7 +56,9 @@ export function buildRelevantSkillsSection(skills: RelevantSkill[]): string {
       '  """',
     ].join('\n');
   });
-  return `\nRELEVANT SKILLS FOR THIS REQUEST (follow these instructions):\n${blocks.join('\n\n')}\n`;
+  return `\nRELEVANT SKILLS FOR THIS REQUEST (follow these instructions):\n${blocks.join(
+    '\n\n'
+  )}\n\nSKILLS ARE NOT TOOL IDS: text below may name programs, products, or CLIs — that names what belongs inside a shell command string. For host execution choose **execute_command** and put one full shell line in **input.command**. The JSON **tool** field must still be copied exactly from AVAILABLE TOOLS (never the skill slug, vendor name, or a CLI executable name).\n`;
 }
 
 export function extractOutputTemplates(skills: RelevantSkill[]): string {
@@ -92,6 +94,8 @@ export function buildToolsPrompt(tools: Tool[]): string {
 
   return `AVAILABLE TOOLS:
 ${toolList}
+
+The names in the list above are the ONLY valid JSON values for "tool". Any prose or skill that mentions terminals, shells, vendors, APIs, Git hosts, containers, orchestrators, or command-line binaries still maps to executing a real shell line via **execute_command** with that line in input.command — never invent an extra tool whose name echoes the topic.
 
 CANONICAL TOOL CALL (only when execution is needed):
 {"action":"tool","tool":"<exact_name>","input":{...}}
