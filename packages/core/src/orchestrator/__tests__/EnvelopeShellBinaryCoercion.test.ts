@@ -54,6 +54,18 @@ console.log('EnvelopeShellBinaryCoercion tests...\n');
 
 {
   const tools: ExecutableTool[] = [execToolStub()];
+  const r = normalizeFastPathToolCall({ tool: 'read_repo', query: 'list' }, tools);
+  if (r.toolName === 'execute_command') {
+    throw new Error('read_repo snake_case hallucination must not coerce to shell');
+  }
+  if (r.toolName !== 'read_repo') {
+    throw new Error(JSON.stringify(r));
+  }
+  console.log('ok: malformed flat envelope read_repo+query stays unknown tool');
+}
+
+{
+  const tools: ExecutableTool[] = [execToolStub()];
   const r = normalizeFastPathToolCall(
     { action: 'tool', tool: 'read_github_repositories', input: {} },
     tools
@@ -65,6 +77,15 @@ console.log('EnvelopeShellBinaryCoercion tests...\n');
     throw new Error(JSON.stringify(r));
   }
   console.log('ok: read_github_repositories + empty input → not execute_command');
+}
+
+{
+  const tools: ExecutableTool[] = [execToolStub()];
+  const r = normalizeFastPathToolCall({ action: '', tool: 'read_repo', input: {} }, tools);
+  if (r.toolName === 'execute_command') {
+    throw new Error('read_repo single underscore fake id must not become execute_command');
+  }
+  console.log('ok: read_repo + inferred tool envelope → not execute_command');
 }
 
 {

@@ -203,11 +203,11 @@ export function coerceEnvelopeShellBinaryToExecuteCommand(
   const args = typeof toolInput.args === 'string' ? toolInput.args.trim() : '';
   const fragment = [comando, args].filter(Boolean).join(' ').trim();
 
-  /** Without command/args, models often emit API-style fake ids (e.g. read_github_repositories). Never coerce those to a shell argv. */
+  /** Without command/args, models often emit RPC-like fake ids (`read_repo`, `read_github_repositories`). Snake_case rarely names a lone PATH executable — reject. */
   if (!fragment) {
     const underscoreCount = (lead.match(/_/g) ?? []).length;
     const MAX_LEAD_CHARS_EMPTY_FRAGMENT = 28;
-    if (underscoreCount >= 2 || lead.length > MAX_LEAD_CHARS_EMPTY_FRAGMENT) {
+    if (underscoreCount >= 1 || lead.length > MAX_LEAD_CHARS_EMPTY_FRAGMENT) {
       return null;
     }
   }
@@ -267,6 +267,28 @@ export function normalizeFastPathToolCall(
     toolInput = { ...(rawIn as Record<string, unknown>) };
   }
 
+  /** Flat payloads like {"tool":"read_repo","query":"list"} — fold extras into toolInput for coerce/validators. */
+  const envelopeOnlyKeys = new Set([
+    'tool',
+    'herramienta',
+    'action',
+    'accion',
+    'input',
+    'entrada',
+  ]);
+  for (const [k, v] of Object.entries(normalized as Record<string, unknown>)) {
+    if (envelopeOnlyKeys.has(k)) continue;
+    if (toolInput[k] === undefined) toolInput[k] = v;
+  }
+
+  /** Missing `action` but `tool` present — still a tool-invocation envelope (models often omit action). */
+  const envelopeActionForCoerce =
+    envelopeActionRaw.trim() !== ''
+      ? envelopeActionRaw
+      : String(normalized.tool ?? '').trim() !== ''
+        ? 'tool'
+        : '';
+
   const knownToolNames = new Set<string>();
   for (const tool of executableTools) {
     knownToolNames.add(tool.name.toLowerCase());
@@ -280,7 +302,7 @@ export function normalizeFastPathToolCall(
     } else {
       const rawTool = String(normalized.tool ?? '').trim();
       const shellBinaryShim = coerceEnvelopeShellBinaryToExecuteCommand(
-        envelopeActionRaw,
+        envelopeActionForCoerce,
         rawTool,
         toolInput,
         executableTools

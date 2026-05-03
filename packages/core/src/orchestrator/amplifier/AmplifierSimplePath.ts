@@ -994,21 +994,29 @@ Never invent tool names.`;
         }
       } else if (toolName && toolName !== 'none') {
         log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
-        if (
-          process.env.ENZO_FASTPATH_ALLOWLIST_RETRY === 'true' &&
-          !consumedAllowlistParseRetry
-        ) {
+        const allowlistRetryEnv = process.env.ENZO_FASTPATH_ALLOWLIST_RETRY;
+        /** Default ON for MODERATE (one repair completion). Set ENZO_FASTPATH_ALLOWLIST_RETRY=false to disable; true forces retry on SIMPLE too. */
+        const shouldRetryUnknownTool =
+          allowlistRetryEnv === 'true' ||
+          (allowlistRetryEnv !== 'false' && isModerate);
+        if (shouldRetryUnknownTool && !consumedAllowlistParseRetry) {
           consumedAllowlistParseRetry = true;
           try {
+            const hostCliHint =
+              input.prefersHostTools === true
+                ? ` Host / authenticated CLI asks (repos, kubectl, Docker, …) MUST use **execute_command** only: {"action":"tool","tool":"execute_command","input":{"command":"…full shell line…"}} — never RPC-style ids like read_repo as "tool".
+`
+                : '';
             const allowlistRepair = await withTimeout(
               baseProvider.complete({
                 messages: [
                   {
                     role: 'system',
                     content: `${buildAssistantIdentityPrompt(input)}
-The assistant tried to call a tool that does not exist. Output EXACTLY one of:
-(1) {"action":"tool","tool":"<name>","input":{...}} where <name> is one of: ${exactAllowlist}
-(2) Plain text if no tool fits the user message.`,
+The assistant emitted a fake or unsupported tool id (skills and prose are NOT tool names). Output EXACTLY one of:
+(1) Canonical JSON ONLY: {"action":"tool","tool":"<name>","input":{...}} where <name> is ONE of: ${exactAllowlist}
+(2) Plain text only if truly no registered tool fits.
+Include "action" and "input" literally — malformed shapes are rejected.${hostCliHint}`,
                   },
                   ...resolveAmplifierDialogueMessages(input),
                   { role: 'user', content: input.message },
