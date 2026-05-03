@@ -84,9 +84,8 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
     const stepsCompleted = completedToolActs;
     const totalSteps = cursor?.totalStepsAllSkills ?? buildStepDescriptionsForSkill(skill).length;
     const stepDescriptions = buildStepDescriptionsForSkill(skill);
-    const totalInCurrentSkill = Math.max(1, skill.steps?.length ?? stepDescriptions.length);
+    const totalInCurrentSkill = stepDescriptions.length;
     const localNext = cursor?.stepWithinSkill ?? Math.min(stepsCompleted + 1, totalInCurrentSkill);
-    const expectedToolForNextStep = skill.steps?.[localNext - 1]?.tool;
     const observationSummary = previousObservations
       .map((s, i) => `  Tool step ${i + 1} result: ${(s.output ?? '').substring(0, 300)}`)
       .join('\n');
@@ -109,7 +108,6 @@ Results so far:
 ${observationSummary}
 
 CURRENT TASK: Execute local step ${localNext} of this segment (${skill.name}). Global tool-step ${stepsCompleted + 1} of ${totalSteps}.
-${expectedToolForNextStep ? `REQUIRED TOOL FOR THIS STEP: ${expectedToolForNextStep}` : ''}
 Return ONLY a JSON tool call for this step. {"action":"none"} is NOT valid until all ${totalSteps} global tool steps are complete.
 Do NOT return conversational text. Do NOT return {"action":"skill"}.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;

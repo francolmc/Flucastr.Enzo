@@ -18,7 +18,6 @@ function rs(p: Partial<RelevantSkill> & Pick<RelevantSkill, 'id'>): RelevantSkil
     description: p.description ?? '',
     content: p.content ?? '',
     relevanceScore: p.relevanceScore ?? 0,
-    steps: p.steps,
   };
 }
 
@@ -59,20 +58,18 @@ export async function runSkillAlgorithmProgressTests(): Promise<void> {
   const weatherLike = rs({
     id: 'weather',
     name: 'weather',
-    steps: [
-      { id: 'a', description: 'geo' },
-      { id: 'b', description: 'forecast' },
-    ],
+    content: 'Proporciona información meteorológica.\nPaso 1: Geocodificar.\nPaso 2: Consultar forecast.',
   });
   assert.equal(isMultiStepRelevantSkill(weatherLike), true);
   assert.equal(stepCountForRelevantSkill(weatherLike), 2);
 
-  const oneStepYaml = rs({
-    id: 'one',
-    name: 'one',
-    steps: [{ id: 'only', description: 'x' }],
+  const simple = rs({
+    id: 'simple',
+    name: 'simple',
+    content: 'Una skill simple.',
   });
-  assert.equal(isMultiStepRelevantSkill(oneStepYaml), false);
+  assert.equal(isMultiStepRelevantSkill(simple), false);
+  assert.equal(stepCountForRelevantSkill(simple), 1);
 
   assert.equal(totalToolActsForMultiStepPlan([weatherLike]), 2);
 
@@ -87,18 +84,12 @@ export async function runSkillAlgorithmProgressTests(): Promise<void> {
   const segA = rs({
     id: 'a',
     relevanceScore: 0.95,
-    steps: [
-      { id: 's1', description: 'first' },
-      { id: 's2', description: 'second' },
-    ],
+    content: 'Paso 1: first.\nPaso 2: second.',
   });
   const segB = rs({
     id: 'b',
     relevanceScore: 0.5,
-    steps: [
-      { id: 't1', description: 'a' },
-      { id: 't2', description: 'b' },
-    ],
+    content: 'Paso 1: a.\nPaso 2: b.',
   });
   const plan = buildMultiStepAlgorithmPlan([segB, segA]);
   assert.equal(plan[0]?.skill.id, 'a');

@@ -1,6 +1,6 @@
 import type { LLMProvider } from '../providers/types.js';
 import { SkillRegistry } from '../skills/SkillRegistry.js';
-import { LoadedSkill, SkillStep } from '../skills/SkillLoader.js';
+import { LoadedSkill } from '../skills/SkillLoader.js';
 import { foldDiacritics } from '../utils/foldDiacritics.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 
@@ -10,11 +10,10 @@ export interface RelevantSkill {
   description: string
   content: string
   relevanceScore: number
-  steps?: SkillStep[]
 }
 
 export type SkillResolveOptions = {
-  /** When ENZO_SKILLS_LLM_SELECTION is true (default), used together with withTimeout for semantic reordering after heuristic scores. Set to false for heuristic-only selection. */
+  /** When ENZO_SKILLS_LLM_SELECTION is true (default), used together with withTimeout for LLM-based skill selection. Set to false for heuristic-only selection. */
   llm?: LLMProvider;
   withTimeout?: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
 };
@@ -65,11 +64,9 @@ export class SkillResolver {
       console.log('[SkillResolver] No enabled skills. Using fallback over all loaded skills.')
     }
 
-    const relevant: RelevantSkill[] = []
-    const scored: RelevantSkill[] = []
-    const threshold = this.resolveThreshold()
     const maxSkills = this.resolveMaxSkills()
 
+    const scored: RelevantSkill[] = []
     for (const skill of skillPool) {
       const score = this.calculateRelevance(message, skill)
 
@@ -83,78 +80,176 @@ export class SkillResolver {
         description: skill.metadata.description,
         content: skill.content,
         relevanceScore: score,
-        steps: skill.metadata.steps,
       }
 
       scored.push(candidate)
-      if (score >= threshold) relevant.push(candidate)
     }
 
-    let heuristicResult: RelevantSkill[]
-    if (relevant.length > 0) {
-      heuristicResult = relevant
-        .sort((a, b) => b.relevanceScore - a.relevanceScore)
-        .slice(0, maxSkills)
-    } else {
-      const fallbackThreshold = this.resolveFallbackThreshold()
-      const fallbackMax = this.resolveFallbackMaxSkills(maxSkills)
-      heuristicResult = scored
-        .filter((skill) => skill.relevanceScore >= fallbackThreshold)
-        .sort((a, b) => b.relevanceScore - a.relevanceScore)
-        .slice(0, fallbackMax)
+    const preFilterLimit = this.resolvePreFilterLimit()
+    const preFiltered = scored
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, preFilterLimit)
+
+    if (process.env.ENZO_DEBUG === 'true') {
+      console.log('[SkillResolver] Pre-filtered skills:', preFiltered.map(s => s.id).join(', '))
     }
 
-    const semantic = await this.trySemanticReordering(message, scored, maxSkills, options)
-    if (semantic && semantic.length > 0) {
+    const llmSelected = await this.selectSkillsByLLM(message, preFiltered, maxSkills, options)
+    if (llmSelected && llmSelected.length > 0) {
       if (process.env.ENZO_DEBUG === 'true') {
-        console.log('[SkillResolver] Applied ENZO_SKILLS_LLM_SELECTION ranking:', semantic.map((s) => s.id).join(', '))
+        console.log('[SkillResolver] LLM selected skills:', llmSelected.map((s) => s.id).join(', '))
       }
-      return semantic
+      return llmSelected
     }
 
-    return heuristicResult
+    const fallbackResult = scored
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, maxSkills)
+
+    if (process.env.ENZO_DEBUG === 'true') {
+      console.log('[SkillResolver] Using heuristic fallback:', fallbackResult.map((s) => s.id).join(', '))
+    }
+
+    return fallbackResult
+  }
+
+  private resolvePreFilterLimit(): number {
+    const fromEnv = Number(process.env.ENZO_SKILLS_LLM_PRE_FILTER ?? 5)
+    if (Number.isNaN(fromEnv)) return 5
+    return Math.max(1, Math.min(fromEnv, 20))
+  }
+
+  private fewShotEnabled(): boolean {
+    return (process.env.ENZO_SKILLS_FEW_SHOT_ENABLED ?? 'true').toLowerCase() !== 'false'
   }
 
   private semanticSelectionEnabled(): boolean {
     return (process.env.ENZO_SKILLS_LLM_SELECTION ?? 'true').toLowerCase() === 'true'
   }
 
-  private semanticMinHeuristic(): number {
-    const fromEnv = Number(process.env.ENZO_SKILLS_SEMANTIC_MIN_HEURISTIC ?? 0.08)
-    if (Number.isNaN(fromEnv)) return 0.08
-    return Math.min(Math.max(fromEnv, 0), 1)
+  private extractExampleFromSkill(skillContent: string): string | null {
+    const lines = skillContent.split('\n')
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (/^[-•*]\s+./.test(trimmed)) {
+        const example = trimmed.replace(/^[-•*]\s+/, '').trim()
+        if (example.length > 0) {
+          return example
+        }
+      }
+    }
+    return null
   }
 
-  private async trySemanticReordering(
+  private generateSyntheticExample(name: string, description: string): string {
+    const normalizedName = name.toLowerCase().trim()
+    const normalizedDesc = description.toLowerCase()
+
+    const templates: Record<string, string[]> = {
+      weather: ['dime el clima en [ciudad]', 'qué tiempo hace en [ciudad]'],
+      datetime: ['qué hora es', 'qué día es hoy'],
+      capture: ['anota esta idea', 'quiero capturar una idea'],
+      'enzo-notes': ['toma nota de', 'escribe esto en notas'],
+      'focus-advisor': ['ayúdame a concentrarme', 'cómo puedo ser más productivo'],
+      'morning-briefing': ['dame el briefing matutino', 'resumen de la mañana'],
+      'project-context': ['qué es este proyecto', 'dame contexto del proyecto'],
+      'github-cli-enzo': ['busca en github', 'muéstrame los commits'],
+    }
+
+    if (templates[normalizedName]) {
+      return templates[normalizedName][0]
+    }
+
+    if (normalizedDesc.includes('clima') || normalizedDesc.includes('tiempo') || normalizedDesc.includes('temperatura')) {
+      return 'dime el clima en [ciudad]'
+    }
+    if (normalizedDesc.includes('fecha') || normalizedDesc.includes('hora')) {
+      return 'qué hora es'
+    }
+    if (normalizedDesc.includes('nota') || normalizedDesc.includes('idea') || normalizedDesc.includes('capturar')) {
+      return 'anota esta idea'
+    }
+    if (normalizedDesc.includes('focus') || normalizedDesc.includes('concentr')) {
+      return 'ayúdame a concentrarme'
+    }
+    if (normalizedDesc.includes('briefing') || normalizedDesc.includes('mañana')) {
+      return 'dame el briefing matutino'
+    }
+    if (normalizedDesc.includes('proyecto') || normalizedDesc.includes('contexto')) {
+      return 'qué es este proyecto'
+    }
+    if (normalizedDesc.includes('github')) {
+      return 'busca en github'
+    }
+
+    return `quiero usar ${normalizedName}`
+  }
+
+  private buildFewShotExamples(skills: { id: string; name: string; description: string; content: string }[]): string {
+    const examples: string[] = []
+
+    for (const skill of skills) {
+      let example = this.extractExampleFromSkill(skill.content)
+      if (!example) {
+        example = this.generateSyntheticExample(skill.name, skill.description)
+      }
+      if (example) {
+        examples.push(`- "${example}" -> {"skillIds": ["${skill.id}"]}`)
+      }
+    }
+
+    if (examples.length === 0) {
+      return ''
+    }
+
+    return '\nFEW-SHOT EXAMPLES:\n' + examples.slice(0, 5).join('\n')
+  }
+
+  private async selectSkillsByLLM(
     message: string,
-    scored: RelevantSkill[],
+    preFiltered: RelevantSkill[],
     maxSkills: number,
     options?: SkillResolveOptions
   ): Promise<RelevantSkill[] | null> {
-    if (!this.semanticSelectionEnabled() || !options?.llm || !options.withTimeout || scored.length === 0) {
+    if (!this.semanticSelectionEnabled() || !options?.llm || !options.withTimeout || preFiltered.length === 0) {
       return null
     }
 
-    const catalog = scored.map((s) => ({
+    const catalog = preFiltered.map((s) => ({
       id: s.id,
       name: s.name,
       description: (s.description ?? '').slice(0, 500),
+      content: s.content,
     }))
 
-    const system = `You route user tasks to assistant skills. Given the user message and a skill catalog, respond with ONE JSON object only:
+    let fewShotSection = ''
+    if (this.fewShotEnabled()) {
+      fewShotSection = this.buildFewShotExamples(catalog)
+    }
+
+    const systemBase = `Eres un sistema de enrutamiento de habilidades. Dado el mensaje del usuario y un catálogo de skills, selecciona la(s) skill(s) más relevante(s) basándote en la descripción de cada skill.`
+
+    const systemRules = `
+Responde con UN SOLO objeto JSON:
 {"skillIds":["id1","id2"]}
-Rules:
-- Include at most ${maxSkills} ids, most relevant first.
-- Use only ids that appear in the catalog.
-- If no skill fits, use {"skillIds":[]}.
-- Do not wrap in markdown. No other keys.`
+Reglas:
+- Incluye hasta ${maxSkills} ids, más relevantes primero.
+- Usa solo ids del catálogo.
+- Si ninguna skill es relevante, usa {"skillIds":[]}.
+- No uses markdown. Solo el objeto JSON.`
+
+    const system = systemBase + systemRules + fewShotSection
+
+    const catalogJson = catalog
+      .map((c) => `- ${c.id}: ${c.name} - ${c.description}`)
+      .join('\n')
 
     const userPayload = [
-      'USER MESSAGE:',
+      'MENSAJE DEL USUARIO:',
       message.slice(0, 4000),
       '',
-      'CATALOG:',
-      JSON.stringify(catalog),
+      'CATÁLOGO DE SKILLS:',
+      catalogJson,
     ].join('\n')
 
     try {
@@ -164,50 +259,49 @@ Rules:
             { role: 'system', content: system },
             { role: 'user', content: userPayload },
           ],
-          temperature: 0,
+          temperature: 0.3,
           maxTokens: 256,
         }),
         60_000,
-        'skill-semantic-rank'
+        'skill-llm-selection'
       )
 
       const raw = resp.content ?? ''
       const parsed = parseFirstJsonObject<{ skillIds?: unknown }>(raw, { tryRepair: true })
+
       if (!parsed?.value || !Array.isArray(parsed.value.skillIds)) {
+        if (process.env.ENZO_DEBUG === 'true') {
+          console.warn('[SkillResolver] LLM selection failed: invalid JSON response')
+        }
         return null
       }
 
       const ids = parsed.value.skillIds.filter((x): x is string => typeof x === 'string')
-      const byId = new Map(scored.map((s) => [s.id, s]))
-      const minHeuristic = this.semanticMinHeuristic()
+      const byId = new Map(preFiltered.map((s) => [s.id, s]))
+
       const picked: RelevantSkill[] = []
       const used = new Set<string>()
 
       for (const id of ids) {
         const s = byId.get(id)
-        if (s && !used.has(id) && s.relevanceScore >= minHeuristic) {
+        if (s && !used.has(id)) {
           used.add(id)
-          picked.push({ ...s, relevanceScore: Math.max(s.relevanceScore, 0.97) })
+          picked.push({ ...s, relevanceScore: 1.0 })
         }
         if (picked.length >= maxSkills) break
       }
 
       if (picked.length === 0) {
+        if (process.env.ENZO_DEBUG === 'true') {
+          console.log('[SkillResolver] LLM returned no valid skill ids, using fallback')
+        }
         return null
-      }
-
-      const rest = [...scored]
-        .sort((a, b) => b.relevanceScore - a.relevanceScore)
-        .filter((s) => !used.has(s.id))
-      for (const s of rest) {
-        if (picked.length >= maxSkills) break
-        picked.push(s)
       }
 
       return picked
     } catch (err) {
       if (process.env.ENZO_DEBUG === 'true') {
-        console.warn('[SkillResolver] Semantic ranking failed:', err)
+        console.warn('[SkillResolver] LLM selection failed:', err)
       }
       return null
     }
@@ -218,48 +312,18 @@ Rules:
     return fromEnv !== 'false'
   }
 
-  private resolveThreshold(): number {
-    const fromEnv = Number(process.env.ENZO_SKILLS_RELEVANCE_THRESHOLD ?? 0.3)
-    if (Number.isNaN(fromEnv)) return 0.3
-    return Math.min(Math.max(fromEnv, 0), 1)
-  }
-
   private resolveMaxSkills(): number {
     const fromEnv = Number(process.env.ENZO_SKILLS_MAX_INJECTION ?? 3)
     if (Number.isNaN(fromEnv)) return 3
     return Math.max(1, Math.floor(fromEnv))
   }
 
-  private resolveFallbackThreshold(): number {
-    const fromEnv = Number(process.env.ENZO_SKILLS_FALLBACK_RELEVANCE_THRESHOLD ?? 0.12)
-    if (Number.isNaN(fromEnv)) return 0.12
-    return Math.min(Math.max(fromEnv, 0), 1)
-  }
-
-  private resolveFallbackMaxSkills(maxSkills: number): number {
-    const fromEnv = Number(process.env.ENZO_SKILLS_FALLBACK_MAX_INJECTION ?? 1)
-    if (Number.isNaN(fromEnv)) return 1
-    return Math.min(maxSkills, Math.max(1, Math.floor(fromEnv)))
-  }
-
   private calculateRelevance(message: string, skill: LoadedSkill): number {
-    const haystack = foldDiacritics(message.toLowerCase())
-    const triggers = skill.metadata.triggers
-    if (triggers?.length) {
-      for (const trigger of triggers) {
-        if (!trigger) continue
-        const needle = foldDiacritics(trigger.toLowerCase()).trim()
-        if (needle.length === 0) continue
-        if (haystack.includes(needle)) return 1.0
-      }
-    }
-
     const normalizedMessage = this.normalizeText(message)
     const normalizedName = this.normalizeText(skill.metadata.name)
     const normalizedDescription = this.normalizeText(skill.metadata.description)
     const normalizedContent = this.normalizeText(skill.content)
 
-    // 1) Exact / near-exact skill name match should dominate.
     if (normalizedMessage.includes(normalizedName)) return 1.0
 
     const messageTokens = this.extractTokens(normalizedMessage)
@@ -272,8 +336,6 @@ Rules:
     const contentOverlap = this.computeTokenOverlap(messageTokens, contentTokens)
     const exampleOverlap = this.matchExamples(normalizedMessage, normalizedContent)
 
-    // Weighted scoring, tuned to prefer name+description intent,
-    // while allowing examples/content to rescue partial phrasings.
     const score =
       (nameOverlap * 0.45) +
       (descriptionOverlap * 0.30) +
@@ -320,7 +382,6 @@ Rules:
   }
 
   private matchExamples(message: string, skillContent: string): number {
-    // Extraer líneas de ejemplos del SKILL.md (líneas que empiezan con - o •)
     const exampleLines = skillContent
       .split('\n')
       .filter(line => /^[-•*]\s+/.test(line.trim()))
@@ -328,7 +389,6 @@ Rules:
 
     if (exampleLines.length === 0) return 0
 
-    // Para cada ejemplo, calcular qué tan similar es al mensaje
     let bestMatch = 0
 
     for (const example of exampleLines) {

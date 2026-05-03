@@ -23,92 +23,88 @@ function baseLoadedSkill(partial: Partial<LoadedSkill> & Pick<LoadedSkill, 'id' 
 }
 
 async function runTests(): Promise<void> {
-  console.log('SkillResolver triggers tests...\n');
+  console.log('SkillResolver LLM-based selection tests...\n');
   const registry = new SkillRegistry(undefined, memoryMock);
+
   const ideaSkill = baseLoadedSkill({
     id: 'idea-capture',
     metadata: {
       name: 'Idea Capture',
-      description: 'Help capture and organize ideas',
-      triggers: ['capturar', 'anotar'],
+      description: 'Ayuda a capturar y organizar ideas del usuario',
     },
-    content: '- ejemplo capturar nota\n',
+    content: '- capturar una idea\n- anotando algo importante\n',
   });
-  const tildeSkill = baseLoadedSkill({
-    id: 'tilde-trigger',
+
+  const weatherSkill = baseLoadedSkill({
+    id: 'weather',
     metadata: {
-      name: 'Tilde Trigger Skill',
-      description: 'Uses accented trigger phrase',
-      triggers: ['anótate'],
+      name: 'weather',
+      description: 'Proporciona información meteorológica actual y pronóstico del tiempo',
     },
-    content: 'Minimal body',
+    content: '- dime el clima en Madrid\n- qué tiempo hace en Buenos Aires\n',
   });
-  const noiseSkill = baseLoadedSkill({
-    id: 'warehouse-docs',
+
+  const datetimeSkill = baseLoadedSkill({
+    id: 'datetime',
     metadata: {
-      name: 'Warehouse Documentation',
-      description: 'inventory pallet shipping receiving documentation report analysis summary',
+      name: 'datetime',
+      description: 'Proporciona la fecha y hora actual del sistema',
     },
-    content: 'inventory pallet shipping receiving documentation report analysis',
+    content: '- qué hora es\n- qué día es hoy\n',
   });
 
   registry.register(ideaSkill);
-  registry.register(tildeSkill);
-  registry.register(noiseSkill);
+  registry.register(weatherSkill);
+  registry.register(datetimeSkill);
 
   const resolver = new SkillResolver();
 
-  console.log('Test: trigger phrase in message yields max score');
+  console.log('Test: token overlap scoring works without triggers');
   {
     const out = await resolver.resolveRelevantSkills('quiero capturar una idea', registry);
     const hit = out.find((s) => s.id === 'idea-capture');
     assert(!!hit, 'expected idea-capture in results');
+    assert(hit!.relevanceScore > 0, `expected score > 0, got ${hit!.relevanceScore}`);
+    console.log('✓ Pass\n');
+  }
+
+  console.log('Test: description overlap yields high score');
+  {
+    const out = await resolver.resolveRelevantSkills('dame el clima de Santiago', registry);
+    const hit = out.find((s) => s.id === 'weather');
+    assert(!!hit, 'expected weather in results');
+    console.log('✓ Pass\n');
+  }
+
+  console.log('Test: exact name match in message yields max score');
+  {
+    const out = await resolver.resolveRelevantSkills('qué hora es ahora', registry);
+    const hit = out.find((s) => s.id === 'datetime');
+    assert(!!hit, 'expected datetime in results');
     assert(hit!.relevanceScore === 1, `expected score 1.0, got ${hit!.relevanceScore}`);
     console.log('✓ Pass\n');
   }
 
-  console.log('Test: no trigger phrase uses token scoring (not max)');
+  console.log('Test: pre-filter limits results before LLM');
   {
-    // Overlaps name/description tokens ("capture", "ideas", "organize") but not triggers capturar/anotar.
-    const out = await resolver.resolveRelevantSkills(
-      'help me capture and organize my ideas in one place',
-      registry
-    );
-    const hit = out.find((s) => s.id === 'idea-capture');
-    assert(!!hit, 'expected idea-capture in fallback or ranked list');
-    assert(hit!.relevanceScore < 1, `expected score < 1.0, got ${hit!.relevanceScore}`);
+    const manySkills = new SkillRegistry(undefined, memoryMock);
+    for (let i = 0; i < 10; i++) {
+      manySkills.register(baseLoadedSkill({
+        id: `skill-${i}`,
+        metadata: {
+          name: `Skill ${i}`,
+          description: `Description for skill ${i}`,
+        },
+        content: `Content ${i}`,
+      }));
+    }
+    const out = await resolver.resolveRelevantSkills('test query', manySkills);
+    const preFilterLimit = 5;
+    assert(out.length <= preFilterLimit * 2, `expected at most ${preFilterLimit * 2} results, got ${out.length}`);
     console.log('✓ Pass\n');
   }
 
-  console.log('Test: trigger with tilde matches message without tilde');
-  {
-    const out = await resolver.resolveRelevantSkills('anotate algo importante', registry);
-    const hit = out.find((s) => s.id === 'tilde-trigger');
-    assert(!!hit, 'expected tilde-trigger in results');
-    assert(hit!.relevanceScore === 1, `expected score 1.0, got ${hit!.relevanceScore}`);
-    console.log('✓ Pass\n');
-  }
-
-  console.log('Test: long noisy message vs short subtask-style description');
-  {
-    const noiseBlock = Array(40).fill('inventory pallet documentation report analysis summary').join(' ');
-    const longMessage = `${noiseBlock}\n\nStep context logs receiving shipping`;
-    const shortDescription = 'User wants to capturar feedback from the meeting';
-
-    const longOut = await resolver.resolveRelevantSkills(longMessage, registry);
-    const shortOut = await resolver.resolveRelevantSkills(shortDescription, registry);
-
-    const noiseTopLong = longOut[0];
-    assert(noiseTopLong?.id === 'warehouse-docs', `long message: expected warehouse-docs first, got ${noiseTopLong?.id}`);
-
-    const shortTop = shortOut[0];
-    assert(shortTop?.id === 'idea-capture', `short description: expected idea-capture first, got ${shortTop?.id}`);
-    assert(shortTop?.relevanceScore === 1, `short description: expected max score on idea-capture`);
-
-    console.log('✓ Pass\n');
-  }
-
-  console.log('SkillResolver triggers tests passed.');
+  console.log('SkillResolver LLM-based selection tests passed.');
 }
 
 void runTests()

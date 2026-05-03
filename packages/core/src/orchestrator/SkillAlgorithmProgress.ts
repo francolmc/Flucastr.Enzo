@@ -1,22 +1,17 @@
 import type { Step } from './types.js';
 import type { RelevantSkill } from './SkillResolver.js';
 
-/** Counts completed tool executions in the amplifier trace (aligned with multi-step guardrails). */
 export function countCompletedToolActs(steps: Step[]): number {
   return steps.filter((s) => s.type === 'act' && s.action === 'tool').length;
 }
 
 export function isMultiStepRelevantSkill(skill: RelevantSkill): boolean {
-  if (skill.steps?.length && skill.steps.length >= 2) return true;
   const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
   const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, ''), 10) || 0), 0);
   return maxN >= 2;
 }
 
 export function stepCountForRelevantSkill(skill: RelevantSkill): number {
-  if (skill.steps?.length && skill.steps.length >= 1) {
-    return Math.max(1, skill.steps.length);
-  }
   const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
   const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, ''), 10) || 0), 0);
   if (maxN >= 2) return maxN;
@@ -91,11 +86,6 @@ export function totalToolActsForMultiStepPlan(preResolvedSkills: RelevantSkill[]
 }
 
 export function buildStepDescriptionsForSkill(skill: RelevantSkill): string[] {
-  if (skill.steps?.length) {
-    return skill.steps.map(
-      (s, i) => `  Step ${i + 1}: ${s.description}${s.tool ? ` [tool: ${s.tool}]` : ''}`
-    );
-  }
   const pasoLines = (skill.content ?? '')
     .split('\n')
     .filter((l) => /^\d+\.\s/.test(l.trim()) || /\bpaso\s+\d+/i.test(l.trim()))

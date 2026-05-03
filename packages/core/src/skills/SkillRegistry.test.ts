@@ -27,11 +27,9 @@ async function runTests(): Promise<void> {
   assert(skill!.metadata.name === 'Test Skill Fixture', 'expected fixture name');
   console.log('✓ Passed\n');
 
-  console.log('Test: find by trigger');
-  const byTrigger = registry
-    .getAll()
-    .find((s) => s.metadata.triggers?.includes('enzo_test_trigger_alpha'));
-  assert(!!byTrigger && byTrigger.id === 'test-skill', 'expected trigger to resolve to test-skill');
+  console.log('Test: find by name (no triggers needed)');
+  const byName = registry.getAll().find((s) => s.id === 'test-skill');
+  assert(!!byName && byName.id === 'test-skill', 'expected test-skill to be found');
   console.log('✓ Passed\n');
 
   console.log('Test: startWatching when skills directory exists');
