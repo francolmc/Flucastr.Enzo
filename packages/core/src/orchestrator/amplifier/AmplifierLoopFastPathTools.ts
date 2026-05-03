@@ -173,6 +173,52 @@ export function coerceCalendarFastPathEnvelope(
   return merged;
 }
 
+/**
+ * Models sometimes emit `{"action":"tool","tool":"gh","input":{"command":"repo list"}}` — treating the shell
+ * binary as if it were an Enzo tool id. When `tool` is not registered, merge **generically** into
+ * `execute_command` by prefixing the fragment with that token. No per-product synonym lists (repos→repo list, etc.).
+ */
+export function coerceEnvelopeShellBinaryToExecuteCommand(
+  envelopeActionRaw: string,
+  rawToolFromEnvelope: string,
+  toolInput: Record<string, unknown>,
+  executableTools: ExecutableTool[]
+): { command: string } | null {
+  if (!executableTools.some((t) => t.name === 'execute_command')) return null;
+
+  const act = envelopeActionRaw.trim().toLowerCase();
+  if (act !== 'tool' && act !== 'herramienta') return null;
+
+  const lead = rawToolFromEnvelope.trim();
+  if (!lead) return null;
+  /** Single shell-like token only — avoids coercing arbitrary prose into "commands". */
+  if (!/^[\w.-]+$/i.test(lead)) return null;
+
+  const comando =
+    typeof toolInput.command === 'string'
+      ? toolInput.command.trim()
+      : typeof toolInput['comando'] === 'string'
+        ? String(toolInput['comando']).trim()
+        : '';
+  const args = typeof toolInput.args === 'string' ? toolInput.args.trim() : '';
+  const fragment = [comando, args].filter(Boolean).join(' ').trim();
+
+  const leadLc = lead.toLowerCase();
+  const fragLc = fragment.toLowerCase();
+
+  let line: string;
+  if (!fragment) {
+    line = lead;
+  } else if (fragLc === leadLc || fragLc.startsWith(`${leadLc} `) || fragLc.startsWith(`${leadLc}\t`)) {
+    line = fragment;
+  } else {
+    line = `${lead} ${fragment}`.trim();
+  }
+
+  if (!line.trim()) return null;
+  return { command: line };
+}
+
 export function normalizeFastPathToolCall(
   parsed: any,
   executableTools: ExecutableTool[]
@@ -222,6 +268,18 @@ export function normalizeFastPathToolCall(
     if (originalAction === 'execute_command' || originalAction === 'ejecutar_comando' || originalAction === 'ejecutar') {
       toolInput = { command: toolName };
       toolName = 'execute_command';
+    } else {
+      const rawTool = String(normalized.tool ?? '').trim();
+      const shellBinaryShim = coerceEnvelopeShellBinaryToExecuteCommand(
+        envelopeActionRaw,
+        rawTool,
+        toolInput,
+        executableTools
+      );
+      if (shellBinaryShim) {
+        toolInput = shellBinaryShim;
+        toolName = 'execute_command';
+      }
     }
   }
 
