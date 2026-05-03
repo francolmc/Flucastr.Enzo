@@ -1,7 +1,12 @@
 import type { Message, LLMProvider } from '../../providers/types.js';
 import type { AmplifierInput, Step } from '../types.js';
 import type { RelevantSkill } from '../SkillResolver.js';
-import { buildAssistantIdentityPrompt, buildRelevantSkillsSection, extractOutputTemplates } from './AmplifierLoopPromptHelpers.js';
+import {
+  buildAssistantIdentityPrompt,
+  buildRelevantSkillsSection,
+  capRelevantSkillsForPrompt,
+  extractOutputTemplates,
+} from './AmplifierLoopPromptHelpers.js';
 import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 import { VERIFY_PRESYNTHESIS_MARK } from './AmplifierVerifyPhase.js';
 
@@ -23,8 +28,9 @@ export async function runSynthesizePhase(
   const { baseProvider, withTimeout } = deps;
   const startTime = Date.now();
   const userLanguage = input.userLanguage || 'en';
-  const relevantSkillsSection = buildRelevantSkillsSection(resolvedSkills);
-  const requiredTemplateSection = extractOutputTemplates(resolvedSkills);
+  const skillsForPrompt = capRelevantSkillsForPrompt(resolvedSkills);
+  const relevantSkillsSection = buildRelevantSkillsSection(skillsForPrompt);
+  const requiredTemplateSection = extractOutputTemplates(skillsForPrompt);
 
   const needsHonestyAboutGaps =
     (context.includes(VERIFY_PRESYNTHESIS_MARK) || context.includes(SUBTASK_GUARD_MARK)) &&

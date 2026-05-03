@@ -203,6 +203,15 @@ export function coerceEnvelopeShellBinaryToExecuteCommand(
   const args = typeof toolInput.args === 'string' ? toolInput.args.trim() : '';
   const fragment = [comando, args].filter(Boolean).join(' ').trim();
 
+  /** Without command/args, models often emit API-style fake ids (e.g. read_github_repositories). Never coerce those to a shell argv. */
+  if (!fragment) {
+    const underscoreCount = (lead.match(/_/g) ?? []).length;
+    const MAX_LEAD_CHARS_EMPTY_FRAGMENT = 28;
+    if (underscoreCount >= 2 || lead.length > MAX_LEAD_CHARS_EMPTY_FRAGMENT) {
+      return null;
+    }
+  }
+
   const leadLc = lead.toLowerCase();
   const fragLc = fragment.toLowerCase();
 

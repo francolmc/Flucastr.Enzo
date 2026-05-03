@@ -39,6 +39,33 @@ export function resolveFastPathSkillContentLimit(): number {
   return Math.max(300, Math.floor(fromEnv));
 }
 
+/** Max number of skills injected into fast-path / synthesis prompts (by relevance). Override with ENZO_SKILLS_FASTPATH_MAX_COUNT. */
+export function resolveFastPathSkillMaxCount(): number {
+  const fromEnv = Number(process.env.ENZO_SKILLS_FASTPATH_MAX_COUNT ?? '6');
+  if (Number.isNaN(fromEnv)) return 6;
+  return Math.max(1, Math.min(20, Math.floor(fromEnv)));
+}
+
+/** Keeps the highest-ranked skills so prompts stay focused; does not change orchestrator routing logic when callers pass uncapped lists elsewhere. */
+export function capRelevantSkillsForPrompt(skills: RelevantSkill[]): RelevantSkill[] {
+  const max = resolveFastPathSkillMaxCount();
+  if (skills.length <= max) return skills;
+  return [...skills].sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, max);
+}
+
+/**
+ * Short fixed contract: skills (how-to) vs agents (delegate) vs tools (only host effects).
+ * Placed near the start of the system prompt for fast path and THINK.
+ */
+export function buildRuntimeThreeLayersContractPrompt(): string {
+  return `RUNTIME LAYERS (this turn only):
+- Skills: procedural text in RELEVANT SKILLS — how to build shell lines or follow a workflow. Not invocable tool ids; never put a skill name in JSON "tool".
+- Agents: specialists from the delegation catalog only, invoked with {"action":"delegate",...} using an exact agent id from that catalog. They do not run until the host dispatches delegation.
+- Tools: the ONLY valid names in {"action":"tool","tool":"..."} are those listed under AVAILABLE TOOLS (exact strings, including mcp_…). Host actions use these; for CLIs (gh, git, …) use **execute_command** and put the full line in **input.command**.
+
+Acting on this machine is only through Tools as listed. Skills and agents are not tools.`;
+}
+
 export function buildRelevantSkillsSection(skills: RelevantSkill[]): string {
   if (skills.length === 0) return '';
   const maxChars = resolveFastPathSkillContentLimit();
@@ -58,7 +85,7 @@ export function buildRelevantSkillsSection(skills: RelevantSkill[]): string {
   });
   return `\nRELEVANT SKILLS FOR THIS REQUEST (follow these instructions):\n${blocks.join(
     '\n\n'
-  )}\n\nSKILLS ARE NOT TOOL IDS: text below may name programs, products, or CLIs — that names what belongs inside a shell command string. For host execution choose **execute_command** and put one full shell line in **input.command**. The JSON **tool** field must still be copied exactly from AVAILABLE TOOLS (never the skill slug, vendor name, or a CLI executable name).\n`;
+  )}\n\nUse skill text for procedure and example shell lines; the JSON **tool** field must be an exact name from AVAILABLE TOOLS (see RUNTIME LAYERS above).\n`;
 }
 
 export function extractOutputTemplates(skills: RelevantSkill[]): string {

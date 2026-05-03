@@ -19,11 +19,7 @@ import { normalizeError } from './NormalizedError.js';
 import type { AmplifierLoopLog } from './amplifier/AmplifierLoopLog.js';
 import { createDefaultAmplifierLoopLog } from './amplifier/AmplifierLoopLog.js';
 import { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
-import {
-  buildAssistantIdentityPrompt,
-  buildRelevantSkillsSection,
-  extractOutputTemplates,
-} from './amplifier/AmplifierLoopPromptHelpers.js';
+import { buildAssistantIdentityPrompt } from './amplifier/AmplifierLoopPromptHelpers.js';
 import {
   normalizeFastPathToolCall,
   shouldReturnRawToolOutput,

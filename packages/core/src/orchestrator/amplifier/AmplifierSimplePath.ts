@@ -15,8 +15,10 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
+  buildRuntimeThreeLayersContractPrompt,
   buildToolsPrompt,
   buildRelevantSkillsSection,
+  capRelevantSkillsForPrompt,
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
 import {
@@ -424,8 +426,9 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
       skillListSection = `\nAVAILABLE SKILLS (list these when asked about capabilities):\n${skillLines}\n`;
     }
   }
-  const relevantSkillsSection = buildRelevantSkillsSection(preResolvedSkills);
-  const requiredTemplateSection = extractOutputTemplates(preResolvedSkills);
+  const skillsForPrompt = capRelevantSkillsForPrompt(preResolvedSkills);
+  const relevantSkillsSection = buildRelevantSkillsSection(skillsForPrompt);
+  const requiredTemplateSection = extractOutputTemplates(skillsForPrompt);
 
   const exactAllowlist = mergedToolDefs.map((t) => t.name).join(', ');
 
@@ -599,6 +602,8 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
       hostToolsClassifierLockActive);
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
+
+${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}

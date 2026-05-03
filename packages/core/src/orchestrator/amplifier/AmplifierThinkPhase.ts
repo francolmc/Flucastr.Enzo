@@ -12,8 +12,10 @@ import {
 } from '../SkillAlgorithmProgress.js';
 import {
   buildAssistantIdentityPrompt,
+  buildRuntimeThreeLayersContractPrompt,
   buildThinkDelegationCatalogBlock,
   buildToolsPrompt,
+  capRelevantSkillsForPrompt,
 } from './AmplifierLoopPromptHelpers.js';
 import {
   describeHostForExecuteCommandPrompt,
@@ -59,7 +61,7 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
 
   const previousObservations = previousSteps.filter((s) => s.type === 'observe' && s.output);
   const preResolvedSkills = input.resolvedSkills ?? resolvedSkills;
-  const skillsToInjectForThink: RelevantSkill[] =
+  const skillsResolvedFull: RelevantSkill[] =
     !skipSkills && skillRegistry
       ? preResolvedSkills ??
         (await skillResolver.resolveRelevantSkills(input.message, skillRegistry, {
@@ -68,7 +70,8 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
         }))
       : [];
 
-  const multiStepSkills = skillsToInjectForThink.filter(isMultiStepRelevantSkill);
+  const multiStepSkills = skillsResolvedFull.filter(isMultiStepRelevantSkill);
+  const skillsToInjectForThink = capRelevantSkillsForPrompt(skillsResolvedFull);
   const algorithmPlan = buildMultiStepAlgorithmPlan(multiStepSkills);
 
   const isAlgorithmMode = multiStepSkills.length > 0;
@@ -126,6 +129,8 @@ Prefer a catalog user preset whose description/system role plausibly covers visi
     : '';
 
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
+
+${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
