@@ -238,6 +238,8 @@ export function normalizeFastPathToolCall(
     herramienta: 'tool',
     entrada: 'input',
     accion: 'action',
+    tool_name: 'tool',
+    parameters: 'input',
   };
   for (const [es, en] of Object.entries(esFields)) {
     if (normalized[es] !== undefined && normalized[en] === undefined) {
@@ -275,6 +277,7 @@ export function normalizeFastPathToolCall(
     'accion',
     'input',
     'entrada',
+    'parameters',
   ]);
   for (const [k, v] of Object.entries(normalized as Record<string, unknown>)) {
     if (envelopeOnlyKeys.has(k)) continue;
