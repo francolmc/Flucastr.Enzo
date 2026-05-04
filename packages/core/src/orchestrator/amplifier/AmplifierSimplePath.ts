@@ -49,6 +49,7 @@ import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
+  messageLooksLikeShellCommandExecutionRequest,
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
@@ -548,6 +549,18 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
     !classifierMailboxUnread &&
     !classifierMailboxUnreadSummary;
 
+  // Send email classifier lock: when suggestedTool is send_email, force using the send_email tool
+  const sendEmailClassifierLockActive =
+    isModerate &&
+    input.suggestedTool === 'send_email' &&
+    executableTools.some((t) => t.name === 'send_email');
+
+  // Shell command execution lock: when user explicitly says "execute it/run it" with prefersHostTools
+  const shellCommandExecutionLockActive =
+    input.prefersHostTools === true &&
+    messageLooksLikeShellCommandExecutionRequest(input.message) &&
+    executableTools.some((t) => t.name === 'execute_command');
+
   const hostToolsClassifierLockActive =
     isModerate &&
     input.prefersHostTools === true &&
@@ -556,7 +569,22 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
     !hasCalendarListClassifierWindow &&
     !classifierMailboxUnread &&
     !classifierMailboxUnreadSummary &&
+    !sendEmailClassifierLockActive &&
+    !shellCommandExecutionLockActive &&
     executableTools.some((t) => t.name === 'execute_command');
+
+  const mandatorySendEmailBlock = sendEmailClassifierLockActive
+    ? `
+
+━━━ SEND_EMAIL_CLASSIFIER_LOCKED ━━━
+The classifier flagged **send_email**: you MUST send an email using the **send_email** tool.
+For this turn ONLY: respond with exactly **ONE** canonical JSON tool call to send_email.
+Extract from the conversation: recipient email address, subject line, and body content.
+If any information is missing (recipient, subject, or body), ask the user with a plain text response instead of calling the tool.
+Canonical shape: {"action":"tool","tool":"send_email","input":{"to":"recipient@example.com","subject":"Subject line","body":"Email body content"}}
+Do NOT simulate sending — you MUST use the send_email tool.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    : '';
 
   const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
     ? `
@@ -600,8 +628,14 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
       hasCalendarListClassifierWindow ||
       classifierMailboxUnread ||
       classifierMailboxUnreadSummary ||
+      sendEmailClassifierLockActive ||
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);
+
+  // SIMPLE path tool enforcement: when user explicitly asks to execute a command
+  const simplePathRequiresToolJson =
+    !isModerate &&
+    shellCommandExecutionLockActive;
 
   const memorySection = buildMemoryPromptSection(input);
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
@@ -610,7 +644,14 @@ ${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}
+${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatorySendEmailBlock}${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}${shellCommandExecutionLockActive ? `
+
+━━━ SHELL_COMMAND_LOCKED ━━━
+The user explicitly asked to EXECUTE a command ("ejecutalo", "run it", etc.).
+You MUST use the **execute_command** tool to run the command — never simulate output.
+Extract the command from context or ask if unclear.
+Canonical shape: {"action":"tool","tool":"execute_command","input":{"command":"gh repo list"}}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 ${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
 

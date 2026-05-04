@@ -4,6 +4,7 @@ export {
   type ClassifyOptions,
   messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
+  messageLooksLikeShellCommandExecutionRequest,
   resolveCalendarListFastPathIntent,
   resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';

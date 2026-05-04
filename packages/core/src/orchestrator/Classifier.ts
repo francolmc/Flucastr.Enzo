@@ -39,6 +39,7 @@ export function normalizeClassifierLlmHints(
   const suggested = parsed['suggestedTool'];
   const allowSuggested =
     suggested === 'calendar' ||
+    suggested === 'send_email' ||
     (suggested === 'web_search' && !prefersHostTools);
   if (allowSuggested) {
     out.suggestedTool = suggested as ClassificationResult['suggestedTool'];
@@ -68,7 +69,7 @@ function persistedCalendarCorpus(input: { message: string; originalMessage?: str
 export function resolveCalendarScheduleFastPathIntent(input: {
   message: string;
   originalMessage?: string;
-  suggestedTool?: 'web_search' | 'calendar';
+  suggestedTool?: 'web_search' | 'calendar' | 'send_email';
   calendarIntent?: CalendarIntentHint;
   prefersHostTools?: boolean;
 }): boolean {
@@ -92,7 +93,7 @@ export function resolveCalendarScheduleFastPathIntent(input: {
 export function resolveCalendarListFastPathIntent(input: {
   message: string;
   originalMessage?: string;
-  suggestedTool?: 'web_search' | 'calendar';
+  suggestedTool?: 'web_search' | 'calendar' | 'send_email';
   calendarIntent?: CalendarIntentHint;
   prefersHostTools?: boolean;
 }): boolean {
@@ -182,6 +183,25 @@ export function messageLooksLikeCalendarListQuery(raw: string): boolean {
     /\bhay\s+(?:algo|algún|alguna)\s+(?:en\s+)?(?:mi\s+)?(?:agenda|calend)/u.test(n);
 
   return temporal && agendaNoun && listShape;
+}
+
+/**
+ * Detects when the user explicitly asks to execute a shell/command (e.g., "ejecutalo", "run it", "execute this").
+ * Used to force execute_command tool usage even in SIMPLE path with prefersHostTools.
+ */
+export function messageLooksLikeShellCommandExecutionRequest(raw: string): boolean {
+  const n = raw.trim().toLowerCase();
+  if (!n) return false;
+
+  // Spanish patterns for "execute it/run it/do it"
+  const executionPatterns = [
+    /\b(ejecutalo|ejecuta\s*lo|ejecuta\s*esto|corre\s*lo|corre\s*esto|hazlo|haz\s*lo)\b/,
+    /\b(ejecuta\s+(?:el\s+)?comando|run\s+(?:the\s+)?command|execute\s+(?:the\s+)?command)\b/,
+    /\b(rodalo|run\s*it|execute\s*it|do\s*it)\b/,
+    /\b(ejecuta|corre)\s+(?:gh|git|docker|kubectl|npm|pnpm|yarn|python|node)\b/,
+  ];
+
+  return executionPatterns.some((p) => p.test(n));
 }
 
 /** True if the message likely contains a concrete absolute path the shell should use. */
@@ -340,6 +360,7 @@ Optional keys (omit when irrelevant):
 - "suggestedTool": "calendar" AND "calendarIntent": "list" | "schedule" — Enzo persisted agenda (SQLite): list/day query vs adding a timed event/reminder (never outsource to web_search).
 - "mailboxIntent": "unread_stats" — HOW MANY **unread** in connected mailboxes → tool \`email_unread_count\` (omit when not totals).
 - "mailboxIntent": "unread_summarize" — LIST or SUMMARIZE **actual unread threads** they have connected (Spanish/English wording like resumir/resume + sin leer + Gmail/Outlook, or lista de no leídos). **Never** SIMPLE with simulated mail — MODERATE: \`read_email\` with \`unread_only\`: true MUST run before paraphrasing; never invent employers/projects/subjects absent from RESULTADO (omit mailboxIntent otherwise).
+- "suggestedTool": "send_email" — Sending an email from a connected Gmail/Outlook account. Phrases like "envía un correo", "send an email", "manda un mail a X", "escribe a fulano@example.com". This requires the \`send_email\` tool (MODERATE if single email, COMPLEX if drafting + sending as separate steps). Never simulate as sent — must use tool.
 - "suppressSimpleModerateFastPath": true — REQUIRED when LEVEL is COMPLEX or when TWO OR MORE DISTINCT tool-backed steps are inseparable without an intermediate observation (implicit chains: web+write, read+write, analyze+report to file, reorganize folders with mkdir+mv). ALSO set **true** if you classify as MODERATE but the wording still hides a sequential multi-tool dependency (prefer raising to COMPLEX in that case).
 
 LEVELS — apply in order, first match wins:
@@ -425,6 +446,8 @@ Examples:
 "¿qué eventos tengo el día de hoy?" → {"level":"MODERATE","reason":"list Enzo persisted agenda for today — calendar tool list","suggestedTool":"calendar","calendarIntent":"list"}
 "¿cuántos correos sin leer tengo en Gmail y Outlook?" → {"level":"MODERATE","reason":"mailbox unread totals — connected accounts on host","mailboxIntent":"unread_stats"}
 "¿Podés resumir los mails más importantes sin leer de Gmail y Outlook?" → {"level":"MODERATE","reason":"unread summaries from connected inbox rows","mailboxIntent":"unread_summarize"}
+"envía un correo a franco.morales@outlook.com con el asunto 'Hola' y un saludo" → {"level":"MODERATE","reason":"sending email via connected account","suggestedTool":"send_email"}
+"manda un mail a juan@example.com presentándote" → {"level":"MODERATE","reason":"sending email via connected account","suggestedTool":"send_email"}
 "muéstrame mis repositorios en GitHub" → {"level":"MODERATE","reason":"host-authenticated repos via CLI/tools on machine","prefersHostTools":true}
 "list my GitHub repos" → {"level":"MODERATE","reason":"repos visible via host Git/GitHub tooling","prefersHostTools":true}
 "creá el archivo /home/franco/historia.md con una historia corta" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
@@ -435,7 +458,7 @@ ${this.buildDelegationCatalogSection(agents)}
 HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
 
 OUTPUT — one JSON object only (no markdown, no prose):
-{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar","calendarIntent":"optional list|schedule","mailboxIntent":"optional unread_stats|unread_summarize","prefersHostTools": optional true|false,"suppressSimpleModerateFastPath":true}
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search|calendar|send_email","calendarIntent":"optional list|schedule","mailboxIntent":"optional unread_stats|unread_summarize","prefersHostTools": optional true|false,"suppressSimpleModerateFastPath":true}
 
 delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
 - When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
