@@ -15,6 +15,7 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
+  buildMemoryPromptSection,
   buildRuntimeThreeLayersContractPrompt,
   buildToolsPrompt,
   buildRelevantSkillsSection,
@@ -601,8 +602,9 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);
 
+  const memorySection = buildMemoryPromptSection(input);
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-
+${memorySection ? `\n${memorySection}\n` : ''}
 ${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}

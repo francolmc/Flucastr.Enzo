@@ -84,7 +84,9 @@ export async function executeOrchestratorProcess(
   });
 
   if (memoryBlock) {
-    console.log(`[Orchestrator] Injecting memory block for user ${input.userId}`);
+    console.log(`[Orchestrator] Injecting memory block for user ${input.userId}: ${memoryBlock.slice(0, 200).replace(/\n/g, ' ')}`);
+  } else {
+    console.log(`[Orchestrator] No memory block for user ${input.userId} (DB may be empty for this user)`);
   }
 
   console.log(

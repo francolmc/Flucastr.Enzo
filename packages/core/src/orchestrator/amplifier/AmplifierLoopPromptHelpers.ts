@@ -34,6 +34,37 @@ export function buildAssistantIdentityPrompt(input: AmplifierInput): string {
   return lines.join('\n');
 }
 
+/**
+ * Injects user profile memory directly into the system prompt so it lands early (high attention),
+ * not as a trailing system message that small models tend to ignore.
+ */
+export function buildMemoryPromptSection(input: AmplifierInput): string {
+  const parts: string[] = [];
+
+  const profile = input.userProfile;
+  if (profile) {
+    const profileLines: string[] = [];
+    if (profile.displayName) profileLines.push(`name: ${profile.displayName}`);
+    if (profile.importantInfo) profileLines.push(`info: ${profile.importantInfo}`);
+    if (profile.preferences) profileLines.push(`preferences: ${profile.preferences}`);
+    if (profile.locale) profileLines.push(`locale: ${profile.locale}`);
+    if (profile.timezone) profileLines.push(`timezone: ${profile.timezone}`);
+    if (profileLines.length > 0) {
+      parts.push(`USER PROFILE (configured settings):\n${profileLines.join('\n')}`);
+    }
+  }
+
+  if (input.memoryBlock?.trim()) {
+    parts.push(input.memoryBlock.trim());
+  } else if (input.userMemories && input.userMemories.length > 0) {
+    const facts = input.userMemories.map((m) => `${m.key}: ${m.value}`).join(', ');
+    parts.push(`[IMPORTANT - USER PROFILE: ${facts}]\nIf the user asks about themselves (name, city, profession, etc.), answer from this profile.`);
+  }
+
+  if (parts.length === 0) return '';
+  return `--- USER CONTEXT (use this to personalize responses) ---\n${parts.join('\n\n')}\n--- END USER CONTEXT ---`;
+}
+
 export function resolveFastPathSkillContentLimit(): number {
   const fromEnv = Number(process.env.ENZO_SKILLS_FASTPATH_CONTENT_LIMIT ?? 1800);
   if (Number.isNaN(fromEnv)) return 1800;

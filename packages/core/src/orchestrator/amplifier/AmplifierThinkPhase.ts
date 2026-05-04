@@ -12,6 +12,7 @@ import {
 } from '../SkillAlgorithmProgress.js';
 import {
   buildAssistantIdentityPrompt,
+  buildMemoryPromptSection,
   buildRuntimeThreeLayersContractPrompt,
   buildThinkDelegationCatalogBlock,
   buildToolsPrompt,
@@ -126,8 +127,9 @@ Prefer a catalog user preset whose description/system role plausibly covers visi
     ? buildThinkDelegationCatalogBlock(input.availableAgents ?? [], input.delegationHint)
     : '';
 
+  const memorySection = buildMemoryPromptSection(input);
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-
+${memorySection ? `\n${memorySection}\n` : ''}
 ${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
