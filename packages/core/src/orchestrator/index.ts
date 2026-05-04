@@ -2,7 +2,6 @@ export { Orchestrator } from './Orchestrator.js';
 export {
   Classifier,
   type ClassifyOptions,
-  classifierLexicalFastPathEnabled,
   messageLooksLikeCalendarListQuery,
   messageLooksLikePersistedAgendaScheduleRequest,
   resolveCalendarListFastPathIntent,

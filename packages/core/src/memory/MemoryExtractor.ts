@@ -123,11 +123,11 @@ Always answer as if YOU know the user personally.`;
     const systemPrompt = `Extract facts about the user from this conversation.
 Respond ONLY with JSON: {"facts": [{"key": "...", "value": "...", "confidence": 0.0-1.0}]}
 
-ALLOWED KEYS (use exactly these, nothing else):
+ALLOWED KEYS — return ONLY these exact strings as "key", never Spanish variants, synonyms, or any other string:
 name, city, profession, projects, preferences, routines, family, other
 
 Rules:
-- Use only the allowed keys above
+- Use only the allowed keys above (e.g. "profession" not "ocupacion", "city" not "ciudad")
 - If unsure which key fits, use "other"
 - For key "projects": put the project title on the very first line of "value", followed by details or stack on following lines (helps downstream display)
 - Include "confidence" per fact (how sure it is grounded in the user's words)
