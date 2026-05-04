@@ -1019,6 +1019,20 @@ Never invent tool names.`;
         }
       } else if (toolName && toolName !== 'none') {
         log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
+
+        // Step 1: Fuzzy match — catch typos/variants like "read_emails" → "read_email"
+        // without an extra LLM call.
+        const tnLower = toolName.toLowerCase();
+        const fuzzyMatch = mergedToolDefs.find((t) => {
+          const n = t.name.toLowerCase();
+          return n.includes(tnLower) || tnLower.includes(n);
+        });
+        if (fuzzyMatch) {
+          log.info(`[AmplifierLoop] SIMPLE path - fuzzy matched "${toolName}" → "${fuzzyMatch.name}"`);
+          ncParse = JSON.stringify({ action: 'tool', tool: fuzzyMatch.name, input: toolInput ?? {} });
+          continue attemptParseLoop;
+        }
+
         const allowlistRetryEnv = process.env.ENZO_FASTPATH_ALLOWLIST_RETRY;
         /** Default ON for MODERATE (one repair completion). Set ENZO_FASTPATH_ALLOWLIST_RETRY=false to disable; true forces retry on SIMPLE too. */
         const shouldRetryUnknownTool =
@@ -1027,21 +1041,35 @@ Never invent tool names.`;
         if (shouldRetryUnknownTool && !consumedAllowlistParseRetry) {
           consumedAllowlistParseRetry = true;
           try {
-            const hostCliHint =
-              input.prefersHostTools === true
-                ? ` Host / authenticated CLI asks (repos, kubectl, Docker, …) MUST use **execute_command** only: {"action":"tool","tool":"execute_command","input":{"command":"…full shell line…"}} — never RPC-style ids like read_repo as "tool".
-`
-                : '';
+            // Build the repair prompt WITHOUT angle-bracket placeholders — small models
+            // (qwen2.5:7b) fill "<name>" with the literal word "tool" from surrounding context.
+            // Instead, use a concrete example with an actual valid tool name.
+            const exampleTool = input.prefersHostTools
+              ? 'execute_command'
+              : (mergedToolDefs[0]?.name ?? 'execute_command');
+            const exampleInput = input.prefersHostTools
+              ? `{"command":"${input.message.slice(0, 60).replace(/"/g, "'")}"}`
+              : '{}';
+            const exampleJson = `{"action":"tool","tool":"${exampleTool}","input":${exampleInput}}`;
+
+            const repairSystemContent = input.prefersHostTools
+              ? `Tool "${toolName}" does not exist. For CLI/shell requests on this host, use "execute_command".
+Valid tools: ${exactAllowlist}
+Output ONE JSON only (no text, no explanation):
+${exampleJson}
+Write the actual shell command inside "command".`
+              : `Tool "${toolName}" does not exist.
+Valid tools: ${exactAllowlist}
+Pick the correct tool for the user request. Output ONE JSON only (no text, no explanation):
+${exampleJson}
+Use a tool name exactly from the valid list above.`;
+
             const allowlistRepair = await withTimeout(
               baseProvider.complete({
                 messages: [
                   {
                     role: 'system',
-                    content: `${buildAssistantIdentityPrompt(input)}
-The assistant emitted a fake or unsupported tool id (skills and prose are NOT tool names). Output EXACTLY one of:
-(1) Canonical JSON ONLY: {"action":"tool","tool":"<name>","input":{...}} where <name> is ONE of: ${exactAllowlist}
-(2) Plain text only if truly no registered tool fits.
-Include "action" and "input" literally — malformed shapes are rejected.${hostCliHint}`,
+                    content: repairSystemContent,
                   },
                   ...resolveAmplifierDialogueMessages(input),
                   { role: 'user', content: input.message },
