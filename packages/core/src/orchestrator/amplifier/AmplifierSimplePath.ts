@@ -724,7 +724,18 @@ If responding with plain text (no tool), write in this language.`;
 
   let normalizedContent = rawContent;
   let plainTextFromModerateRetry: string | null = null;
-  if (isModerate && !normalizedContent.startsWith('{')) {
+
+  // Some models (e.g. Gemini) return a {"thought":"..."} object that starts with '{' but is NOT a tool call.
+  // Treat that the same as "no JSON" so the strict-retry logic fires correctly.
+  const rawLooksLikeToolCall = (() => {
+    if (!normalizedContent.trim().startsWith('{')) return false;
+    try {
+      const p = JSON.parse(normalizedContent) as Record<string, unknown>;
+      return p.action === 'tool' || typeof p.tool === 'string';
+    } catch { return false; }
+  })();
+
+  if (isModerate && (!normalizedContent.startsWith('{') || !rawLooksLikeToolCall)) {
     const strictPrompt = persistToPathRequested
       ? `${buildAssistantIdentityPrompt(input)}
 The prior reply was not valid tool JSON. The user asked to CREATE or SAVE a file at an absolute path on this machine — you MUST use write_file.
