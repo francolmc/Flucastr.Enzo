@@ -3,6 +3,7 @@ import { useEnzoStore } from '../stores/enzoStore';
 import { ModelManagement } from '../components/config/ModelManagement';
 import { FallbackModelSection } from '../components/config/FallbackModelSection';
 import { ProviderApiKeySection } from '../components/config/ProviderApiKeySection';
+import { DailyRoutineConfigSection } from '../components/config/DailyRoutineConfigSection';
 import './ConfigPage.css';
 
 const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
@@ -785,7 +786,15 @@ function ConfigPage() {
 
       <section className="config-section">
         <div className="config-section-header">
-          <span className="badge">Paso 4 · Voz</span>
+          <span className="badge">Paso 4 · Rutina Diaria</span>
+          <h2>Notificaciones automáticas de tu asistente</h2>
+        </div>
+        <DailyRoutineConfigSection />
+      </section>
+
+      <section className="config-section">
+        <div className="config-section-header">
+          <span className="badge">Paso 5 · Voz</span>
           <h2>Whisper, TTS y respuestas en audio (Telegram)</h2>
         </div>
         <form className="agent-form surface-card" onSubmit={handleSaveVoiceConfig}>

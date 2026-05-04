@@ -128,6 +128,29 @@ export interface SkillMetadata {
   description: string;
   version?: string;
   author?: string;
+  license?: string;
+  compatibility?: string;
+  'allowed-tools'?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface DailyRoutineNotification {
+  time: string;
+  enabled: boolean;
+}
+
+export interface DailyRoutineConfig {
+  morningBriefing: DailyRoutineNotification;
+  middayCheckin: DailyRoutineNotification;
+  afternoonPrep: DailyRoutineNotification;
+  eveningRecap: DailyRoutineNotification;
+}
+
+export interface DailyRoutineConfigUpdate {
+  morningBriefing?: Partial<DailyRoutineNotification>;
+  middayCheckin?: Partial<DailyRoutineNotification>;
+  afternoonPrep?: Partial<DailyRoutineNotification>;
+  eveningRecap?: Partial<DailyRoutineNotification>;
 }
 
 export interface SkillRecord {

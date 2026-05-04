@@ -24,6 +24,20 @@ export interface SkillMetadata {
   version?: string;
   author?: string;
   enabled?: boolean;
+  // AgentSkills.io standard fields
+  license?: string;
+  compatibility?: string;
+  'allowed-tools'?: string;
+  metadata?: Record<string, string>;
+}
+
+/** Minimal skill info for discovery phase (progressive disclosure) */
+export interface SkillDiscovery {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  hasBody: boolean;
 }
 
 export interface LoadedSkill {
@@ -101,6 +115,29 @@ export class SkillLoader {
     this.parseFrontmatter(raw);
   }
 
+  /**
+   * Load only metadata for discovery phase (progressive disclosure).
+   * Fast operation that doesn't read/process the full body content.
+   */
+  async loadSkillMetadata(id: string): Promise<{ metadata: SkillMetadata; path: string; hasBody: boolean } | null> {
+    const skillPath = path.join(this.skillsDir, id);
+    const skillMdPath = path.join(skillPath, 'SKILL.md');
+
+    if (!fs.existsSync(skillMdPath)) {
+      console.warn(`[SkillLoader] SKILL.md not found for skill: ${id}`);
+      return null;
+    }
+
+    try {
+      const content = fs.readFileSync(skillMdPath, 'utf-8');
+      const { metadata, body, hasBody } = this.parseFrontmatterWithBodyInfo(content);
+      return { metadata, path: skillPath, hasBody };
+    } catch (error) {
+      console.error(`[SkillLoader] Error loading skill metadata ${id}:`, error);
+      return null;
+    }
+  }
+
   async loadSkill(id: string): Promise<LoadedSkill | null> {
     const skillPath = path.join(this.skillsDir, id);
     const skillMdPath = path.join(skillPath, 'SKILL.md');
@@ -128,6 +165,16 @@ export class SkillLoader {
       console.error(`[SkillLoader] Error loading skill ${id}:`, error);
       return null;
     }
+  }
+
+  /**
+   * Parse frontmatter and return metadata plus body info.
+   * Includes validation for AgentSkills.io standard fields.
+   */
+  private parseFrontmatterWithBodyInfo(content: string): { metadata: SkillMetadata; body: string; hasBody: boolean } {
+    const result = this.parseFrontmatter(content);
+    const hasBody = result.body.trim().length > 0;
+    return { ...result, hasBody };
   }
 
   private parseFrontmatter(content: string): { metadata: SkillMetadata; body: string } {
@@ -165,9 +212,40 @@ export class SkillLoader {
       throw new Error('Invalid SKILL.md: missing required fields (name, description)');
     }
 
+    // AgentSkills.io validation: name must match folder naming conventions
+    if (!this.isValidAgentSkillName(metadata.name)) {
+      console.warn(`[SkillLoader] Warning: skill name "${metadata.name}" doesn't follow AgentSkills.io conventions (lowercase a-z, hyphens only)`);
+    }
+
     const body = lines.slice(frontmatterEnd + 1).join('\n').trim();
 
     return { metadata, body };
+  }
+
+  /**
+   * Validate skill name according to AgentSkills.io standard:
+   * - 1-64 characters
+   * - Only lowercase a-z and hyphens
+   * - No leading/trailing hyphens
+   * - No consecutive hyphens
+   */
+  private isValidAgentSkillName(name: string): boolean {
+    if (!name || name.length < 1 || name.length > 64) return false;
+    if (!/^[a-z0-9-]+$/.test(name)) return false;
+    if (name.startsWith('-') || name.endsWith('-')) return false;
+    if (name.includes('--')) return false;
+    return true;
+  }
+
+  /**
+   * Check if skill name matches the folder name (AgentSkills.io requirement).
+   * Returns a warning message if they don't match, null if OK.
+   */
+  validateNameMatchesFolder(skillId: string, metadataName: string): string | null {
+    if (skillId !== metadataName) {
+      return `Skill name "${metadataName}" doesn't match folder name "${skillId}" (AgentSkills.io recommends they match)`;
+    }
+    return null;
   }
 
   private resolveDefaultEnabled(metadata: SkillMetadata): boolean {

@@ -12,6 +12,8 @@ import {
   InjectedSkillUsage,
   SystemConfigView,
   SystemConfigUpdatePayload,
+  DailyRoutineConfig,
+  DailyRoutineConfigUpdate,
 } from '../types';
 
 export type MessageState = 'pending' | 'streaming' | 'done' | 'failed';
@@ -82,6 +84,7 @@ interface EnzoStore {
   assistantProfile: AssistantProfile | null;
   userProfile: UserProfile | null;
   agents: AgentConfig[];
+  dailyRoutineConfig: DailyRoutineConfig | null;
 
   // Models Config
   modelsConfig: {
@@ -129,6 +132,8 @@ interface EnzoStore {
   toggleProvider: (provider: string, enabled: boolean) => Promise<void>;
   loadSystemConfig: () => Promise<void>;
   updateSystemConfig: (payload: SystemConfigUpdatePayload) => Promise<void>;
+  loadDailyRoutineConfig: () => Promise<void>;
+  updateDailyRoutineConfig: (payload: DailyRoutineConfigUpdate) => Promise<void>;
   newConversation: () => void;
   createAgent: (data: {
     name: string;
@@ -179,6 +184,7 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   agents: [],
   modelsConfig: null,
   stats: null,
+  dailyRoutineConfig: null,
 
   // Actions
   sendMessage: async (message: string) => {
@@ -596,6 +602,26 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
       await get().loadConfig();
     } catch (error) {
       console.error('Error updating system config:', error);
+      throw error;
+    }
+  },
+
+  loadDailyRoutineConfig: async () => {
+    try {
+      const response = await apiClient.getDailyRoutineConfig();
+      set({ dailyRoutineConfig: response.dailyRoutine });
+    } catch (error) {
+      console.error('Error loading daily routine config:', error);
+      throw error;
+    }
+  },
+
+  updateDailyRoutineConfig: async (payload: DailyRoutineConfigUpdate) => {
+    try {
+      const response = await apiClient.updateDailyRoutineConfig(payload);
+      set({ dailyRoutineConfig: response.dailyRoutine });
+    } catch (error) {
+      console.error('Error updating daily routine config:', error);
       throw error;
     }
   },

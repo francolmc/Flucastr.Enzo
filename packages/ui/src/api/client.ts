@@ -24,6 +24,8 @@ import {
   EmailOAuthAppsStatusDTO,
   EmailMessageDTO,
   CalendarEventDTO,
+  DailyRoutineConfig,
+  DailyRoutineConfigUpdate,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -422,6 +424,17 @@ class ApiClient {
 
   async updateSystemConfig(payload: SystemConfigUpdatePayload): Promise<{ success: boolean; system: SystemConfigView }> {
     return this.request('/config/system', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getDailyRoutineConfig(): Promise<{ success: boolean; dailyRoutine: DailyRoutineConfig }> {
+    return this.request('/config/daily-routine', undefined, API_QUICK_READ_TIMEOUT_MS);
+  }
+
+  async updateDailyRoutineConfig(payload: DailyRoutineConfigUpdate): Promise<{ success: boolean; dailyRoutine: DailyRoutineConfig }> {
+    return this.request('/config/daily-routine', {
       method: 'PUT',
       body: JSON.stringify(payload),
     });

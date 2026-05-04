@@ -47,6 +47,7 @@ export interface ModelsConfig {
   assistantProfile: AssistantProfile;
   userProfile: UserProfile;
   email: EmailConfig;
+  dailyRoutine?: DailyRoutineConfig;
 }
 
 export interface AssistantProfile {
@@ -165,6 +166,28 @@ export interface SystemConfigUpdate {
   voiceTriggers?: string[];
 }
 
+/** Configuration for a single daily routine notification */
+export interface DailyRoutineNotification {
+  time: string; // HH:MM format (24h)
+  enabled: boolean;
+}
+
+/** Daily routine configuration for morning, midday, afternoon, and evening notifications */
+export interface DailyRoutineConfig {
+  morningBriefing: DailyRoutineNotification;
+  middayCheckin: DailyRoutineNotification;
+  afternoonPrep: DailyRoutineNotification;
+  eveningRecap: DailyRoutineNotification;
+}
+
+/** Update payload for daily routine configuration */
+export interface DailyRoutineConfigUpdate {
+  morningBriefing?: Partial<DailyRoutineNotification>;
+  middayCheckin?: Partial<DailyRoutineNotification>;
+  afternoonPrep?: Partial<DailyRoutineNotification>;
+  eveningRecap?: Partial<DailyRoutineNotification>;
+}
+
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
 const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
 
@@ -268,6 +291,12 @@ function getDefaultConfig(): ModelsConfig {
     },
     userProfile: {},
     email: { accounts: [] },
+    dailyRoutine: {
+      morningBriefing: { time: '08:00', enabled: true },
+      middayCheckin: { time: '13:00', enabled: true },
+      afternoonPrep: { time: '18:00', enabled: true },
+      eveningRecap: { time: '22:00', enabled: true },
+    },
   };
 }
 
@@ -1085,6 +1114,61 @@ export class ConfigService {
 
     this.saveConfig();
     this.applySystemEnvironment();
+  }
+
+  // Daily Routine Configuration
+
+  getDailyRoutineConfig(): DailyRoutineConfig {
+    this.syncConfigFromDisk();
+    const defaults = getDefaultConfig().dailyRoutine!;
+    const stored = this.config.dailyRoutine;
+    if (!stored) {
+      return defaults;
+    }
+    return {
+      morningBriefing: {
+        time: stored.morningBriefing?.time || defaults.morningBriefing.time,
+        enabled: stored.morningBriefing?.enabled ?? defaults.morningBriefing.enabled,
+      },
+      middayCheckin: {
+        time: stored.middayCheckin?.time || defaults.middayCheckin.time,
+        enabled: stored.middayCheckin?.enabled ?? defaults.middayCheckin.enabled,
+      },
+      afternoonPrep: {
+        time: stored.afternoonPrep?.time || defaults.afternoonPrep.time,
+        enabled: stored.afternoonPrep?.enabled ?? defaults.afternoonPrep.enabled,
+      },
+      eveningRecap: {
+        time: stored.eveningRecap?.time || defaults.eveningRecap.time,
+        enabled: stored.eveningRecap?.enabled ?? defaults.eveningRecap.enabled,
+      },
+    };
+  }
+
+  setDailyRoutineConfig(update: DailyRoutineConfigUpdate): void {
+    this.syncConfigFromDisk();
+    const current = this.config.dailyRoutine || getDefaultConfig().dailyRoutine!;
+
+    this.config.dailyRoutine = {
+      morningBriefing: {
+        time: update.morningBriefing?.time ?? current.morningBriefing.time,
+        enabled: update.morningBriefing?.enabled ?? current.morningBriefing.enabled,
+      },
+      middayCheckin: {
+        time: update.middayCheckin?.time ?? current.middayCheckin.time,
+        enabled: update.middayCheckin?.enabled ?? current.middayCheckin.enabled,
+      },
+      afternoonPrep: {
+        time: update.afternoonPrep?.time ?? current.afternoonPrep.time,
+        enabled: update.afternoonPrep?.enabled ?? current.afternoonPrep.enabled,
+      },
+      eveningRecap: {
+        time: update.eveningRecap?.time ?? current.eveningRecap.time,
+        enabled: update.eveningRecap?.enabled ?? current.eveningRecap.enabled,
+      },
+    };
+
+    this.saveConfig();
   }
 
   getSystemSecret(field: 'telegramBotTokenEncrypted' | 'tavilyApiKeyEncrypted'): string | null {
