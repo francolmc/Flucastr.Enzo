@@ -95,6 +95,7 @@ function ConfigPage() {
     enzoDebug: false,
     enzoSkillsFallbackRelevanceThreshold: '0.12',
     mcpAutoConnect: false,
+    enzoNativeToolCalling: false,
     defaultUserLanguage: 'es',
     tz: 'America/Santiago',
     telegramAllowedUsers: '',
@@ -148,6 +149,7 @@ function ConfigPage() {
       enzoDebug: !!systemConfig.enzoDebug,
       enzoSkillsFallbackRelevanceThreshold: String(systemConfig.enzoSkillsFallbackRelevanceThreshold ?? 0.12),
       mcpAutoConnect: !!systemConfig.mcpAutoConnect,
+      enzoNativeToolCalling: !!systemConfig.enzoNativeToolCalling,
       defaultUserLanguage: systemConfig.defaultUserLanguage || 'es',
       tz: systemConfig.tz || 'America/Santiago',
       telegramAllowedUsers: systemConfig.telegramAllowedUsers || '',
@@ -306,6 +308,7 @@ function ConfigPage() {
         enzoDebug: systemForm.enzoDebug,
         enzoSkillsFallbackRelevanceThreshold: Number(systemForm.enzoSkillsFallbackRelevanceThreshold),
         mcpAutoConnect: systemForm.mcpAutoConnect,
+        enzoNativeToolCalling: systemForm.enzoNativeToolCalling,
         defaultUserLanguage: systemForm.defaultUserLanguage,
         tz: systemForm.tz,
         telegramAllowedUsers: systemForm.telegramAllowedUsers,
@@ -761,6 +764,14 @@ function ConfigPage() {
                 onChange={(e) => setSystemForm({ ...systemForm, enzoDebug: e.target.checked })}
               />
               ENZO_DEBUG
+            </label>
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.enzoNativeToolCalling}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoNativeToolCalling: e.target.checked })}
+              />
+              Native Tool Calling
             </label>
           </div>
 

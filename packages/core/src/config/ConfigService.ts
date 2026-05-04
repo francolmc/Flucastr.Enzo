@@ -120,6 +120,7 @@ export interface SystemConfigView {
   enzoDebug: boolean;
   enzoSkillsFallbackRelevanceThreshold: number;
   mcpAutoConnect: boolean;
+  enzoNativeToolCalling: boolean;
   defaultUserLanguage: string;
   tz: string;
   telegramAllowedUsers: string;
@@ -975,6 +976,7 @@ export class ConfigService {
       enzoDebug: system.enzoDebug,
       enzoSkillsFallbackRelevanceThreshold: system.enzoSkillsFallbackRelevanceThreshold,
       mcpAutoConnect: system.mcpAutoConnect,
+      enzoNativeToolCalling: !!system.enzoNativeToolCalling,
       defaultUserLanguage: system.defaultUserLanguage,
       tz: system.tz,
       telegramAllowedUsers: system.telegramAllowedUsers,
