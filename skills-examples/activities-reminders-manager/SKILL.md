@@ -1,15 +1,16 @@
 ---
 name: activities-reminders-manager
 description: |
-  Gestiona actividades, recordatorios y eventos en la agenda de Enzo. Permite crear,
-  modificar, eliminar y consultar eventos programados, recordatorios y tareas.
-  Se integra con el calendario del sistema y memoria persistente de Enzo.
+  Gestiona agenda, calendario, actividades, recordatorios y eventos de Enzo. Crea,
+  modifica, elimina y consulta eventos programados. Programar reuniones, daily meetings,
+  recordatorios y tareas en la agenda. Usa "agenda", "calendario", "programar", "agregar
+  a agenda", "reunión", "daily", "recordatorio" para activar.
 version: "1.0.0"
 license: MIT
 metadata:
   author: enzo-org
   category: productivity
-  tags: activities, reminders, calendar, events, scheduling, tasks
+  tags: agenda, calendario, programar, eventos, reuniones, daily meetings, recordatorios, schedule, calendar
 allowed-tools: calendar recall write_file read_file
 ---
 
@@ -49,6 +50,12 @@ allowed-tools: calendar recall write_file read_file
 - "recordatorio para llamar al médico el viernes a las 10am"
 - "crea evento para revisar proyecto el próximo lunes"
 - "programa tarea de pagar facturas el día 15"
+- "agreguemos las daily meetings a la agenda"
+- "programa daily de lunes a viernes 9:30 a 10:30"
+- "agregar a agenda reuniones diarias"
+- "programar en calendario daily meetings"
+- "tu tienes una agenda" (cuando pregunta por capacidad)
+- "no las veo registradas en la agenda" (cuando necesita verificar eventos)
 
 ### Consultar agenda
 - "qué tengo agendado para mañana"
@@ -114,6 +121,54 @@ allowed-tools: calendar recall write_file read_file
 
 ⚠️ Próximos recordatorios (24hs):
    • [mañana a las HH:MM] - [recordatorio]
+```
+
+## Manejo de casos específicos
+
+### Cuando pregunta si Enzo tiene agenda
+```
+📅 ¡Sí! Tengo una agenda completa integrada
+
+✅ Capacidades de mi agenda:
+   • Crear eventos y reuniones
+   • Programar recordatorios
+   • Gestión de daily meetings
+   • Consultar eventos por fechas
+   • Modificar y eliminar eventos
+
+🔧 Herramientas disponibles:
+   • Calendario del sistema integrado
+   • Memoria persistente para recordatorios
+   • Notificaciones automáticas
+
+💡 Puedo ayudarte a:
+   • Programar tus daily meetings de lunes a viernes
+   • Agendar reuniones y recordatorios
+   • Consultar qué tienes para hoy/mañana/esta semana
+
+¿Qué te gustaría agendar ahora?
+```
+
+### Cuando no ve eventos registrados
+```
+🔍 Verificando eventos en tu agenda...
+
+📅 Estado actual de la agenda:
+   • Eventos hoy: [X]
+   • Eventos esta semana: [Y]
+   • Daily meetings programadas: [Sí/No]
+
+⚠️ Si no ves las daily meetings:
+   • Voy a programarlas ahora correctamente
+   • Las guardaré tanto en calendario como en memoria
+   • Configuraré recordatorios diarios
+
+📝 Procedo a programar:
+   • Daily meetings - Lunes a Viernes
+   • Horario: 9:30 am - 10:30 am
+   • Recordatorio: 9:25 am diario
+
+✅ ¿Confirmas que programe estas daily meetings ahora?
 ```
 
 ## Formato de modificación
