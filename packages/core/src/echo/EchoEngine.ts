@@ -11,6 +11,8 @@ import {
 } from './DeclarativeEchoJobs.js';
 import type { EchoOrchestratorBinding } from './EchoOrchestrationBinding.js';
 import { computeCronNextRunUtcDate } from './cronNextRun.js';
+import type { ConfigService, DailyRoutineConfig } from '../config/ConfigService.js';
+import { syncDailyRoutineTasks } from './DailyRoutineTasks.js';
 
 export interface EchoTask {
   id: string;
@@ -86,6 +88,7 @@ interface RegisteredTask {
 interface EchoEngineOptions {
   configPath?: string;
   taskTimeoutMs?: number;
+  configService?: ConfigService;
 }
 
 interface QueueEntry {
@@ -137,12 +140,14 @@ export class EchoEngine {
   private readonly queue: QueueEntry[] = [];
   private readonly configPath: string;
   private readonly taskTimeoutMs: number;
+  private readonly configService?: ConfigService;
   private configWatcher: FSWatcher | null = null;
   private running = false;
   private processingQueue = false;
   private stopping = false;
   private reloadTimer: NodeJS.Timeout | null = null;
   private declarativeJobIds = new Set<string>();
+  private dailyRoutineTaskIds = new Set<string>();
   private orchestratorBinding: EchoOrchestratorBinding | null = null;
   private diagnosticsExtras: () => Partial<Pick<EchoDiagnostics, 'echoTargetUserConfigured' | 'duplicateEchoWarning'>> =
     () => ({});
@@ -151,6 +156,7 @@ export class EchoEngine {
   constructor(options: EchoEngineOptions = {}) {
     this.configPath = options.configPath ?? path.join(homedir(), '.enzo', 'echo.config.json');
     this.taskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.configService = options.configService;
   }
 
   getConfigPath(): string {
@@ -386,10 +392,50 @@ export class EchoEngine {
     }
   }
 
+  private syncDailyRoutineTasksFromConfig(): void {
+    if (!this.configService) {
+      debugLog('ConfigService not available for daily routine sync');
+      return;
+    }
+
+    try {
+      const dailyRoutineConfig = this.configService.getDailyRoutineConfig();
+      const bind = this.buildDeclarativeBinding();
+      
+      // Eliminar tareas de rutina diaria existentes que ya no están en la configuración
+      for (const taskId of this.dailyRoutineTaskIds) {
+        if (this.tasks.has(taskId)) {
+          this.teardownTask(taskId);
+          this.tasks.delete(taskId);
+        }
+      }
+
+      // Crear nuevas tareas de rutina diaria
+      const dailyRoutineTasks = syncDailyRoutineTasks(
+        dailyRoutineConfig,
+        bind,
+        this.dailyRoutineTaskIds
+      );
+
+      // Registrar las nuevas tareas
+      for (const task of dailyRoutineTasks) {
+        this.registerTask(task, { skipReload: true });
+      }
+
+      debugLog('Daily routine tasks synced', {
+        totalTasks: dailyRoutineTasks.length,
+        taskIds: dailyRoutineTasks.map(t => t.id),
+      });
+    } catch (error) {
+      debugLog('Error syncing daily routine tasks', error);
+    }
+  }
+
   private async reloadFromConfig(): Promise<void> {
     const config = await this.readConfig();
     this.lastConfigCronTimezone = config.cronTimezone?.trim() || undefined;
     this.syncDeclarativeJobsFromConfig(config);
+    this.syncDailyRoutineTasksFromConfig();
 
     for (const [taskId, registered] of this.tasks.entries()) {
       const override = config.tasks?.[taskId];

@@ -30,3 +30,7 @@ export {
   createNightSummaryTask,
   type NightSummaryTaskOptions,
 } from './tasks/NightSummaryTask.js';
+export {
+  createDailyRoutineTask,
+  syncDailyRoutineTasks,
+} from './DailyRoutineTasks.js';

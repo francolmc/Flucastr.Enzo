@@ -157,8 +157,8 @@ export function bindEchoDeclarativeOrchestrator(options: {
 
 export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
   if (!sharedEchoEngine) {
-    sharedEchoEngine = new EchoEngine();
     const { memoryService, configService, sendTelegramMessage } = bindings;
+    sharedEchoEngine = new EchoEngine({ configService });
     if (memoryService && configService) {
       const notificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
       echoNotificationGateway = notificationGateway;
@@ -176,45 +176,10 @@ export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
         };
       });
       const resolveUserId = () => resolveEchoUserId(memoryService, configService);
-      const emailService = new EmailService(configService);
-      const calendarService = new CalendarService();
-      sharedEchoEngine.registerTask(
-        createMorningBriefingTask({
-          memoryService,
-          notificationGateway,
-          resolveUserId,
-          emailService,
-          calendarService,
-          buildRuntimeHints: () =>
-            buildEchoRuntimeHints(configService) as NonNullable<AmplifierInput['runtimeHints']>,
-        })
-      );
-      sharedEchoEngine.registerTask(
-        createContextRefreshTask({ memoryService, notificationGateway, resolveUserId })
-      );
-      sharedEchoEngine.registerTask(createNightSummaryTask({ memoryService, resolveUserId }));
+      // Las tareas de rutina diaria ahora se gestionan automáticamente mediante ConfigService
+      // y el sistema syncDailyRoutineTasksFromConfig() en EchoEngine
     } else {
-      sharedEchoEngine.registerTask({
-        id: 'morning-briefing',
-        name: 'Morning Briefing',
-        schedule: '0 7 * * *',
-        enabled: true,
-        action: async () => ({ success: false, error: 'Echo tasks are not configured yet' }),
-      });
-      sharedEchoEngine.registerTask({
-        id: 'context-refresh',
-        name: 'Context Refresh',
-        schedule: 'interval:120min',
-        enabled: true,
-        action: async () => ({ success: false, error: 'Echo tasks are not configured yet' }),
-      });
-      sharedEchoEngine.registerTask({
-        id: 'night-summary',
-        name: 'Night Summary',
-        schedule: '30 22 * * *',
-        enabled: true,
-        action: async () => ({ success: false, error: 'Echo tasks are not configured yet' }),
-      });
+      // ConfigService no disponible - no registrar tareas de rutina diaria
     }
   }
   return sharedEchoEngine;
