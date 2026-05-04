@@ -1,19 +1,19 @@
 ---
 name: enzo-project-workspace
 description: >
-  Gestiona un workspace de proyectos personales bajo una raíz fija.
+  Gestiona un workspace de proyectos personales bajo una raíz fija en $HOME/Enzo/projects.
   Crea carpetas de proyecto, clone de repositorios, documentación local y notas.
   Úsala cuando el usuario mencione un proyecto por nombre sin dar ruta,
-  o cuándo necesite crear o scaffolding un nuevo proyecto.
-version: 1.0.0
+  pida contexto de un proyecto, o necesite crear o scaffoldear un nuevo proyecto.
+version: 2.0.0
 ---
 
 # Workspace de proyectos Enzo
 
 ## Raíz única
 
-- **Carpeta base**: `/home/franco/Enzo/projects`
-- Si en el equipo el home no es `/home/franco` (p. ej. macOS), usar la misma ruta relativa al home del usuario: `$HOME/Enzo/projects`, y crear `Enzo/projects` si no existe.
+- **Carpeta base**: `$HOME/Enzo/projects` (en macOS: `/Users/franco/Enzo/projects`)
+- Crear `Enzo/projects` si no existe antes de cualquier operación.
 
 ## Estructura por proyecto
 
@@ -27,20 +27,34 @@ Enzo/projects/nombre-proyecto/
 └── notes/             # opcional: ideas sueltas ligadas al proyecto
 ```
 
-## Cuando el usuario habla del «proyecto X» (dónde buscar)
+## Cuando el usuario habla del «proyecto X» — Flujo obligatorio
 
-Sin ruta absoluta, **asumir** que todo proyecto vive bajo la misma raíz definida arriba. La carpeta candidata es:
+**PASO 1 — SIEMPRE listar el workspace primero** (no responder desde memoria antes de este paso):
 
-`<RAÍZ_WORKSPACE>/<slug>/`
+```
+execute_command: ls -1 $HOME/Enzo/projects
+```
 
-donde `<slug>` es el nombre normalizado (minúsculas, guiones, sin espacios).
+Esto da la lista real de proyectos disponibles. Sin este paso no se puede saber qué existe.
 
-**Orden de resolución**
+**PASO 2 — Resolver el proyecto por nombre**
 
-1. Si el usuario dio un slug o nombre que coincide exactamente con un directorio, esa es la carpeta del proyecto X.
-2. Si no hay match exacto: leer los nombres de las carpetas y comparar (case-insensitive).
-3. Si hay ambigüedad: leer `ENZO_PROJECT.md` y comparar el título.
-4. Si sigue siendo ambiguo: listar proyectos y pedir clarificación.
+Con la lista obtenida en el paso anterior:
+
+1. Match exacto de directorio con el nombre o slug dado.
+2. Match case-insensitive si no hay exacto.
+3. Si hay varios candidatos: leer los `ENZO_PROJECT.md` de los candidatos y comparar el título o alias.
+4. Si sigue siendo ambiguo: listar los proyectos encontrados y pedir clarificación.
+
+**PASO 3 — Leer el contexto del proyecto**
+
+Una vez identificada la carpeta:
+
+```
+read_file: $HOME/Enzo/projects/<slug>/ENZO_PROJECT.md
+```
+
+Usar el contenido de ese archivo como fuente principal de contexto (estado, resumen, enlaces, notas para Enzo). No inventar ni asumir datos que no estén en el archivo.
 
 ## Archivo `ENZO_PROJECT.md`
 
@@ -69,8 +83,17 @@ Otros nombres por los que el usuario puede referirse.
 Contexto que no está en el README.
 ```
 
+## Ejemplo de flujo completo
+
+Usuario: "dame contexto del proyecto Flucastr"
+
+1. `execute_command: ls -1 $HOME/Enzo/projects` → encuentra carpeta `flucastr` o `Flucastr.Enzo`
+2. `read_file: $HOME/Enzo/projects/flucastr/ENZO_PROJECT.md` → lee metadatos
+3. Responder con el contenido del archivo: resumen, estado, enlaces, notas.
+
 Ejemplos de uso:
 - "crea un nuevo proyecto"
 - "dame contexto del proyecto X"
 - "qué es el proyecto Flucastr"
+- "qué proyectos tengo en mi workspace"
 - "abrir el workspace de mi proyecto"
