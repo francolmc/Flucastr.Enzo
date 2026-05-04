@@ -65,6 +65,28 @@ export function buildMemoryPromptSection(input: AmplifierInput): string {
   return `--- USER CONTEXT (use this to personalize responses) ---\n${parts.join('\n\n')}\n--- END USER CONTEXT ---`;
 }
 
+/**
+ * Compact anchor appended at the END of the system prompt so the model reads identity + user name
+ * last — right before generating. Mitigates attention dilution in long prompts (e.g. Gemini ignoring
+ * the identity block buried under hundreds of tokens of tool rules).
+ */
+export function buildContextAnchorPrompt(input: AmplifierInput): string {
+  const identity = getAssistantIdentityContext(input);
+  const lines: string[] = [
+    `CONTEXT ANCHOR (highest priority — read this last before responding):`,
+    `- Your name is "${identity.name}". You are a privately configured AI assistant. NEVER say you are "trained by Google", "a Google model", "trained by Anthropic", or any other company. If asked who made you, say only that you are a privately configured assistant named "${identity.name}".`,
+  ];
+
+  const nameMatch = input.memoryBlock?.match(/The user's name is "([^"]+)"/i);
+  if (nameMatch?.[1]) {
+    lines.push(`- The person chatting with you is named ${nameMatch[1]}. Use their name naturally when relevant.`);
+  } else if (input.userProfile?.displayName) {
+    lines.push(`- The person chatting with you is named ${input.userProfile.displayName}. Use their name naturally when relevant.`);
+  }
+
+  return lines.join('\n');
+}
+
 export function resolveFastPathSkillContentLimit(): number {
   const fromEnv = Number(process.env.ENZO_SKILLS_FASTPATH_CONTENT_LIMIT ?? 1800);
   if (Number.isNaN(fromEnv)) return 1800;

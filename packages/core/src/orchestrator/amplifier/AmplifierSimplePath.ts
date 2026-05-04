@@ -15,6 +15,7 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
+  buildContextAnchorPrompt,
   buildMemoryPromptSection,
   buildRuntimeThreeLayersContractPrompt,
   buildToolsPrompt,
@@ -684,6 +685,8 @@ PERSISTENCE / HONESTY (user asked to write to a concrete absolute path):
 `
     : ''
 }
+${buildContextAnchorPrompt(input)}
+
 ${
   input.userLanguage && input.userLanguage !== 'es'
     ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. NOT in Spanish. NOT in any other language.`
