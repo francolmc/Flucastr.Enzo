@@ -1,0 +1,24 @@
+{
+  "name": "claude-code-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Claude Code integration with Enzo",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": ["mcp", "claude-code", "enzo", "ai", "development"],
+  "author": "enzo-org",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "child_process": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
