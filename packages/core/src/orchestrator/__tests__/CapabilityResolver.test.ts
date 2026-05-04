@@ -186,6 +186,53 @@ async function runTests() {
   console.log('✓ Pass');
   console.log('');
 
+  // Test 8: Prose response (no JSON) → proseOnly: true
+  console.log('Test 8: Prose response — should return proseOnly:true');
+  const result8 = await resolver.resolve('I will search the web for that.', capabilities);
+  assert(result8.type === 'none', `Test 8: expected none, got ${result8.type}`);
+  if (result8.type !== 'none') throw new Error('unreachable');
+  assert(result8.proseOnly === true, `Test 8: expected proseOnly=true, got ${String(result8.proseOnly)}`);
+  console.log('✓ Pass');
+  console.log('');
+
+  // Test 9: Explicit {action:"none"} → proseOnly: false (done signal)
+  console.log('Test 9: Explicit action:none — should return proseOnly:false');
+  const result9 = await resolver.resolve('{"action":"none"}', capabilities);
+  assert(result9.type === 'none', `Test 9: expected none, got ${result9.type}`);
+  if (result9.type !== 'none') throw new Error('unreachable');
+  assert(result9.proseOnly === false, `Test 9: expected proseOnly=false, got ${String(result9.proseOnly)}`);
+  console.log('✓ Pass');
+  console.log('');
+
+  // Test 10: Unknown tool name → proseOnly: true (retry needed)
+  console.log('Test 10: Unknown tool — should return proseOnly:true');
+  const result10 = await resolver.resolve('{"action":"tool","tool":"git_repos","input":{}}', capabilities);
+  assert(result10.type === 'none', `Test 10: expected none, got ${result10.type}`);
+  if (result10.type !== 'none') throw new Error('unreachable');
+  assert(result10.proseOnly === true, `Test 10: expected proseOnly=true, got ${String(result10.proseOnly)}`);
+  assert(result10.reason.startsWith('Tool not found:'), `Test 10: expected 'Tool not found:' in reason`);
+  console.log('✓ Pass');
+  console.log('');
+
+  // Test 11: Malformed JSON with trailing comma — should still parse
+  console.log('Test 11: Trailing comma in JSON — should still resolve correctly');
+  const result11 = await resolver.resolve('{"action":"tool","tool":"execute_command","input":{"command":"ls"},}', capabilities);
+  assert(result11.type === 'tool', `Test 11: expected tool, got ${result11.type}`);
+  assert(result11.target === 'execute_command', `Test 11: expected execute_command, got ${result11.target}`);
+  console.log('✓ Pass');
+  console.log('');
+
+  // Test 12: Prose before JSON — should extract and resolve JSON
+  console.log('Test 12: Prose before JSON — should extract and resolve JSON');
+  const result12 = await resolver.resolve(
+    'Let me search for that. {"action":"tool","tool":"web_search","input":{"query":"test"}}',
+    capabilities
+  );
+  assert(result12.type === 'tool', `Test 12: expected tool, got ${result12.type}`);
+  assert(result12.target === 'web_search', `Test 12: expected web_search, got ${result12.target}`);
+  console.log('✓ Pass');
+  console.log('');
+
   console.log('All tests completed! ✓');
 }
 

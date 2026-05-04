@@ -1204,6 +1204,7 @@ Do NOT search for more information. Use what is provided.`;
     }
 
     let forcedToolRetryCount = 0;
+    let proseRetryCount = 0;
     let consecutiveAlgorithmToolErrors = 0;
     while (iteration < this.maxIterations && !hasEnoughInfo) {
       iteration++;
@@ -1335,6 +1336,25 @@ Do NOT search for more information. Use what is provided.`;
       }
 
       if (resolvedAction.type === 'none') {
+        if (!resolvedAction.proseOnly) {
+          // Model explicitly emitted {"action":"none"} — it's done.
+          hasEnoughInfo = true;
+          break;
+        }
+        // Model responded with prose or requested an unknown tool — retry with correction.
+        if (proseRetryCount < 2) {
+          proseRetryCount++;
+          const correctionMsg = resolvedAction.reason.startsWith('Tool not found:')
+            ? `${resolvedAction.reason}\nUse one of the listed tools with the correct JSON format.`
+            : 'Your previous response was plain text. Plain text is NOT executed — the system only acts on JSON.\nYou MUST emit a JSON tool call now: {"action":"tool","tool":"<name>","input":{...}}\nOnly emit {"action":"none"} when you genuinely have no action to take.';
+          currentContext = [currentContext, correctionMsg].filter(Boolean).join('\n');
+          this.log.warn(
+            `[AmplifierLoop] Iteration ${iteration} - prose/unknown-tool response; retrying THINK (${proseRetryCount}/2)`
+          );
+          continue;
+        }
+        // Correction retries exhausted — exit to avoid timeout.
+        this.log.warn('[AmplifierLoop] Prose correction retries exhausted; ending loop');
         hasEnoughInfo = true;
         break;
       }

@@ -186,6 +186,12 @@ export type ResolvedAction =
       target: string;
       reason: string;
       input: any;
+      /**
+       * Only meaningful when type === 'none'.
+       * true  → model responded with prose or unknown tool (should retry with correction).
+       * false → model emitted {"action":"none"} explicitly (loop should exit: done).
+       */
+      proseOnly?: boolean;
     };
 
 export interface EscalationInput {

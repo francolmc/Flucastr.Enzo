@@ -162,8 +162,11 @@ or anything that could have changed, use web_search.
 Do not answer from memory when web_search is available.
 If you are unsure whether to search — search.
 
-CRITICAL — follow the canonical format inside AVAILABLE TOOLS above.
-Use {"action":"tool","tool":"<exact_name_from_that_list>","input":{...}}. Never invent a tool name.
+CRITICAL — your response is parsed as JSON. Plain text is invisible to the system and will NOT be executed.
+- To use a tool → emit exactly: {"action":"tool","tool":"<name>","input":{...}}
+- To finish with no action → emit exactly: {"action":"none"}
+- NEVER write prose like "I will search..." or "Let me check..." without also emitting the JSON — prose alone does nothing.
+Use the exact tool names from the AVAILABLE TOOLS list above. Never invent a tool name.
 
 CORRECT examples:
 {"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
@@ -181,8 +184,9 @@ WRONG examples (never do this):
 ${
   isAlgorithmMode
     ? ''
-    : `If you already have enough information:
+    : `Only when you already have all the information needed to answer and no tool call is required:
 {"action":"none"}
+Do NOT emit {"action":"none"} when you still need to search, execute a command, or fetch data.
 
 `
 }ABSOLUTE RULES:
