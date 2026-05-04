@@ -21,6 +21,7 @@ import {
   ComplexityLevel,
 } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
@@ -272,6 +273,104 @@ export class Classifier {
       return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
     }
 
+    // Lexical fast path: check for trivial greetings when enabled
+    if (process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH === 'true') {
+      const trivialPattern = /^(hola|hello|hi|hey|buenos d[ií]as|buenas|good morning|gracias|thanks|ok|s[ií]|no|chao|bye|adi[oó]s)[.!?]?$/i;
+      if (trivialPattern.test(normalizedMessage)) {
+        console.log('[Classifier] Fast-path trivial → SIMPLE');
+        logClassifierRouting('trivial', ComplexityLevel.SIMPLE);
+        return {
+          level: ComplexityLevel.SIMPLE,
+          reason: 'greeting / trivial fast path',
+          classifierBranch: 'trivial',
+        };
+      }
+
+      // Calendar list fast path
+      if (messageLooksLikeCalendarListQuery(normalizedMessage)) {
+        console.log('[Classifier] Fast-path calendar list → MODERATE');
+        logClassifierRouting('calendar_list_lexical', ComplexityLevel.MODERATE);
+        return {
+          level: ComplexityLevel.MODERATE,
+          reason: 'query Enzo persisted agenda / events for a day — must use calendar tool list (never web_search)',
+          suggestedTool: 'calendar',
+          calendarIntent: 'list',
+          classifierBranch: 'calendar_list_lexical',
+        };
+      }
+
+      // Persisted agenda/schedule fast path
+      if (messageLooksLikePersistedAgendaScheduleRequest(normalizedMessage)) {
+        console.log('[Classifier] Fast-path persisted agenda / schedule → MODERATE');
+        logClassifierRouting('schedule_persist_lexical', ComplexityLevel.MODERATE);
+        return {
+          level: ComplexityLevel.MODERATE,
+          reason: 'persisted calendar or timed reminder — must use calendar tool (never plain-chat "already scheduled")',
+          suggestedTool: 'calendar',
+          calendarIntent: 'schedule',
+          classifierBranch: 'schedule_persist_lexical',
+        };
+      }
+
+      // Recall query fast path
+      if (this.isLikelyRecallQuery(normalizedMessage)) {
+        console.log('[Classifier] Fast-path recall query → MODERATE');
+        logClassifierRouting('recall_lexical', ComplexityLevel.MODERATE);
+        return { level: ComplexityLevel.MODERATE, reason: 'recall query — needs RecallTool', classifierBranch: 'recall_lexical' };
+      }
+
+      // Abstract life planning (no paths) fast path
+      if (this.isLikelyAbstractLifePlanningWithoutPaths(normalizedMessage)) {
+        console.log('[Classifier] Fast-path life/task planning (no paths) → SIMPLE');
+        logClassifierRouting('life_planning_no_path', ComplexityLevel.SIMPLE);
+        return {
+          level: ComplexityLevel.SIMPLE,
+          reason: 'abstract task or daily planning without concrete file paths',
+          classifierBranch: 'life_planning_no_path',
+        };
+      }
+
+      // Chained task fast path
+      if (this.isLikelyChainedTask(normalizedMessage)) {
+        logClassifierRouting('chained_explicit_lexical', ComplexityLevel.COMPLEX);
+        return { level: ComplexityLevel.COMPLEX, reason: 'detected explicit chained workflow', classifierBranch: 'chained_explicit_lexical' };
+      }
+
+      // Multi-tool workflow fast path
+      if (impliesMultiToolWorkflow(normalizedMessage)) {
+        logClassifierRouting('multi_tool_implicit_classifier', ComplexityLevel.COMPLEX);
+        return { level: ComplexityLevel.COMPLEX, reason: 'implicit multi-tool workflow', classifierBranch: 'multi_tool_implicit_classifier' };
+      }
+
+      // Write to absolute path fast path
+      if (messageIndicatesPersistedWriteToAbsolutePath(normalizedMessage)) {
+        logClassifierRouting('write_file_lexical_hint', ComplexityLevel.MODERATE);
+        return {
+          level: ComplexityLevel.MODERATE,
+          reason: 'create or persist file content at an absolute host path — requires write_file (never plain chat claiming the file exists)',
+          classifierBranch: 'write_file_lexical_hint',
+        };
+      }
+
+      // Factual query fast path
+      if (this.isLikelyFactualQuery(normalizedMessage)) {
+        console.log('[Classifier] Fast-path factual query → MODERATE');
+        logClassifierRouting('factual_lexical', ComplexityLevel.MODERATE);
+        return {
+          level: ComplexityLevel.MODERATE,
+          reason: 'Real-world factual query that requires web search for accurate answer',
+          suggestedTool: 'web_search',
+          classifierBranch: 'factual_lexical',
+        };
+      }
+
+      // Single tool task fast path
+      if (this.isLikelySingleToolTask(normalizedMessage)) {
+        logClassifierRouting('single_tool_lexical', ComplexityLevel.MODERATE);
+        return { level: ComplexityLevel.MODERATE, reason: 'detected single-tool intent', classifierBranch: 'single_tool_lexical' };
+      }
+    }
+
     return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
   }
 
@@ -472,6 +571,62 @@ ONLY JSON. NOTHING ELSE.`;
     return /\b(search|look up|read|write|create|save|list|execute|run|call|fetch|remember|summary?|summari(?:ze|s(?:e|ing)?)?|analy(?:ze|sis|zing)?|busca(?:r)?|lee(?:r)?|leer|escrib(?:e|ir)|crear|guardar|listar|ejecutar|llamar|consultar|resum(?:e|en|ir|elo|ela|elos|elas)?|analiz(?:ar|a|o)|extra(?:er|e|igo)?)\b/i.test(
       message
     );
+  }
+
+  private isLikelyRecallQuery(normalized: string): boolean {
+    return /(qu[eé] tengo pendiente|qu[eé] hay de|record[aá]s|qu[eé] dijimos de|qu[eé] capturaste|mis tareas|pendientes de)/i.test(normalized);
+  }
+
+  private isLikelyAbstractLifePlanningWithoutPaths(message: string): boolean {
+    if (messageContainsLikelyAbsolutePath(message)) {
+      return false;
+    }
+    const n = message.toLowerCase();
+    const planningPhrase =
+      /\b(gesti[oó]n\s+(del\s+)?d[ií]a|gesti[oó]n\s+de\s+(mi|tu|su)\s+d[ií]a|gesti[oó]n\s+.*\bd[ií]a\s+a\s+d[ií]a|d[ií]a\s+a\s+d[ií]a|gestionar\s+(mis\s+)?tareas|rutinas?\s+diarias?|recordatorios|pomodoro|planificaci[oó]n\s+personal|ay[úu]dame\s+a\s+organizar\s+mi\s+d[ií]a|ayuda\s+con\s+(la\s+)?gesti[oó]n|help\s+me\s+(manage|plan)\s+(my\s+)?(tasks|day)|daily\s+planning|task\smanagement)\b/i.test(n);
+    const spanishWorkLifeIntent =
+      /\b(tareas?\s+personales|todos?\s+mis\s+trabajos|mis\s+trabajos)\b/i.test(n) &&
+      !messageContainsLikelyAbsolutePath(message);
+    return planningPhrase || spanishWorkLifeIntent;
+  }
+
+  private isLikelyChainedTask(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return /\b(and then|luego|despu[eé]s|con el resultado|y luego|y guarda|y crea|y escribe|y resume)\b/i.test(normalized);
+  }
+
+  private isLikelyFactualQuery(message: string): boolean {
+    const lower = message.toLowerCase();
+
+    const temporalIndicators = [
+      'ahora', 'hoy', 'actualmente', 'último', 'últimos', 'última', 'últimas',
+      'reciente', 'recientemente', 'now', 'today', 'currently', 'latest',
+      'recent', 'recently', 'this year', 'este año', 'esta semana', 'this week',
+    ];
+
+    const factualIndicators = [
+      'precio', 'costo', 'cuánto cuesta', 'cuánto vale', 'price', 'cost',
+      'how much', 'quién es', 'quien es', 'who is', 'cuántos habitantes',
+      'población', 'population', 'resultado', 'resultado de', 'score',
+      'ganó', 'perdió', 'noticias', 'news', 'qué pasó', 'what happened',
+      'clima', 'temperatura', 'weather', 'tipo de cambio', 'dólar',
+      'exchange rate', 'ceo de', 'ceo of', 'presidente de', 'president of',
+    ];
+
+    const hasTemporalIndicator = temporalIndicators.some((t) => lower.includes(t));
+    const hasFactualIndicator = factualIndicators.some((t) => lower.includes(t));
+
+    return hasTemporalIndicator || hasFactualIndicator;
+  }
+
+  private isLikelySingleToolTask(message: string): boolean {
+    const normalized = message.toLowerCase();
+    const hasChainWords = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
+    if (hasChainWords) return false;
+    if (this.isLikelyRecallQuery(normalized)) {
+      return true;
+    }
+    return /\b(read|lee|list|ls|search|busca|remember|recuerda|curl|consulta|version|ram|disk|disco)\b/i.test(normalized);
   }
 
   private fallbackClassification(message: string, reason: string): ClassificationResult {
