@@ -455,10 +455,12 @@ ${providerList}`;
     if (!memoryBlock || !assistantName) {
       return memoryBlock;
     }
-
     const escapedName = assistantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const conflictingNameFact = new RegExp(`\\bname:\\s*${escapedName}\\b,?\\s*`, 'gi');
-    const cleaned = memoryBlock.replace(conflictingNameFact, '');
+    // Strip old key:value format if assistant name leaks in (legacy format guard)
+    const kvPattern = new RegExp(`\\bname:\\s*${escapedName}\\b,?\\s*`, 'gi');
+    // Strip new sentence format if assistant name leaks in
+    const sentencePattern = new RegExp(`The user's name is "${escapedName}"\\.\n?`, 'gi');
+    let cleaned = memoryBlock.replace(kvPattern, '').replace(sentencePattern, '');
     return cleaned.replace(/\[\s*,/g, '[').trim();
   }
 

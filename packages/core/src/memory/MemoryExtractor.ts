@@ -81,14 +81,36 @@ export class MemoryExtractor {
     if (!memories?.length) {
       return '';
     }
-    const facts = memories.map((m) => `${m.key}: ${m.value}`).join(', ');
-    return `[IMPORTANT - USER PROFILE: ${facts}]
-The user asking you questions has this profile above.
-Use this ONLY for facts about the user (their name, city, profession, etc.).
-If the user asks about THEMSELVES (e.g. "what is my name?"), answer from this profile.
-If the user asks about YOU (assistant), DO NOT use this profile; use assistant identity instructions instead.
-Never treat user profile fields as assistant identity.
-Always answer as if YOU know the user personally.`;
+    // Build sentence-form lines so "name: Franco" cannot be misread as the assistant's name
+    const lines: string[] = [];
+    for (const m of memories) {
+      const key = (m.key ?? '').toLowerCase().trim();
+      const val = (m.value ?? '').trim();
+      if (!val) continue;
+      if (key === 'name') {
+        lines.push(`The user's name is "${val}".`);
+      } else if (key === 'city') {
+        lines.push(`The user lives in ${val}.`);
+      } else if (key === 'profession') {
+        lines.push(`The user's profession: ${val}.`);
+      } else if (key === 'family') {
+        lines.push(`User family info: ${val}.`);
+      } else if (key === 'preferences') {
+        lines.push(`User preferences: ${val}.`);
+      } else if (key === 'routines') {
+        lines.push(`User routines: ${val}.`);
+      } else if (key === 'projects') {
+        lines.push(`User projects: ${val}.`);
+      } else {
+        lines.push(`${key}: ${val}`);
+      }
+    }
+    if (lines.length === 0) return '';
+    const body = lines.join('\n');
+    return `FACTS ABOUT THE USER (the person chatting with you — NOT the assistant):
+${body}
+When the user asks "what is my name?" or "who am I?", answer using the name above.
+These facts are about the USER only — never apply them to the assistant's identity.`;
   }
 
   /**
