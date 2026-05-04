@@ -15,10 +15,17 @@ export class ReadFileTool implements ExecutableTool {
     required: ['path'],
   };
 
-  constructor(private readonly markItDown?: MarkItDownService) {}
+  constructor(
+    private readonly markItDown?: MarkItDownService,
+    private readonly workspacePath?: string
+  ) {}
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = String(input.path ?? '');
+    const rawPath = String(input.path ?? '');
+    const filePath =
+      this.workspacePath && !path.isAbsolute(rawPath)
+        ? path.resolve(this.workspacePath, rawPath)
+        : rawPath;
     const ext = path.extname(filePath).toLowerCase();
     const binaryExtensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'];
     try {

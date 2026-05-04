@@ -28,8 +28,8 @@ export interface TelegramFileDeliveryDeps {
  * Default tool set for API / Telegram: Tavily-backed search, shell, filesystem, memory.
  * Tavily key comes from `ConfigService` (encrypted system secret) or `TAVILY_API_KEY`.
  *
- * @param workspacePath - Root for `read_file` when paths are relative. If omitted, `ReadFileTool` uses
- *   `process.env.ENZO_WORKSPACE_PATH` or falls back to `./workspace` (see `ReadFileTool` in `@enzo/core`).
+ * @param workspacePath - Root for `read_file` and `execute_command` when paths are relative. If omitted,
+ *   `ExecuteCommandTool` uses `process.cwd()` and `ReadFileTool` treats all paths as absolute.
  * @param telegramFileDelivery - When set (typically Telegram bot), registers `send_file`.
  */
 export function createDefaultToolRegistry(
@@ -44,7 +44,7 @@ export function createDefaultToolRegistry(
   const apiKey = configService?.getSystemSecret('tavilyApiKeyEncrypted') ?? process.env.TAVILY_API_KEY ?? '';
   registry.register(new WebSearchTool(apiKey));
   registry.register(new ExecuteCommandTool(workspacePath ?? process.cwd()));
-  registry.register(new ReadFileTool(markItDownService));
+  registry.register(new ReadFileTool(markItDownService, workspacePath));
   registry.register(new RememberTool(memoryService, defaultUserId));
   registry.register(new RecallTool(memoryService, defaultUserId));
   registry.register(new CalendarTool(new CalendarService(memoryService.getDbPath())));

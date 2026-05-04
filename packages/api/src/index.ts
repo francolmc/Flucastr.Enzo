@@ -47,7 +47,6 @@ const __dirname = path.dirname(__filename);
 // Ensure local persistent secret exists for encryption
 const enzoSecret = ensureLocalSecret();
 
-const workspaceRoot = path.resolve(__dirname, "../../..");
 
 function normalizeConfiguredPath(configValue: string | undefined, fallbackAbsolutePath: string): string {
   if (!configValue || !configValue.trim()) {
@@ -99,6 +98,11 @@ function resolveSharedFilePath(configValue: string | undefined, fallbackAbsolute
 const encryptionService = new EncryptionService(enzoSecret);
 const configService = new ConfigService(encryptionService);
 const systemConfig = configService.getSystemConfig();
+const workspaceRoot = resolveSharedDirPath(
+  systemConfig.enzoWorkspacePath,
+  path.join(homedir(), ".enzo", "workspace")
+);
+console.log(`[API] Workspace path: ${workspaceRoot}`);
 const app = express();
 
 const trustProxyHop = Number(process.env.ENZO_TRUST_PROXY ?? process.env.TRUST_PROXY ?? "0");
