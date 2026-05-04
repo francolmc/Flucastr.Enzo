@@ -241,6 +241,13 @@ export function normalizeFastPathToolCall(
     tool_name: 'tool',
     parameters: 'input',
   };
+
+  // Ollama native function call format: {"name":"<tool>","arguments":{...}}
+  // Extract tool name but do NOT copy arguments into input — let lookup fail naturally
+  // so the allowlist retry fires and reconstructs the full shell command from context.
+  if (!normalized.tool && !normalized.action && typeof normalized.name === 'string') {
+    normalized.tool = normalized.name;
+  }
   for (const [es, en] of Object.entries(esFields)) {
     if (normalized[es] !== undefined && normalized[en] === undefined) {
       normalized[en] = normalized[es];

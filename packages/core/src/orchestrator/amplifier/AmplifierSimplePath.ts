@@ -732,11 +732,20 @@ If responding with plain text (no tool), write in this language.`;
 
   // Some models (e.g. Gemini) return a {"thought":"..."} object that starts with '{' but is NOT a tool call.
   // Treat that the same as "no JSON" so the strict-retry logic fires correctly.
+  // Also accept alternative valid formats that normalizeFastPathToolCall handles:
+  //   - {"action":"<tool_name>",...}  (action-as-tool-name, used by some local models)
+  //   - {"name":"<tool_name>","arguments":{...}}  (Ollama native function call format returned as text)
+  const knownToolNamesLower = new Set(mergedToolDefs.map((t) => t.name.toLowerCase()));
   const rawLooksLikeToolCall = (() => {
     if (!normalizedContent.trim().startsWith('{')) return false;
     try {
       const p = JSON.parse(normalizedContent) as Record<string, unknown>;
-      return p.action === 'tool' || typeof p.tool === 'string';
+      if (p.action === 'tool' || typeof p.tool === 'string') return true;
+      const actionStr = String(p.action ?? '').toLowerCase();
+      if (actionStr && knownToolNamesLower.has(actionStr)) return true;
+      const nameStr = String(p.name ?? '').toLowerCase();
+      if (nameStr && typeof p.arguments !== 'undefined') return true;
+      return false;
     } catch { return false; }
   })();
 
