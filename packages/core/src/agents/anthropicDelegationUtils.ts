@@ -1,7 +1,7 @@
 import type { ConfigService } from '../config/ConfigService.js';
 import { fetchWithRetry } from '../providers/retry.js';
-import { WriteFileTool } from '../tools/WriteFileTool.js';
 import type { DelegationResult } from './AgentRouter.js';
+import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
@@ -161,21 +161,22 @@ async function processFileTagsAndBuildResult(
     return { success: true, agent, output: rawText.trim() };
   }
 
-  const writeTool = new WriteFileTool();
   const filesCreated: string[] = [];
 
   for (const m of matches) {
     const filePath = m[1]?.trim() ?? '';
     const fileContent = m[2] ?? '';
     const fullPath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath);
-    const result = await writeTool.execute({ path: fullPath, content: fileContent });
-    if (!result.success) {
+    try {
+      await mkdir(path.dirname(fullPath), { recursive: true });
+      await writeFile(fullPath, fileContent, 'utf8');
+    } catch (error) {
       return {
         success: false,
         agent,
         output: stripFileTags(rawText),
         filesCreated,
-        error: result.error ?? 'write_file failed',
+        error: `Cannot write file: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
     filesCreated.push(fullPath);

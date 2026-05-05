@@ -43,14 +43,7 @@ import {
 import { impliesMultiToolWorkflow } from './taskRoutingHints.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
-  resolveCalendarListFastPathIntent,
-  resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
-import {
-  mailboxUnreadSummaryLockCorpus,
-  messageLooksLikeMailboxUnreadStatsQuery,
-  messageLooksLikeMailboxUnreadSummaryQuery,
-} from './mailboxUnreadIntent.js';
 import { resolveTopSkillDeclarativeExecutable } from './skillFastPathLock.js';
 
 function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
@@ -359,78 +352,9 @@ No markdown. No prose.`;
       );
     }
 
-    const calendarRoutingInput = {
-      message: input.message,
-      originalMessage: input.originalMessage,
-      suggestedTool: input.suggestedTool,
-      calendarIntent: input.calendarIntent,
-      prefersHostTools: input.prefersHostTools,
-    };
-    const scheduleIntentForCalendar = resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
-    const calendarListClassifierIntent =
-      this.executableTools.some((t) => t.name === 'calendar') &&
-      resolveCalendarListFastPathIntent(calendarRoutingInput) &&
-      !scheduleIntentForCalendar;
-
     let fastPathLevel = input.classifiedLevel;
-    if (fastPathLevel === ComplexityLevel.SIMPLE && calendarListClassifierIntent) {
-      fastPathLevel = ComplexityLevel.MODERATE;
-      this.log.info(
-        '[AmplifierLoop] Reclassified SIMPLE → MODERATE (Enzo persisted agenda list — calendar classifier hint)'
-      );
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'calendar_list_classifier_hint',
-          priorLevel: input.classifiedLevel,
-        })
-      );
-    }
 
-    const mailboxUnreadCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
-    const mailboxUnreadStatsIntentHint =
-      this.executableTools.some((t) => t.name === 'email_unread_count') &&
-      (input.mailboxIntent === 'unread_stats' || messageLooksLikeMailboxUnreadStatsQuery(mailboxUnreadCorpus));
-    if (fastPathLevel === ComplexityLevel.SIMPLE && mailboxUnreadStatsIntentHint) {
-      fastPathLevel = ComplexityLevel.MODERATE;
-      this.log.info('[AmplifierLoop] Reclassified SIMPLE → MODERATE (mailbox unread counts)');
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'mailbox_unread_stats',
-          priorLevel: input.classifiedLevel,
-        })
-      );
-    }
-
-    const mailboxUnreadSummarizeCorpus = mailboxUnreadSummaryLockCorpus({
-      message: input.message,
-      originalMessage: input.originalMessage,
-      conversation: input.conversation,
-    });
-    const mailboxUnreadSummarizeHint =
-      this.executableTools.some((t) => t.name === 'read_email') &&
-      (input.mailboxIntent === 'unread_summarize' ||
-        messageLooksLikeMailboxUnreadSummaryQuery(mailboxUnreadSummarizeCorpus));
-    if (fastPathLevel === ComplexityLevel.SIMPLE && mailboxUnreadSummarizeHint) {
-      fastPathLevel = ComplexityLevel.MODERATE;
-      this.log.info('[AmplifierLoop] Reclassified SIMPLE → MODERATE (mailbox unread list/summary)');
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'mailbox_unread_summarize',
-          priorLevel: input.classifiedLevel,
-        })
-      );
-    }
-
-    const calendarListBypassesMultiStepBlock = calendarListClassifierIntent;
+    const calendarListBypassesMultiStepBlock = false;
 
     if (
       fastPathLevel === ComplexityLevel.SIMPLE &&

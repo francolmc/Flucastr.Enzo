@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { ConfigService, ModelsConfig, ProviderConfig, AssistantProfile, UserProfile, SystemConfigUpdate, SystemConfigView, DailyRoutineConfig, DailyRoutineConfigUpdate } from '@enzo/core';
+import { ConfigService, ModelsConfig, ProviderConfig, AssistantProfile, UserProfile, SystemConfigUpdate, SystemConfigView } from '@enzo/core';
 import { EncryptionService } from '@enzo/core';
 
 interface OllamaModel {
@@ -468,55 +468,6 @@ export function createConfigRouter(
       res.status(500).json({
         error: 'TestError',
         message: error instanceof Error ? error.message : 'Failed to test provider',
-        statusCode: 500,
-      });
-    }
-  });
-
-  /**
-   * GET /api/config/daily-routine
-   * Get daily routine notification settings
-   */
-  router.get('/api/config/daily-routine', async (req: Request, res: Response) => {
-    try {
-      const dailyRoutine = config.getDailyRoutineConfig();
-      res.json({
-        success: true,
-        dailyRoutine,
-      });
-    } catch (error) {
-      console.error('[GET /api/config/daily-routine] error:', error);
-      res.status(500).json({
-        error: 'ConfigError',
-        message: error instanceof Error ? error.message : 'Failed to retrieve daily routine config',
-        statusCode: 500,
-      });
-    }
-  });
-
-  /**
-   * PUT /api/config/daily-routine
-   * Update daily routine notification settings
-   */
-  router.put('/api/config/daily-routine', async (req: Request, res: Response) => {
-    try {
-      const body = (req.body || {}) as {
-        morningBriefing?: { time?: string; enabled?: boolean };
-        middayCheckin?: { time?: string; enabled?: boolean };
-        afternoonPrep?: { time?: string; enabled?: boolean };
-        eveningRecap?: { time?: string; enabled?: boolean };
-      };
-
-      config.setDailyRoutineConfig(body);
-      res.json({
-        success: true,
-        dailyRoutine: config.getDailyRoutineConfig(),
-      });
-    } catch (error) {
-      console.error('[PUT /api/config/daily-routine] error:', error);
-      res.status(500).json({
-        error: 'ConfigError',
-        message: error instanceof Error ? error.message : 'Failed to update daily routine config',
         statusCode: 500,
       });
     }

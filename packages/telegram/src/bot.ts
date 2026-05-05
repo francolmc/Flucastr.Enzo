@@ -1,15 +1,54 @@
 import { Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
-import type {
-  Orchestrator,
-  MemoryService,
-  ConfigService,
-  TranscriptionService,
-  TTSService,
-  FileHandler,
-  VisionService,
-  MarkItDownService,
-} from '@enzo/core';
+import type { Orchestrator, MemoryService, ConfigService, VisionService } from '@enzo/core';
+
+export interface TranscriptionResult {
+  success: boolean;
+  text?: string;
+  language?: string;
+  durationSeconds?: number;
+  error?: string;
+}
+
+export interface TranscriptionService {
+  transcribe(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult>;
+}
+
+export interface TTSResult {
+  success: boolean;
+  audioBuffer?: Buffer;
+  mimeType?: string;
+  error?: string;
+}
+
+export interface TTSService {
+  synthesize(text: string, language: string): Promise<TTSResult>;
+}
+
+export interface ReceivedFile {
+  originalName: string;
+  localPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  extension: string;
+}
+
+export interface FileHandler {
+  save(buffer: Buffer, originalName: string, mimeType: string): Promise<ReceivedFile>;
+}
+
+export interface ConversionResult {
+  success: boolean;
+  markdown?: string;
+  title?: string;
+  pageCount?: number;
+  error?: string;
+}
+
+export interface MarkItDownService {
+  convert(filePath: string): Promise<ConversionResult>;
+  isSupported(extension: string): boolean;
+}
 
 export interface EnzoContext extends Context {
   orchestrator: Orchestrator;

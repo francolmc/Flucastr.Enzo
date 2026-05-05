@@ -8,10 +8,27 @@ import {
 import { CompletionRequest, CompletionResponse, LLMProvider } from '../../providers/types.js';
 import { createDefaultAmplifierLoopLog } from '../amplifier/AmplifierLoopLog.js';
 import { initStageMetrics } from '../amplifier/AmplifierLoopMetrics.js';
-import { WriteFileTool } from '../../tools/WriteFileTool.js';
-import { readFile, unlink } from 'fs/promises';
-import { join } from 'path';
+import { writeFile as fsWriteFile, mkdir, readFile, unlink } from 'fs/promises';
+import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import type { ExecutableTool, ToolResult } from '../../tools/types.js';
+
+class WriteFileTool implements ExecutableTool {
+  name = 'write_file';
+  description = 'Write content to a file.';
+  parameters = { type: 'object' as const, properties: { path: { type: 'string', description: 'Absolute path' }, content: { type: 'string', description: 'Content to write' } }, required: ['path', 'content'] };
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const filePath = String(input.path ?? '');
+    const content = String(input.content ?? '');
+    try {
+      await mkdir(dirname(filePath), { recursive: true });
+      await fsWriteFile(filePath, content, 'utf8');
+      return { success: true, output: `File written: ${filePath}` };
+    } catch (error) {
+      return { success: false, output: '', error: `Cannot write file: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+}
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);

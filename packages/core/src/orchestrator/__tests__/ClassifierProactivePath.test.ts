@@ -118,35 +118,6 @@ async function runTests() {
   );
   console.log('✓ "qué tengo pendiente de Dash?" → MODERATE (recall fast path)');
 
-  const cAgenda = new Classifier(new QueueProvider([]));
-  const rAgenda = await cAgenda.classify(
-    '¡Hola! ¿podemos agendar un evento para las 15:55 horas del día de hoy? El evento es tomar medicamento.',
-    []
-  );
-  assertEq(rAgenda.level, ComplexityLevel.MODERATE, 'persisted timed agenda should be MODERATE');
-  assertEq(rAgenda.classifierBranch, 'schedule_persist_lexical', 'agenda persist should hit schedule lexical branch');
-  assertEq(rAgenda.suggestedTool, 'calendar', 'agenda lexical path should hint calendar tool');
-  assertEq(rAgenda.calendarIntent, 'schedule', 'agenda persist should set calendarIntent schedule');
-  console.log(
-    '✓ "podemos agendar … 15:55 … hoy … medicamento …" → MODERATE + schedule_persist_lexical + calendar hint'
-  );
-
-  const cAgendaList = new Classifier(new QueueProvider([]));
-  const rList = await cAgendaList.classify('¿qué eventos tengo el día de hoy?', []);
-  assertEq(rList.level, ComplexityLevel.MODERATE, 'persisted agenda list-for-today should be MODERATE');
-  assertEq(rList.classifierBranch, 'calendar_list_lexical', 'agenda list should hit calendar_list_lexical branch');
-  assertEq(rList.suggestedTool, 'calendar', 'agenda list path should hint calendar tool');
-  assertEq(rList.calendarIntent, 'list', 'agenda list should set calendarIntent list');
-  console.log('✓ "¿qué eventos tengo el día de hoy?" → MODERATE + calendar_list_lexical + calendar hint');
-
-  const cAgendaProg = new Classifier(new QueueProvider([]));
-  const rProg = await cAgendaProg.classify('que eventos programados tengo para hoy?', []);
-  assertEq(rProg.level, ComplexityLevel.MODERATE, '"eventos programados … hoy" should be MODERATE');
-  assertEq(rProg.classifierBranch, 'calendar_list_lexical', 'programados phrasing hits calendar_list_lexical');
-  assertEq(rProg.suggestedTool, 'calendar', 'programados calendar hint');
-  assertEq(rProg.calendarIntent, 'list', 'programados phrasing is list intent');
-  console.log('✓ "que eventos programados tengo para hoy?" → calendar_list_lexical');
-
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
   process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
   try {

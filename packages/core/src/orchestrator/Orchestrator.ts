@@ -273,31 +273,18 @@ export class Orchestrator {
     };
   }
 
-  private buildUserProfileBlock(userId: string, profile: UserProfile): string {
-    const profileLines: string[] = [];
-    if (profile.displayName) {
-      profileLines.push(`Display name: ${profile.displayName}`);
-    }
-    if (profile.importantInfo) {
-      profileLines.push(`Important info: ${profile.importantInfo}`);
-    }
-    if (profile.preferences) {
-      profileLines.push(`Preferences: ${profile.preferences}`);
-    }
-    if (profile.locale) {
-      profileLines.push(`Locale: ${profile.locale}`);
-    }
-    if (profile.timezone) {
-      profileLines.push(`Timezone: ${profile.timezone}`);
-    }
+  private buildUserProfileBlock(_userId: string, profile: UserProfile): string {
+    const lines: string[] = [];
+    if (profile.displayName) lines.push(`The user's name is "${profile.displayName}".`);
+    if (profile.profession) lines.push(`The user's profession: ${profile.profession}.`);
+    if (profile.importantInfo) lines.push(`User info: ${profile.importantInfo}`);
+    if (profile.preferences) lines.push(`User preferences: ${profile.preferences}`);
+    if (profile.locale) lines.push(`locale: ${profile.locale}`);
+    if (profile.timezone) lines.push(`timezone: ${profile.timezone}`);
 
-    if (profileLines.length === 0) {
-      return '';
-    }
+    if (lines.length === 0) return '';
 
-    return `[IMPORTANT - USER PROFILE SETTINGS FOR ${userId}]
-${profileLines.join('\n')}
-Use this profile information to personalize responses while respecting user requests.`;
+    return `FACTS ABOUT THE USER (the person chatting with you — NOT the assistant):\n${lines.join('\n')}\nWhen the user asks "what is my name?" or "who am I?", answer using the name above.\nThese facts are about the USER only — never apply them to the assistant's identity.`;
   }
 
   private async resolveSelectedAgent(agentId: string): Promise<AgentConfig | undefined> {

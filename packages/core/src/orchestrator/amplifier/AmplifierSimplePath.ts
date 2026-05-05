@@ -24,7 +24,6 @@ import {
   extractOutputTemplates,
 } from './AmplifierLoopPromptHelpers.js';
 import {
-  computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt,
   describeHostForExecuteCommandPrompt,
   describeLocalWallClockPromptLine,
   humanOsLabel,
@@ -50,14 +49,7 @@ import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
   messageLooksLikeShellCommandExecutionRequest,
-  resolveCalendarListFastPathIntent,
-  resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
-import {
-  mailboxUnreadSummaryLockCorpus,
-  messageLooksLikeMailboxUnreadStatsQuery,
-  messageLooksLikeMailboxUnreadSummaryQuery,
-} from '../mailboxUnreadIntent.js';
 import { resolveTopSkillDeclarativeExecutable } from '../skillFastPathLock.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
@@ -458,86 +450,16 @@ If you include any text outside the JSON, the tool will not execute.
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
-  const calendarCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
-  const mailboxUnreadSummarizeCorpus = mailboxUnreadSummaryLockCorpus({
-    message: input.message,
-    originalMessage: input.originalMessage,
-    conversation: input.conversation,
-  });
-  const calendarRoutingInput = {
-    message: input.message,
-    originalMessage: input.originalMessage,
-    suggestedTool: input.suggestedTool,
-    calendarIntent: input.calendarIntent,
-    prefersHostTools: input.prefersHostTools,
-  };
-  const classifierSchedulePersist =
-    isModerate &&
-    executableTools.some((t) => t.name === 'calendar') &&
-    resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
+  const classifierSchedulePersist = false;
+  const classifierCalendarList = false;
+  const listWindowIso = null;
 
-  const classifierCalendarList =
-    isModerate &&
-    executableTools.some((t) => t.name === 'calendar') &&
-    !classifierSchedulePersist &&
-    resolveCalendarListFastPathIntent(calendarRoutingInput);
-
-  const listWindowIso = classifierCalendarList
-    ? computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(calendarCorpus, input.runtimeHints)
-    : null;
-
-  const mandatoryCalendarBlock =
-    classifierSchedulePersist
-      ? `
-
-━━━ SCHEDULE_PERSIST_LOCKED ━━━
-The user explicitly asked to save a timed entry to Enzo persisted agenda (SQLite; visible in web UI Agenda). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no greetings, no "listo").
-{"action":"tool","tool":"calendar","input":{"action":"add","title":"<short>","start_iso":"<ISO8601>","notes":"<detail>","end_iso":""}}
-CLOCK LOCK — **no invented offset:** combine the civil **date** from the **User local time** line with the user's wall-clock **HH:MM** (24h unless they wrote am/pm). Build **start_iso** as that exact local instant encoded in ISO8601 with a real **Z / numeric offset**, not a guessed +3h "correction". If they said **hoy/today** with 15:50, **start_iso** MUST land on **the same calendar day** as that line — never silently roll to **tomorrow** unless they asked for tomorrow/mañana. Omit end_iso entirely if absent (or use ""). Title should reflect what to do (e.g. "Tomar medicamento"). Prose confirmations without this JSON leave the agenda empty — forbidden here.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
-
-  const mandatoryCalendarListBlock =
-    classifierCalendarList && listWindowIso
-      ? `
-
-━━━ CALENDAR_LIST_LOCKED ━━━
-The user asked to **list** entries from their **Enzo persisted agenda** (same SQLite DB as the web UI Agenda — not Google Calendar). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "no tengo acceso a tu calendario", no web_search).
-{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"${listWindowIso.from_iso}","to_iso":"${listWindowIso.to_iso}"}}
-Ranges are UTC instants inclusive; the window matches the user's asked day scope (today / mañana / esta semana) in their **User local time** zone. Plain text answers without this JSON are blocked here.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
-
-  const classifierMailboxUnread =
-    isModerate &&
-    executableTools.some((t) => t.name === 'email_unread_count') &&
-    (input.mailboxIntent === 'unread_stats' || messageLooksLikeMailboxUnreadStatsQuery(calendarCorpus));
-
-  const mandatoryMailboxUnreadBlock = classifierMailboxUnread
-    ? `
-
-━━━ MAILBOX_UNREAD_LOCKED ━━━
-The user asked for **counts of unread emails** in mailboxes configured on THIS Enzo host (Gmail, Outlook/Microsoft, IMAP connected in Correo — not hypothetical). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "open your browser yourself", no simulation).
-{"action":"tool","tool":"email_unread_count","input":{}}
-Optional: narrow to one mailbox with {"action":"tool","tool":"email_unread_count","input":{"accountId":"<configured id>"}} if they named a single account id. Plain text totals without executing this JSON are blocked here — the counts come from Gmail label INBOX unread, Outlook Graph inbox \`unreadItemCount\`, or IMAP UNSEEN SEARCH.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
-
-  const classifierMailboxUnreadSummary =
-    isModerate &&
-    executableTools.some((t) => t.name === 'read_email') &&
-    (input.mailboxIntent === 'unread_summarize' ||
-      messageLooksLikeMailboxUnreadSummaryQuery(mailboxUnreadSummarizeCorpus));
-
-  const mandatoryMailboxUnreadSummarizeBlock = classifierMailboxUnreadSummary
-    ? `
-
-━━━ MAILBOX_UNREAD_SUMMARY_LOCKED ━━━
-The user asked to **inspect or summarise UNREAD emails** among connected Gmail / Outlook / IMAP accounts on THIS host. For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no simulations, no "I need permission").
-{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":32}}
-Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unless they named exactly one mailbox id — unread_only MUST stay true unless they pivoted entirely away from unread. Afterwards you summarize ONLY lines returned by read_email — never fabricated subjects/companies/courses.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
+  const mandatoryCalendarBlock = '';
+  const mandatoryCalendarListBlock = '';
+  const classifierMailboxUnread = false;
+  const classifierMailboxUnreadSummary = false;
+  const mandatoryMailboxUnreadBlock = '';
+  const mandatoryMailboxUnreadSummarizeBlock = '';
 
   const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
   const hasCalendarListClassifierWindow = Boolean(classifierCalendarList && listWindowIso);
@@ -549,11 +471,7 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
     !classifierMailboxUnread &&
     !classifierMailboxUnreadSummary;
 
-  // Send email classifier lock: when suggestedTool is send_email, force using the send_email tool
-  const sendEmailClassifierLockActive =
-    isModerate &&
-    input.suggestedTool === 'send_email' &&
-    executableTools.some((t) => t.name === 'send_email');
+  const sendEmailClassifierLockActive = false;
 
   // Shell command execution lock: when user explicitly says "execute it/run it" with prefersHostTools
   const shellCommandExecutionLockActive =
@@ -573,18 +491,7 @@ Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unles
     !shellCommandExecutionLockActive &&
     executableTools.some((t) => t.name === 'execute_command');
 
-  const mandatorySendEmailBlock = sendEmailClassifierLockActive
-    ? `
-
-━━━ SEND_EMAIL_CLASSIFIER_LOCKED ━━━
-The classifier flagged **send_email**: you MUST send an email using the **send_email** tool.
-For this turn ONLY: respond with exactly **ONE** canonical JSON tool call to send_email.
-Extract from the conversation: recipient email address, subject line, and body content.
-If any information is missing (recipient, subject, or body), ask the user with a plain text response instead of calling the tool.
-Canonical shape: {"action":"tool","tool":"send_email","input":{"to":"recipient@example.com","subject":"Subject line","body":"Email body content"}}
-Do NOT simulate sending — you MUST use the send_email tool.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
+  const mandatorySendEmailBlock = '';
 
   const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
     ? `
@@ -626,8 +533,6 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
     (persistToPathRequested ||
       classifierSchedulePersist ||
       hasCalendarListClassifierWindow ||
-      classifierMailboxUnread ||
-      classifierMailboxUnreadSummary ||
       sendEmailClassifierLockActive ||
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);

@@ -58,13 +58,11 @@ function testFloorPreservesClassifierRoutingHints(): void {
     reason: 'casual',
     classifierBranch: 'llm',
     suppressSimpleModerateFastPath: true,
-    suggestedTool: 'calendar',
-    calendarIntent: 'list',
+    suggestedTool: 'web_search',
   };
   const out = applyClassificationFloors(raw, { hasImageContext: true, availableAgents: [visorAgent] });
   assert(out.suppressSimpleModerateFastPath === true, 'preserve suppress hint through image floor');
-  assert(out.suggestedTool === 'calendar', 'preserve suggestedTool');
-  assert(out.calendarIntent === 'list', 'preserve calendarIntent');
+  assert(out.suggestedTool === 'web_search', 'preserve suggestedTool');
 }
 
 async function run(): Promise<void> {

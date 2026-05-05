@@ -64,11 +64,6 @@ import {
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
-  WhisperTranscriptionService,
-  EdgeTTSService,
-  FileHandler,
-  OllamaVisionService,
-  MarkItDownConverter,
 } from '@enzo/core';
 import {
   bindEchoDeclarativeOrchestrator,
@@ -182,25 +177,9 @@ async function main() {
       await bot.telegram.sendDocument(chatId, { source: buffer, filename });
     };
 
-    const fileHandler = new FileHandler({
-      workspacePath: resolvedUserWorkspace,
-      maxSizeMb: 50,
-    });
-    const markItDownService = new MarkItDownConverter();
-
-    const toolRegistry = createDefaultToolRegistry(
-      memoryService,
-      resolvedUserWorkspace,
-      configService,
-      { fileHandler, sendFileFn: sendTelegramFile }
-    );
-    const transcriptionService = new WhisperTranscriptionService(configService);
-    const ttsService = new EdgeTTSService({ configService });
-    const visionService = new OllamaVisionService(configService);
+    const toolRegistry = createDefaultToolRegistry(memoryService);
     const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
-    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot, {
-      localVisionService: visionService,
-    });
+    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
     const orchestrator = new Orchestrator(
       ollamaProvider,
       anthropicProvider,
@@ -263,11 +242,6 @@ async function main() {
 
       const nextBot = createBot(orchestrator, memoryService, {
         configService,
-        transcriptionService,
-        ttsService,
-        fileHandler,
-        visionService,
-        markItDownService,
       });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);

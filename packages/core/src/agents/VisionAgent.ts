@@ -1,7 +1,17 @@
 import type { ConfigService } from '../config/ConfigService.js';
-import type { VisionService } from '../vision/VisionService.js';
 import { runAnthropicVisionTask } from './anthropicDelegationUtils.js';
 import type { DelegationRequest, DelegationResult } from './AgentRouter.js';
+
+export interface VisionResult {
+  success: boolean;
+  description?: string;
+  canRetry?: boolean;
+  error?: string;
+}
+
+export interface VisionService {
+  analyze(imageBuffer: Buffer, mimeType: string, prompt?: string): Promise<VisionResult>;
+}
 
 function buildSystemPrompt(request: DelegationRequest): string {
   return `You are a vision assistant.

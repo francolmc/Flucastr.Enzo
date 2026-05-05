@@ -7,10 +7,9 @@ import {
   buildChunkCaptureConfirmation,
   getMemoryExtractionMessages,
   buildOrchestratorRuntimeHints,
-  AudioConverter,
-  getVoiceTriggers,
-  requestsVoiceResponse,
 } from '@enzo/core';
+import { getVoiceTriggers, requestsVoiceResponse } from '../voiceUtils.js';
+import { AudioConverter } from '../audioConverter.js';
 import { LanguageMiddleware } from '../LanguageMiddleware.js';
 import { startTyping } from '../typing.js';
 import { tryHandleAgentCommandText } from './commands.js';

@@ -35,30 +35,67 @@ export function buildAssistantIdentityPrompt(input: AmplifierInput): string {
 }
 
 /**
- * Injects user profile memory directly into the system prompt so it lands early (high attention),
- * not as a trailing system message that small models tend to ignore.
+ * Resolves the user's display name with explicit precedence:
+ * dynamic memory (extracted from conversation) > static profile (configured by user).
+ * This is the single source of truth for "who is the person chatting".
+ */
+export function resolveUserDisplayName(input: AmplifierInput): string | undefined {
+  const nameMatch = input.memoryBlock?.match(/The user's name is "([^"]+)"/i);
+  if (nameMatch?.[1]) return nameMatch[1];
+  return input.userProfile?.displayName || undefined;
+}
+
+/**
+ * Merges static UserProfile and dynamic memory facts into a single USER CONTEXT block.
+ *
+ * Precedence rules:
+ * - name / profession / city: dynamic memory wins (extracted from natural conversation)
+ * - locale / timezone: static profile wins (explicitly configured by user — authoritative)
+ * - importantInfo / preferences: static profile appended unless memory has a matching key
+ *
+ * Injected early in the system prompt so small models don't lose it under tool rules.
  */
 export function buildMemoryPromptSection(input: AmplifierInput): string {
   const parts: string[] = [];
-
   const profile = input.userProfile;
-  if (profile) {
-    const profileLines: string[] = [];
-    if (profile.displayName) profileLines.push(`name: ${profile.displayName}`);
-    if (profile.importantInfo) profileLines.push(`info: ${profile.importantInfo}`);
-    if (profile.preferences) profileLines.push(`preferences: ${profile.preferences}`);
-    if (profile.locale) profileLines.push(`locale: ${profile.locale}`);
-    if (profile.timezone) profileLines.push(`timezone: ${profile.timezone}`);
-    if (profileLines.length > 0) {
-      parts.push(`USER PROFILE (configured settings):\n${profileLines.join('\n')}`);
-    }
-  }
 
+  // --- Dynamic memory (ranked facts from conversation history) ---
+  // These override static profile for personal identity fields (name, profession, city).
   if (input.memoryBlock?.trim()) {
     parts.push(input.memoryBlock.trim());
   } else if (input.userMemories && input.userMemories.length > 0) {
-    const facts = input.userMemories.map((m) => `${m.key}: ${m.value}`).join(', ');
-    parts.push(`[IMPORTANT - USER PROFILE: ${facts}]\nIf the user asks about themselves (name, city, profession, etc.), answer from this profile.`);
+    const facts = input.userMemories
+      .map((m) => `${m.key}: ${m.value}`)
+      .join('\n');
+    parts.push(`FACTS ABOUT THE USER (the person chatting with you — NOT the assistant):\n${facts}\nWhen the user asks "what is my name?" or "who am I?", answer using the facts above.`);
+  }
+
+  // --- Static profile (explicitly configured settings) ---
+  // Authoritative for locale/timezone; supplements dynamic memory for name/profession
+  // only when dynamic memory has no value for that field.
+  if (profile) {
+    const dynamicKeys = new Set(
+      (input.userMemories ?? []).map((m) => m.key.toLowerCase())
+    );
+    const hasDynamicName = dynamicKeys.has('name') || /The user's name is "/i.test(input.memoryBlock ?? '');
+    const hasDynamicProfession = dynamicKeys.has('profession') || /The user's profession:/i.test(input.memoryBlock ?? '');
+
+    const staticLines: string[] = [];
+    if (profile.displayName && !hasDynamicName) {
+      staticLines.push(`name: ${profile.displayName}`);
+    }
+    if (profile.profession && !hasDynamicProfession) {
+      staticLines.push(`profession: ${profile.profession}`);
+    }
+    if (profile.importantInfo) staticLines.push(`info: ${profile.importantInfo}`);
+    if (profile.preferences) staticLines.push(`preferences: ${profile.preferences}`);
+    // locale and timezone are always from static config — they are user-configured, not inferred
+    if (profile.locale) staticLines.push(`locale: ${profile.locale}`);
+    if (profile.timezone) staticLines.push(`timezone: ${profile.timezone}`);
+
+    if (staticLines.length > 0) {
+      parts.push(`USER PROFILE (configured settings):\n${staticLines.join('\n')}`);
+    }
   }
 
   if (parts.length === 0) return '';
@@ -66,9 +103,9 @@ export function buildMemoryPromptSection(input: AmplifierInput): string {
 }
 
 /**
- * Compact anchor appended at the END of the system prompt so the model reads identity + user name
- * last — right before generating. Mitigates attention dilution in long prompts (e.g. Gemini ignoring
- * the identity block buried under hundreds of tokens of tool rules).
+ * Compact anchor appended at the END of the system prompt.
+ * Mitigates attention dilution in long prompts (small models ignore identity buried early).
+ * Uses resolveUserDisplayName() as single source of truth for the user's name.
  */
 export function buildContextAnchorPrompt(input: AmplifierInput): string {
   const identity = getAssistantIdentityContext(input);
@@ -77,11 +114,9 @@ export function buildContextAnchorPrompt(input: AmplifierInput): string {
     `- Your name is "${identity.name}". You are a privately configured AI assistant. NEVER say you are "trained by Google", "a Google model", "trained by Anthropic", or any other company. If asked who made you, say only that you are a privately configured assistant named "${identity.name}".`,
   ];
 
-  const nameMatch = input.memoryBlock?.match(/The user's name is "([^"]+)"/i);
-  if (nameMatch?.[1]) {
-    lines.push(`- The person chatting with you is named ${nameMatch[1]}. Use their name naturally when relevant.`);
-  } else if (input.userProfile?.displayName) {
-    lines.push(`- The person chatting with you is named ${input.userProfile.displayName}. Use their name naturally when relevant.`);
+  const userName = resolveUserDisplayName(input);
+  if (userName) {
+    lines.push(`- The person chatting with you is named ${userName}. Use their name naturally when relevant.`);
   }
 
   return lines.join('\n');

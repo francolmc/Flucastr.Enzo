@@ -1,16 +1,10 @@
 import https from 'node:https';
 import {
-  CalendarService,
   EchoEngine,
   NotificationGateway,
   Orchestrator,
   buildOrchestratorRuntimeHints,
   resolvePreferredWallClockTimeZoneId,
-  createMorningBriefingTask,
-  createContextRefreshTask,
-  createNightSummaryTask,
-  EmailService,
-  type AmplifierInput,
   type ConfigService,
   type MemoryService,
 } from '@enzo/core';
@@ -175,11 +169,6 @@ export function getEchoEngine(bindings: EchoEngineBindings = {}): EchoEngine {
           duplicateEchoWarning,
         };
       });
-      const resolveUserId = () => resolveEchoUserId(memoryService, configService);
-      // Las tareas de rutina diaria ahora se gestionan automáticamente mediante ConfigService
-      // y el sistema syncDailyRoutineTasksFromConfig() en EchoEngine
-    } else {
-      // ConfigService no disponible - no registrar tareas de rutina diaria
     }
   }
   return sharedEchoEngine;
