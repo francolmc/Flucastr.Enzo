@@ -43,11 +43,13 @@ export type ThinkPhaseParams = {
   previousSteps?: Step[];
   skipSkills?: boolean;
   resolvedSkills?: RelevantSkill[];
+  /** Mutable accumulator — caller passes by reference to collect real token counts. */
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
 
 export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): Promise<Step> {
   const { baseProvider, withTimeout, maxIterations, mcpRegistry, skillRegistry, skillResolver, log } = deps;
-  const { input, context, iteration, modelsUsed, previousSteps = [], skipSkills, resolvedSkills } = p;
+  const { input, context, iteration, modelsUsed, previousSteps = [], skipSkills, resolvedSkills, usageAccumulator } = p;
   const startTime = Date.now();
 
   const mergedTools = [...input.availableTools];
@@ -285,6 +287,10 @@ ${context ? `Context from previous steps:\n${context}` : ''}`;
   );
 
   modelsUsed.add(baseProvider.model);
+  if (usageAccumulator) {
+    usageAccumulator.inputTokens += response.usage?.inputTokens ?? 0;
+    usageAccumulator.outputTokens += response.usage?.outputTokens ?? 0;
+  }
 
   let thinkOutput = response.content ?? '';
   if (response.toolCalls?.length) {

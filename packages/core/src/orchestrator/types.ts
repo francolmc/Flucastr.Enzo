@@ -144,6 +144,8 @@ export interface AmplifierResult {
   durationMs: number;
   stageMetrics?: StageMetrics;
   complexityUsed?: string;
+  /** Accumulated real token counts from all LLM calls inside the loop. */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 export interface InjectedSkillUsage {

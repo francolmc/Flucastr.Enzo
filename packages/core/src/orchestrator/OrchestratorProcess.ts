@@ -272,8 +272,10 @@ export async function executeOrchestratorProcess(
   const providerUsed = runtimeProvider.name || b.resolveProvider(modelUsed);
   const source = input.source || 'unknown';
 
-  const inputTokens = Math.ceil(input.message.length / 4);
-  const outputTokens = Math.ceil(amplifierResult.content.length / 4);
+  const realInputTokens = amplifierResult.usage?.inputTokens ?? 0;
+  const realOutputTokens = amplifierResult.usage?.outputTokens ?? 0;
+  const inputTokens = realInputTokens > 0 ? realInputTokens : Math.ceil(input.message.length / 4);
+  const outputTokens = realOutputTokens > 0 ? realOutputTokens : Math.ceil(amplifierResult.content.length / 4);
   const estimatedCostUsd = estimateCostUsd({
     provider: providerUsed,
     model: modelUsed,

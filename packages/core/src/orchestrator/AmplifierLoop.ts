@@ -292,6 +292,7 @@ No markdown. No prose.`;
     const stageMetrics = initStageMetrics();
     const modelsUsed = new Set<string>();
     const toolsUsed = new Set<string>();
+    const usageAccumulator = { inputTokens: 0, outputTokens: 0 };
 
     let currentContext = '';
     let iteration = 0;
@@ -455,6 +456,7 @@ No markdown. No prose.`;
         requestToolInputCorrection: this.requestToolInputCorrection.bind(this),
         verifyBeforeSynthesize: this.verifyBeforeSynthesize,
         capabilityResolver: this.capabilityResolver,
+        usageAccumulator,
       });
     }
 
@@ -915,6 +917,7 @@ Do NOT search for more information. Use what is provided.`;
             modelsUsed,
             previousSteps: steps,
             resolvedSkills: subtaskResolvedSkills,
+            usageAccumulator,
           });
           recordStageMetric(stageMetrics, 'think', Date.now() - subThinkStart, true);
           steps.push(thinkStep);
@@ -1077,6 +1080,9 @@ Do NOT search for more information. Use what is provided.`;
             durationMs: Date.now() - startTime,
             stageMetrics,
             complexityUsed: ComplexityLevel.COMPLEX,
+            ...(usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0
+              ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
+              : {}),
           };
         }
         this.log.info(
@@ -1086,7 +1092,7 @@ Do NOT search for more information. Use what is provided.`;
 
       const verifyComplexStart = Date.now();
       const verifiedComplex = await runVerifyBeforeSynthesizeIfEnabled(
-        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this), usageAccumulator },
         input,
         accumulatedContext,
         iteration,
@@ -1106,7 +1112,7 @@ Do NOT search for more information. Use what is provided.`;
         verifiedComplex.context
       );
       const synthesizeStep = await runSynthesizePhase(
-        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+        { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this), usageAccumulator },
         input,
         complexSynthContext,
         iteration,
@@ -1130,6 +1136,9 @@ Do NOT search for more information. Use what is provided.`;
         durationMs: Date.now() - startTime,
         stageMetrics,
         complexityUsed: ComplexityLevel.COMPLEX,
+        ...(usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0
+          ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
+          : {}),
       };
       }
     }
@@ -1151,6 +1160,7 @@ Do NOT search for more information. Use what is provided.`;
         modelsUsed,
         previousSteps: steps,
         resolvedSkills: preResolvedSkills,
+        usageAccumulator,
       });
       recordStageMetric(stageMetrics, 'think', Date.now() - thinkStart, true);
       steps.push(thinkStep);
@@ -1464,7 +1474,7 @@ Do NOT search for more information. Use what is provided.`;
 
     const verifyMainStart = Date.now();
     const verifiedMain = await runVerifyBeforeSynthesizeIfEnabled(
-      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this), usageAccumulator },
       input,
       currentContext,
       iteration + 1,
@@ -1488,7 +1498,7 @@ Do NOT search for more information. Use what is provided.`;
     );
 
     const synthesizeStep = await runSynthesizePhase(
-      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this) },
+      { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this), usageAccumulator },
       input,
       synthContext,
       iteration + 1,
@@ -1513,6 +1523,9 @@ Do NOT search for more information. Use what is provided.`;
       durationMs: Date.now() - startTime,
       stageMetrics,
       complexityUsed: input.classifiedLevel,
+      ...(usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0
+        ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
+        : {}),
     };
   }
 

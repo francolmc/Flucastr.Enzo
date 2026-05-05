@@ -81,6 +81,8 @@ export type SimpleModeratePathContext = {
   ) => Promise<{ toolName: string; toolInput: any } | null>;
   verifyBeforeSynthesize?: boolean;
   capabilityResolver?: CapabilityResolver;
+  /** Mutable accumulator — caller passes by reference to collect real token counts. */
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
 
 function resolveHomeDir(input: AmplifierInput): string {
@@ -137,10 +139,11 @@ async function synthesizeFastPathToolOutput(params: {
   verifyBeforeSynthesize: boolean;
   stageMetrics: StageMetrics;
   log: AmplifierLoopLog;
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 }): Promise<string> {
   const verifyStart = Date.now();
   const verified = await runVerifyBeforeSynthesizeIfEnabled(
-    { baseProvider: params.baseProvider, withTimeout: params.withTimeout },
+    { baseProvider: params.baseProvider, withTimeout: params.withTimeout, usageAccumulator: params.usageAccumulator },
     params.input,
     params.toolOutput,
     params.steps.length + 1,
@@ -242,6 +245,10 @@ ${
     );
     if (synthesisResponse) {
       recordStageMetric(params.stageMetrics, 'synthesize', Date.now() - synthStart, true);
+      if (params.usageAccumulator) {
+        params.usageAccumulator.inputTokens += synthesisResponse.usage?.inputTokens ?? 0;
+        params.usageAccumulator.outputTokens += synthesisResponse.usage?.outputTokens ?? 0;
+      }
     }
     return synthesisResponse?.content?.trim() ? synthesisResponse.content.trim() : params.toolOutput;
   } catch (synthErr) {
@@ -400,6 +407,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     requestToolInputCorrection,
     verifyBeforeSynthesize = false,
     capabilityResolver,
+    usageAccumulator,
   } = ctx;
 
   const isModerate = classifiedLevel === ComplexityLevel.MODERATE;
@@ -612,6 +620,10 @@ If responding with plain text (no tool), write in this language.`;
     throw err;
   }
   recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+  if (usageAccumulator && firstResponse) {
+    usageAccumulator.inputTokens += firstResponse.usage?.inputTokens ?? 0;
+    usageAccumulator.outputTokens += firstResponse.usage?.outputTokens ?? 0;
+  }
 
   rawContent = applyCompletionToolCallsToText(
     firstResponse.content ?? '',
@@ -687,6 +699,10 @@ Never invent tool names.`;
         60_000,
         'SIMPLE moderate strict-tool retry'
       );
+      if (usageAccumulator) {
+        usageAccumulator.inputTokens += retry.usage?.inputTokens ?? 0;
+        usageAccumulator.outputTokens += retry.usage?.outputTokens ?? 0;
+      }
       const retried = applyCompletionToolCallsToText(
         retry.content ?? '',
         retry.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
@@ -906,6 +922,7 @@ Never invent tool names.`;
                   verifyBeforeSynthesize: !!verifyBeforeSynthesize,
                   stageMetrics,
                   log,
+                  usageAccumulator,
                 });
               }
             }
@@ -975,6 +992,10 @@ Use a tool name exactly from the valid list above.`;
               60_000,
               'SIMPLE allowlist-tool retry'
             );
+            if (usageAccumulator) {
+              usageAccumulator.inputTokens += allowlistRepair.usage?.inputTokens ?? 0;
+              usageAccumulator.outputTokens += allowlistRepair.usage?.outputTokens ?? 0;
+            }
             let mergedTxt = applyCompletionToolCallsToText(
               allowlistRepair.content ?? '',
               allowlistRepair.toolCalls as Array<{
@@ -1054,5 +1075,8 @@ Use a tool name exactly from the valid list above.`;
     durationMs: Date.now() - startTime,
     stageMetrics,
     complexityUsed: classifiedLevel,
+    ...(usageAccumulator && (usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0)
+      ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
+      : {}),
   };
 }

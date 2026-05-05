@@ -145,7 +145,7 @@ export function createChatRouter(
         modelUsed: response.modelUsed,
         injectedSkills: response.injectedSkills,
         durationMs: response.durationMs,
-        estimatedCostUsd: response.usage?.estimatedCostUsd ?? 0,
+        usage: response.usage,
         requestId: response.requestId || requestId,
       });
     } catch (error) {
