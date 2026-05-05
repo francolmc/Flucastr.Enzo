@@ -144,6 +144,10 @@ export class IterationProgressTracker {
   getAllSignatures(): ProgressSignature[] {
     return [...this.signatures];
   }
+
+  getHistory(): ProgressSignature[] {
+    return [...this.signatures];
+  }
 }
 
 /**

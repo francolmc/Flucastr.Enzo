@@ -38,21 +38,28 @@ function migrateLegacyMemoriesIntoMemoryEntries(db: DatabaseSync): void {
   }
 }
 
+type SQLitePrimitive = string | number | boolean | null | Buffer;
+type SQLiteParams = SQLitePrimitive[];
+
 interface DbWrapper {
-  run(sql: string, params: any[]): void;
-  get(sql: string, params: any[]): any;
-  all(sql: string, params: any[]): any[];
+  run(sql: string, params: SQLiteParams): void;
+  get<T = unknown>(sql: string, params: SQLiteParams): T | null;
+  all<T = unknown>(sql: string, params: SQLiteParams): T[];
+}
+
+interface LegacyDbRecord {
+  [key: string]: unknown;
 }
 
 interface LegacyDbStore {
-  conversations: any[];
-  messages: any[];
-  memories: any[];
-  usage_stats: any[];
-  agents: any[];
-  conversation_agent_state: any[];
-  skills_config: any[];
-  mcp_servers: any[];
+  conversations: LegacyDbRecord[];
+  messages: LegacyDbRecord[];
+  memories: LegacyDbRecord[];
+  usage_stats: LegacyDbRecord[];
+  agents: LegacyDbRecord[];
+  conversation_agent_state: LegacyDbRecord[];
+  skills_config: LegacyDbRecord[];
+  mcp_servers: LegacyDbRecord[];
 }
 
 export class DatabaseManager {
@@ -64,9 +71,9 @@ export class DatabaseManager {
     console.log(`[Database] Initializing database at: ${this.dbPath}`);
     this.initializeSqlite();
     this.dbWrapper = {
-      run: (sql: string, params: any[]) => this.executeSql(sql, params),
-      get: (sql: string, params: any[]) => this.getSql(sql, params),
-      all: (sql: string, params: any[]) => this.allSql(sql, params),
+      run: (sql: string, params: SQLiteParams) => this.executeSql(sql, params),
+      get: <T>(sql: string, params: SQLiteParams) => this.getSql<T>(sql, params),
+      all: <T>(sql: string, params: SQLiteParams) => this.allSql<T>(sql, params),
     };
     console.log('[Database] Initialization complete. SQLite backend ready');
   }
@@ -296,16 +303,26 @@ export class DatabaseManager {
     }
   }
 
-  private toLegacyStore(parsed: any): LegacyDbStore {
+  private toLegacyStore(parsed: unknown): LegacyDbStore {
+    const safeArray = (val: unknown): LegacyDbRecord[] => {
+      if (Array.isArray(val)) {
+        return val.filter((item): item is LegacyDbRecord => 
+          typeof item === 'object' && item !== null
+        );
+      }
+      return [];
+    };
+    
+    const p = parsed as Record<string, unknown> | null;
     return {
-      conversations: Array.isArray(parsed?.conversations) ? parsed.conversations : [],
-      messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
-      memories: Array.isArray(parsed?.memories) ? parsed.memories : [],
-      usage_stats: Array.isArray(parsed?.usage_stats) ? parsed.usage_stats : [],
-      agents: Array.isArray(parsed?.agents) ? parsed.agents : [],
-      conversation_agent_state: Array.isArray(parsed?.conversation_agent_state) ? parsed.conversation_agent_state : [],
-      skills_config: Array.isArray(parsed?.skills_config) ? parsed.skills_config : [],
-      mcp_servers: Array.isArray(parsed?.mcp_servers) ? parsed.mcp_servers : [],
+      conversations: safeArray(p?.conversations),
+      messages: safeArray(p?.messages),
+      memories: safeArray(p?.memories),
+      usage_stats: safeArray(p?.usage_stats),
+      agents: safeArray(p?.agents),
+      conversation_agent_state: safeArray(p?.conversation_agent_state),
+      skills_config: safeArray(p?.skills_config),
+      mcp_servers: safeArray(p?.mcp_servers),
     };
   }
 
@@ -496,19 +513,19 @@ export class DatabaseManager {
     return this.sqlite;
   }
 
-  private executeSql(sql: string, params: any[]): void {
+  private executeSql(sql: string, params: SQLiteParams): void {
     const statement = this.getDatabase().prepare(sql);
     statement.run(...params);
   }
 
-  private getSql(sql: string, params: any[]): any {
+  private getSql<T>(sql: string, params: SQLiteParams): T | null {
     const statement = this.getDatabase().prepare(sql);
-    return statement.get(...params);
+    return statement.get(...params) as T | null;
   }
 
-  private allSql(sql: string, params: any[]): any[] {
+  private allSql<T>(sql: string, params: SQLiteParams): T[] {
     const statement = this.getDatabase().prepare(sql);
-    return statement.all(...params) as any[];
+    return statement.all(...params) as T[];
   }
 
   static getInstance(dbPath?: string): DatabaseManager {
