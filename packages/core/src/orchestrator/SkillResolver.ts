@@ -141,58 +141,11 @@ export class SkillResolver {
     return null
   }
 
-  private generateSyntheticExample(name: string, description: string): string {
-    const normalizedName = name.toLowerCase().trim()
-    const normalizedDesc = description.toLowerCase()
-
-    const templates: Record<string, string[]> = {
-      weather: ['dime el clima en [ciudad]', 'qué tiempo hace en [ciudad]'],
-      datetime: ['qué hora es', 'qué día es hoy'],
-      capture: ['anota esta idea', 'quiero capturar una idea'],
-      'enzo-notes': ['toma nota de', 'escribe esto en notas'],
-      'focus-advisor': ['ayúdame a concentrarme', 'cómo puedo ser más productivo'],
-      'morning-briefing': ['dame el briefing matutino', 'resumen de la mañana'],
-      'project-context': ['qué es este proyecto', 'dame contexto del proyecto'],
-      'github-cli-enzo': ['busca en github', 'muéstrame los commits'],
-    }
-
-    if (templates[normalizedName]) {
-      return templates[normalizedName][0]
-    }
-
-    if (normalizedDesc.includes('clima') || normalizedDesc.includes('tiempo') || normalizedDesc.includes('temperatura')) {
-      return 'dime el clima en [ciudad]'
-    }
-    if (normalizedDesc.includes('fecha') || normalizedDesc.includes('hora')) {
-      return 'qué hora es'
-    }
-    if (normalizedDesc.includes('nota') || normalizedDesc.includes('idea') || normalizedDesc.includes('capturar')) {
-      return 'anota esta idea'
-    }
-    if (normalizedDesc.includes('focus') || normalizedDesc.includes('concentr')) {
-      return 'ayúdame a concentrarme'
-    }
-    if (normalizedDesc.includes('briefing') || normalizedDesc.includes('mañana')) {
-      return 'dame el briefing matutino'
-    }
-    if (normalizedDesc.includes('proyecto') || normalizedDesc.includes('contexto')) {
-      return 'qué es este proyecto'
-    }
-    if (normalizedDesc.includes('github')) {
-      return 'busca en github'
-    }
-
-    return `quiero usar ${normalizedName}`
-  }
-
   private buildFewShotExamples(skills: { id: string; name: string; description: string; content: string }[]): string {
     const examples: string[] = []
 
     for (const skill of skills) {
-      let example = this.extractExampleFromSkill(skill.content)
-      if (!example) {
-        example = this.generateSyntheticExample(skill.name, skill.description)
-      }
+      const example = this.extractExampleFromSkill(skill.content)
       if (example) {
         examples.push(`- "${example}" -> {"skillIds": ["${skill.id}"]}`)
       }

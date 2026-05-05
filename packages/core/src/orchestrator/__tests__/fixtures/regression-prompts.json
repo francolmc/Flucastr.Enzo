@@ -9,7 +9,7 @@
   },
   {
     "message": "lee /Users/franco/Downloads/notes.md y crea un resumen en /Users/franco/Downloads/resumen.md",
-    "expectedLevel": "COMPLEX"
+    "expectedLevel": "MODERATE"
   },
   {
     "message": "what is the capital of Chile?",

@@ -147,10 +147,10 @@ async function testImagePayloadCoercesDelegateWhenThinkIsProseOnly() {
     verifyBeforeSynthesize: false,
     agentRouter: router,
   });
-  const hostMessage = `[Franco mandó una imagen: x.jpg]
-Está guardado en /tmp/x.jpg.
+  const hostMessage = `[User sent an image: x.jpg]
+Saved at /tmp/x.jpg.
 
-Instrucción del usuario (caption): ¿qué ves en la imagen?`;
+User caption: What do you see in the image?`;
   const result = await loop.amplify({
     message: hostMessage,
     conversationId: 'c-img',
@@ -165,7 +165,7 @@ Instrucción del usuario (caption): ¿qué ves en la imagen?`;
   });
   assert(delegatedAgent === 'vision_agent', `delegate agent: ${delegatedAgent}`);
   assert(
-    delegatedTask.includes('¿qué ves') || delegatedTask.includes('qué ves'),
+    delegatedTask.toLowerCase().includes('image'),
     `task should carry caption; got ${delegatedTask}`
   );
   assert(

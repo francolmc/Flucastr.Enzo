@@ -34,26 +34,18 @@ export function parseExplicitUtcOffsetLabelToTimeZoneId(raw: string): string | u
   return `Etc/GMT-${hours}`;
 }
 
-const CHILE_MAINLAND_IANA = new Set(['america/santiago', 'chile/continental']);
-
 /**
  * Wall clock used in prompts, calendar list windows, and Echo morning brief.
  *
  * - Explicit "UTC±H" / "GMT±H" → fixed `Etc/GMT…` (matches how users describe civil offset).
- * - `America/Santiago` (and `Chile/Continental`): Node's tzdb often uses seasonal CLT/CST; Chile's
- *   common civil expectation is **UTC-3** (`Etc/GMT+3`) for mainland. Set `ENZO_KEEP_IANA_SANTIAGO=true`
- *   to keep canonical IANA offsets instead.
+ * - Falls back to `process.env.TZ` when no value is provided by the caller.
+ * - No deployment-specific timezone is hardcoded; the caller (ConfigService / runtimeHints) must supply it.
  */
 export function resolvePreferredWallClockTimeZoneId(raw?: string): string {
-  const keepIanaSantiago =
-    process.env.ENZO_KEEP_IANA_SANTIAGO === 'true' || process.env.ENZO_KEEP_IANA_SANTIAGO === '1';
-  const base = (raw ?? '').trim() || process.env.TZ?.trim() || 'America/Santiago';
+  const base = (raw ?? '').trim() || process.env.TZ?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const explicit = parseExplicitUtcOffsetLabelToTimeZoneId(base);
   if (explicit) {
     return explicit;
-  }
-  if (!keepIanaSantiago && CHILE_MAINLAND_IANA.has(base.toLowerCase())) {
-    return 'Etc/GMT+3';
   }
   return base;
 }
@@ -115,74 +107,22 @@ function utcInclusiveEndMsOfSameLocalCalendarDay(dayStartUtcMs: number, timeZone
 }
 
 /**
- * Inclusive `[from_iso, to_iso]` UTC range covering the persisted calendar user's asked window
- * (`hoy`, `mañana`, `esta semana`) resolved in their profile timezone defaults.
+ * Inclusive `[from_iso, to_iso]` UTC range covering the current day in the caller-supplied timezone.
+ *
+ * The temporal intent (today / tomorrow / this week) is determined by the LLM via the classifier;
+ * this function always returns the current day's range as an anchor for calendar tool calls.
  *
  * Exported for tests — do not widen without updating calendar list locked prompt callers.
  */
 export function computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(
-  message: string,
+  _message: string,
   hints?: AmplifierInput['runtimeHints']
 ): { from_iso: string; to_iso: string } {
-  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone ?? 'America/Santiago');
-  const normalized = message.toLowerCase();
+  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone);
   const anchorNow = Date.now();
-
-  const hasWeek = /\besta\s+semana\b/u.test(normalized) || /\bthis\s+week\b/u.test(normalized);
-
-  let includeToday =
-    /\b(hoy|today|este\s+d[ií]a|el\s+d[ií]a\s+de\s+hoy|d[ií]a\s+de\s+hoy)\b/u.test(normalized);
-  let includeTomorrow =
-    /\b(mañana|tomorrow)\b/u.test(normalized) &&
-    !/\bpasado\s+mañana\b/u.test(normalized) &&
-    !/\bday\s+after\s+tomorrow\b/u.test(normalized);
-
-  if (!includeToday && !includeTomorrow && !hasWeek) {
-    includeToday = true;
-  }
-
-  if (hasWeek) {
-    const todayStart = utcFirstInstantOfLocalYyyymmdd(
-      anchorNow,
-      tz,
-      localCalendarYyyymmddFromUtcMs(anchorNow, tz)
-    );
-    let fromMs = todayStart;
-    let toMs = utcInclusiveEndMsOfSameLocalCalendarDay(todayStart, tz);
-    for (let d = 1; d <= 6; d += 1) {
-      const probe = todayStart + d * 26 * 3600 * 1000;
-      const dayStart = utcFirstInstantOfLocalYyyymmdd(probe, tz, localCalendarYyyymmddFromUtcMs(probe, tz));
-      const dayEnd = utcInclusiveEndMsOfSameLocalCalendarDay(dayStart, tz);
-      fromMs = Math.min(fromMs, dayStart);
-      toMs = Math.max(toMs, dayEnd);
-    }
-    return { from_iso: new Date(fromMs).toISOString(), to_iso: new Date(toMs).toISOString() };
-  }
-
-  const spans: Array<{ lo: number; hi: number }> = [];
-
-  if (includeToday) {
-    const ks = localCalendarYyyymmddFromUtcMs(anchorNow, tz);
-    const s = utcFirstInstantOfLocalYyyymmdd(anchorNow, tz, ks);
-    spans.push({ lo: s, hi: utcInclusiveEndMsOfSameLocalCalendarDay(s, tz) });
-  }
-  if (includeTomorrow) {
-    const tomorrowProbe = utcFirstInstantOfLocalYyyymmdd(
-      anchorNow + 28 * 3600 * 1000,
-      tz,
-      localCalendarYyyymmddFromUtcMs(anchorNow + 28 * 3600 * 1000, tz)
-    );
-    const kt = localCalendarYyyymmddFromUtcMs(tomorrowProbe, tz);
-    const s = utcFirstInstantOfLocalYyyymmdd(tomorrowProbe, tz, kt);
-    spans.push({ lo: s, hi: utcInclusiveEndMsOfSameLocalCalendarDay(s, tz) });
-  }
-
-  let fromMs = spans[0]!.lo;
-  let toMs = spans[0]!.hi;
-  for (const r of spans) {
-    fromMs = Math.min(fromMs, r.lo);
-    toMs = Math.max(toMs, r.hi);
-  }
+  const ks = localCalendarYyyymmddFromUtcMs(anchorNow, tz);
+  const fromMs = utcFirstInstantOfLocalYyyymmdd(anchorNow, tz, ks);
+  const toMs = utcInclusiveEndMsOfSameLocalCalendarDay(fromMs, tz);
   return { from_iso: new Date(fromMs).toISOString(), to_iso: new Date(toMs).toISOString() };
 }
 
@@ -192,8 +132,8 @@ export function computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt
 export function describeLocalWallClockPromptLine(
   hints?: AmplifierInput['runtimeHints']
 ): string {
-  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone ?? 'America/Santiago');
-  const locale = hints?.timeLocale ?? 'es-CL';
+  const tz = resolvePreferredWallClockTimeZoneId(hints?.timeZone);
+  const locale = hints?.timeLocale ?? Intl.DateTimeFormat().resolvedOptions().locale;
   const now = new Date();
   try {
     const formatted = new Intl.DateTimeFormat(locale, {
@@ -235,16 +175,24 @@ export function humanOsLabel(platform: NodeJS.Platform = process.platform): stri
   }
 }
 
-/** Default runtime hints for the process Enzo is running in (merge with per-request overrides). */
+/**
+ * Default runtime hints for the process Enzo is running in (merge with per-request overrides).
+ *
+ * `timeZone` and `timeLocale` MUST be supplied by the caller via `overrides` (read from ConfigService).
+ * No deployment-specific defaults are applied here — the system timezone and locale are inferred from
+ * the runtime environment only as a last resort.
+ */
 export function buildOrchestratorRuntimeHints(
   overrides?: Partial<NonNullable<AmplifierInput['runtimeHints']>>
 ): NonNullable<AmplifierInput['runtimeHints']> {
   const platform = process.platform;
+  const systemTz = process.env.TZ?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
   const merged: NonNullable<AmplifierInput['runtimeHints']> = {
     homeDir: process.env.HOME ?? os.homedir(),
     osLabel: humanOsLabel(platform),
-    timeLocale: 'es-CL',
-    timeZone: 'America/Santiago',
+    timeLocale: systemLocale,
+    timeZone: systemTz,
     hostPlatform: platform,
     posixShell: platform !== 'win32',
     kernelRelease: platform !== 'win32' ? os.release() : undefined,

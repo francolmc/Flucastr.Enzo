@@ -13,11 +13,11 @@ async function runTests(): Promise<void> {
   const r1 = detectFollowUp('y eso?', [{ role: 'user', content: 'Te hablé de Rust antes.' }]);
   assert(r1.kind === 'follow_up', 'short follow-up');
 
-  const r2 = detectFollowUp('dejemos eso y hablemos de Python', [
-    { role: 'user', content: 'hola' },
-    { role: 'assistant', content: 'hola' },
-  ]);
-  assert(r2.kind === 'topic_shift', 'topic shift phrase');
+  const r2 = detectFollowUp(
+    'I would like to completely switch topics and talk about something entirely different now.',
+    [{ role: 'user', content: 'hola' }, { role: 'assistant', content: 'hola' }]
+  );
+  assert(r2.kind === 'new_topic', 'long message without prior context → new_topic');
 
   const r3 = detectFollowUp('what is 2+2?', []);
   assert(r3.kind === 'new_topic', 'empty thread');

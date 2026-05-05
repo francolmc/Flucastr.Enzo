@@ -148,12 +148,22 @@ export async function executeOrchestratorProcess(
 
   const skills = resolveSkillsForOrchestrator(b.getSkillRegistry(), b.getAvailableSkills());
 
-  const mergedHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
+  const configTz = b.getConfigService()?.getSystemConfig().tz?.trim() || undefined;
+  const profileTz = configUserProfile?.timezone?.trim() || undefined;
+  const profileLocale = configUserProfile?.locale?.trim() || undefined;
+  const callerTimeZone = profileTz ?? configTz;
+  const callerLocale = profileLocale;
+
+  const mergedHints = {
+    ...buildOrchestratorRuntimeHints({
+      ...(callerTimeZone ? { timeZone: callerTimeZone } : {}),
+      ...(callerLocale ? { timeLocale: callerLocale } : {}),
+    }),
+    ...(input.runtimeHints ?? {}),
+  };
   const runtimeHints = {
     ...mergedHints,
-    timeZone: resolvePreferredWallClockTimeZoneId(
-      mergedHints.timeZone ?? process.env.TZ ?? 'America/Santiago'
-    ),
+    timeZone: resolvePreferredWallClockTimeZoneId(mergedHints.timeZone),
   };
 
   const userMemories = rankedMemoryFacts;

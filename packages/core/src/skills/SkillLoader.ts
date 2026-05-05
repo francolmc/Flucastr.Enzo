@@ -260,7 +260,8 @@ export class SkillLoader {
   private resolvePlaceholders(content: string): string {
     const now = new Date();
     
-    // Timezone-aware datetime formatting in Spanish
+    const systemTz = resolvePreferredWallClockTimeZoneId(process.env.TZ);
+    const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
     const options: Intl.DateTimeFormatOptions = {
       weekday: 'long',
       year: 'numeric',
@@ -268,12 +269,12 @@ export class SkillLoader {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      timeZone: resolvePreferredWallClockTimeZoneId(process.env.TZ || 'America/Santiago')
+      timeZone: systemTz,
     };
     
-    const fullDatetime = now.toLocaleDateString('es-CL', options);
-    const dateOnly = now.toLocaleDateString('es-CL');
-    const timeOnly = now.toLocaleTimeString('es-CL');
+    const fullDatetime = now.toLocaleDateString(systemLocale, options);
+    const dateOnly = now.toLocaleDateString(systemLocale);
+    const timeOnly = now.toLocaleTimeString(systemLocale);
     
     return content
       .replace(/\{\{CURRENT_DATETIME\}\}/g, fullDatetime)

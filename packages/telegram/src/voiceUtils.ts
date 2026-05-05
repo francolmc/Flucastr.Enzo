@@ -1,13 +1,6 @@
 import type { ConfigService } from '@enzo/core';
 
-export const VOICE_RESPONSE_TRIGGERS = [
-  'respondeme por voz',
-  'en audio',
-  'mándame un audio',
-  'mandame un audio',
-  'responde en audio',
-  'en voz',
-] as const;
+export const VOICE_RESPONSE_TRIGGERS: readonly string[] = [];
 
 export function getVoiceTriggers(config: ConfigService): string[] {
   const cfg = config.getSystemConfig() as unknown as Record<string, unknown>;

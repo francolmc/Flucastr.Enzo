@@ -10,8 +10,6 @@ export interface ChunkResult {
   original: string;
 }
 
-const CONNECTOR_PATTERN = /\b(y también|además|por otro lado|también tengo)\b/gi;
-const SINGLE_CONNECTOR_PATTERN = /^(y también|además|por otro lado|también tengo)$/i;
 const WORD_PATTERN = /[^\s]+/g;
 const MIN_CHUNK_WORDS = 5;
 const MAX_CHUNKS = 10;
@@ -64,37 +62,12 @@ export class InputChunker {
       .map((part) => part.trim())
       .filter(Boolean);
 
-    const parts: string[] = [];
-    for (const paragraph of byParagraphs) {
-      parts.push(...this.splitByConnectors(paragraph));
-    }
-
     const sentences: string[] = [];
-    for (const part of parts) {
-      sentences.push(...this.splitBySentenceRule(part));
+    for (const paragraph of byParagraphs) {
+      sentences.push(...this.splitBySentenceRule(paragraph));
     }
 
     return this.mergeShortNeighbors(sentences);
-  }
-
-  private splitByConnectors(text: string): string[] {
-    const segments = text.split(CONNECTOR_PATTERN);
-    const out: string[] = [];
-    let buffer = '';
-
-    for (const segment of segments) {
-      const trimmed = segment.trim();
-      if (!trimmed) continue;
-      if (SINGLE_CONNECTOR_PATTERN.test(trimmed)) {
-        if (buffer.trim()) out.push(buffer.trim());
-        buffer = trimmed;
-      } else {
-        buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
-      }
-    }
-
-    if (buffer.trim()) out.push(buffer.trim());
-    return out;
   }
 
   private splitBySentenceRule(text: string): string[] {

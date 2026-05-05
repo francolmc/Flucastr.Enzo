@@ -143,7 +143,7 @@ export class AmplifierLoop {
    */
   private buildVisionDelegationCoercionTask(input: AmplifierInput): string {
     const msg = input.message;
-    const cap = msg.match(/Instrucción del usuario \(caption\):\s*([\s\S]+?)$/im);
+    const cap = msg.match(/User caption:\s*([\s\S]+?)$/im);
     if (cap?.[1]?.trim()) {
       return `Answer the user's question about the attached image: ${cap[1].trim().trimEnd()}`;
     }

@@ -49,7 +49,7 @@ export class FileOrganizationService {
    */
   detectNamedFolder(message: string): string | null {
     const match = message.match(
-      /(?:carpeta\s+(?:llamada|de\s+nombre|con\s+nombre)|folder\s+(?:called|named)|into\s+(?:a\s+folder\s+(?:called|named))?|en\s+una\s+carpeta\s+llamada)\s+["']?([\w][\w_\-.]*)["']?/i
+      /(?:folder\s+(?:called|named)|into\s+(?:a\s+folder\s+(?:called|named))?)\s+["']?([\w][\w_\-.]*)["']?/i
     );
     return match?.[1] ?? null;
   }

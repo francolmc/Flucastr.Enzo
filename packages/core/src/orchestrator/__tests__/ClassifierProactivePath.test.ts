@@ -39,104 +39,75 @@ function assertCondition(condition: boolean, message: string): void {
 }
 
 async function runTests() {
-  console.log('Running Classifier proactive-path table tests...\n');
-
-  const prevLexical = process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH;
-  process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH = 'true';
-  const restoreLexical = () => {
-    if (prevLexical === undefined) {
-      delete process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH;
-    } else {
-      process.env.ENZO_CLASSIFIER_USE_LEXICAL_FASTPATH = prevLexical;
-    }
-  };
-
-  try {
-  const cHello = new Classifier(new QueueProvider([]));
-  const r0 = await cHello.classify('hola', []);
-  assertEq(r0.level, ComplexityLevel.SIMPLE, '"hola" should be SIMPLE');
-  assertEq(r0.classifierBranch, 'trivial', '"hola" should use trivial fast path branch');
-  console.log('✓ "hola" → SIMPLE (fast path)');
+  console.log('Running Classifier LLM-first path tests...\n');
 
   const cMath = new Classifier(
     new QueueProvider(['{"level":"SIMPLE","reason":"math calculation"}'])
   );
-  const r1 = await cMath.classify('cuánto es 2+2', []);
-  assertEq(r1.level, ComplexityLevel.SIMPLE, '"cuánto es 2+2" should be SIMPLE (LLM path with mock)');
+  const r1 = await cMath.classify('how much is 2+2', []);
+  assertEq(r1.level, ComplexityLevel.SIMPLE, 'math should be SIMPLE via LLM');
   assertEq(r1.classifierBranch, 'llm', 'LLM path should set classifierBranch llm');
-  console.log('✓ "cuánto es 2+2" → SIMPLE (mocked LLM)');
+  console.log('✓ "how much is 2+2" → SIMPLE (mocked LLM)');
 
   const cAtacama = new Classifier(
-    new QueueProvider(['{"level":"MODERATE","reason":"factual question requiring web search"}'])
+    new QueueProvider(['{"level":"MODERATE","reason":"factual question requiring web search","suggestedTool":"web_search"}'])
   );
   const r2 = await cAtacama.classify('what is the Atacama Desert?', []);
-  assertEq(r2.level, ComplexityLevel.MODERATE, 'Atacama should be MODERATE');
+  assertEq(r2.level, ComplexityLevel.MODERATE, 'Atacama should be MODERATE via LLM');
+  assertEq(r2.suggestedTool, 'web_search', 'factual query should suggest web_search');
   console.log('✓ "what is the Atacama Desert?" → MODERATE (mocked LLM)');
 
-  const cCeo = new Classifier(new QueueProvider([]));
-  const r3 = await cCeo.classify('quién es el CEO de Apple?', []);
+  const cCeo = new Classifier(
+    new QueueProvider(['{"level":"MODERATE","reason":"factual question","suggestedTool":"web_search"}'])
+  );
+  const r3 = await cCeo.classify('who is the CEO of Apple?', []);
   assertEq(r3.level, ComplexityLevel.MODERATE, 'CEO / Apple should be MODERATE');
-  assertEq(r3.suggestedTool, 'web_search', 'CEO should suggest web_search on factual fast path');
-  assertEq(r3.classifierBranch, 'factual_lexical', 'CEO query should hit factual lexical branch');
-  console.log('✓ "quién es el CEO de Apple?" → MODERATE (factual fast path)');
+  assertEq(r3.suggestedTool, 'web_search', 'CEO should suggest web_search');
+  assertEq(r3.classifierBranch, 'llm', 'CEO query should use LLM branch');
+  console.log('✓ "who is the CEO of Apple?" → MODERATE (mocked LLM)');
 
-  const cDollar = new Classifier(new QueueProvider([]));
-  const r4 = await cDollar.classify('cuánto está el dólar hoy?', []);
-  assertEq(r4.level, ComplexityLevel.MODERATE, 'dólar hoy should be MODERATE');
-  console.log('✓ "cuánto está el dólar hoy?" → MODERATE (factual fast path)');
-
-  const cNews = new Classifier(new QueueProvider([]));
-  const r5 = await cNews.classify('qué noticias hay hoy?', []);
-  assertEq(r5.level, ComplexityLevel.MODERATE, 'noticias hoy should be MODERATE');
-  console.log('✓ "qué noticias hay hoy?" → MODERATE (factual fast path)');
-
-  const cWeather = new Classifier(new QueueProvider([]));
-  const r6 = await cWeather.classify('busca el clima de Santiago', []);
-  assertEq(r6.level, ComplexityLevel.MODERATE, 'clima Santiago should be MODERATE');
-  console.log('✓ "busca el clima de Santiago" → MODERATE (factual/bundle fast path)');
+  const cRecall = new Classifier(
+    new QueueProvider(['{"level":"MODERATE","reason":"recall query — needs RecallTool"}'])
+  );
+  const r4 = await cRecall.classify('what do I have pending for project X?', []);
+  assertEq(r4.level, ComplexityLevel.MODERATE, 'recall query should be MODERATE via LLM');
+  assertEq(r4.classifierBranch, 'llm', 'recall query should use LLM branch');
+  assertCondition(
+    r4.reason.toLowerCase().includes('recall'),
+    'recall query reason should mention recall'
+  );
+  console.log('✓ "what do I have pending for project X?" → MODERATE (mocked LLM)');
 
   const cWritePath = new Classifier(new QueueProvider([]));
   const rWrite = await cWritePath.classify(
-    'creá el archivo /home/franco/historia.md con una historia corta',
+    'create the file /home/user/story.md with a short story',
     []
   );
   assertEq(rWrite.level, ComplexityLevel.MODERATE, 'create file at absolute path should be MODERATE');
   assertEq(
     rWrite.classifierBranch,
     'write_file_lexical_hint',
-    'persist-to-path intent should use write_file_lexical_hint branch'
+    'absolute path write intent should use write_file_lexical_hint structural branch'
   );
-  console.log('✓ "creá … /home/franco/historia.md …" → MODERATE (write_file lexical hint)');
-
-  const cDash = new Classifier(new QueueProvider([]));
-  const r7 = await cDash.classify('qué tengo pendiente de Dash?', []);
-  assertEq(r7.level, ComplexityLevel.MODERATE, 'Dash pending should be MODERATE');
-  assertEq(r7.classifierBranch, 'recall_lexical', 'Dash recall should use recall lexical branch');
-  assertCondition(
-    r7.reason.toLowerCase().includes('recall') && !r7.reason.toLowerCase().includes('web_search'),
-    'Dash query should be recall, not a web search classification'
-  );
-  console.log('✓ "qué tengo pendiente de Dash?" → MODERATE (recall fast path)');
+  console.log('✓ "create /home/user/story.md …" → MODERATE (structural path detection)');
 
   const prevLlmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
   process.env.ENZO_CLASSIFIER_LLM_ALWAYS = 'true';
   try {
-    const cLlmAlways = new Classifier(new QueueProvider(['{"level":"SIMPLE","reason":"greeting ambiguous"}']));
-    const r8 = await cLlmAlways.classify('hola', []);
-    assertEq(r8.level, ComplexityLevel.SIMPLE, 'ENZO_CLASSIFIER_LLM_ALWAYS: mocked LLM should win over trivial regex');
-    assertEq(r8.classifierBranch, 'llm_always', 'ENZO_CLASSIFIER_LLM_ALWAYS should tag branch llm_always');
+    const cLlmAlways = new Classifier(new QueueProvider(['{"level":"SIMPLE","reason":"greeting"}']));
+    const r5 = await cLlmAlways.classify('hello', []);
+    assertEq(r5.level, ComplexityLevel.SIMPLE, 'ENZO_CLASSIFIER_LLM_ALWAYS: mocked LLM should be used');
+    assertEq(r5.classifierBranch, 'llm_always', 'ENZO_CLASSIFIER_LLM_ALWAYS should tag branch llm_always');
   } finally {
-    process.env.ENZO_CLASSIFIER_LLM_ALWAYS = prevLlmAlways;
     if (prevLlmAlways === undefined) {
       delete process.env.ENZO_CLASSIFIER_LLM_ALWAYS;
+    } else {
+      process.env.ENZO_CLASSIFIER_LLM_ALWAYS = prevLlmAlways;
     }
   }
-  console.log('✓ ENZO_CLASSIFIER_LLM_ALWAYS skips trivial regex and uses llm_always branch');
+  console.log('✓ ENZO_CLASSIFIER_LLM_ALWAYS uses llm_always branch');
 
-  console.log('\nAll Classifier proactive-path table tests passed.');
-  } finally {
-    restoreLexical();
-  }
+  console.log('\nAll Classifier LLM-first path tests passed.');
 }
 
 runTests().catch((error) => {

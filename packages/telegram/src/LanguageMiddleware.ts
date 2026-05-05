@@ -67,7 +67,7 @@ export class LanguageMiddleware {
   constructor(provider: LLMProvider, defaultLanguage?: string) {
     this.provider = provider;
     this.languageCache = new Map();
-    this.DEFAULT_LANGUAGE = defaultLanguage ?? process.env.DEFAULT_USER_LANGUAGE ?? 'es';
+    this.DEFAULT_LANGUAGE = defaultLanguage ?? process.env.DEFAULT_USER_LANGUAGE ?? Intl.DateTimeFormat().resolvedOptions().locale.split('-')[0] ?? 'en';
   }
 
   async processInput(message: string, userId: string): Promise<LanguageContext> {

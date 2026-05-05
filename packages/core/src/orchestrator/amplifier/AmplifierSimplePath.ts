@@ -48,7 +48,6 @@ import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
-  messageLooksLikeShellCommandExecutionRequest,
 } from '../Classifier.js';
 import { resolveTopSkillDeclarativeExecutable } from '../skillFastPathLock.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
@@ -409,12 +408,8 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const mergedToolDefs = mergeAvailableToolDefinitions(input, mcpRegistry);
   const toolsPrompt = buildToolsPrompt(mergedToolDefs);
 
-  const isCapabilityQuery =
-    /\b(qu[eé] puedes|what can you|capabilities|habilidades|skills|funciones|qu[eé] sabes|what do you|qu[eé] eres capaz|qu[eé] haces|what are you)\b/i.test(
-      input.message
-    );
   let skillListSection = '';
-  if (isCapabilityQuery && skillRegistry) {
+  if (skillRegistry) {
     const enabledSkills = skillRegistry.getEnabled();
     if (enabledSkills.length > 0) {
       const skillLines = enabledSkills.map((s) => `- ${s.metadata.name}: ${s.metadata.description}`).join('\n');
@@ -442,7 +437,7 @@ CRITICAL: When you need a tool, respond with ONLY the JSON object.
 No text before, no text after, no explanation.
 When the user needs no tool-backed action, reply in plain text and skip JSON entirely.
 WRONG: "Ejecutando el comando... {"action":"tool"...}"
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/franco"}}
+RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/user/Downloads"}}
 
 If you include any text outside the JSON, the tool will not execute.
 `
@@ -450,48 +445,17 @@ If you include any text outside the JSON, the tool will not execute.
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
-  const classifierSchedulePersist = false;
-  const classifierCalendarList = false;
-  const listWindowIso = null;
-
-  const mandatoryCalendarBlock = '';
-  const mandatoryCalendarListBlock = '';
-  const classifierMailboxUnread = false;
-  const classifierMailboxUnreadSummary = false;
-  const mandatoryMailboxUnreadBlock = '';
-  const mandatoryMailboxUnreadSummarizeBlock = '';
 
   const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
-  const hasCalendarListClassifierWindow = Boolean(classifierCalendarList && listWindowIso);
   const skillFastPathLockActive =
     isModerate &&
-    declarativeExecutable != null &&
-    !classifierSchedulePersist &&
-    !hasCalendarListClassifierWindow &&
-    !classifierMailboxUnread &&
-    !classifierMailboxUnreadSummary;
-
-  const sendEmailClassifierLockActive = false;
-
-  // Shell command execution lock: when user explicitly says "execute it/run it" with prefersHostTools
-  const shellCommandExecutionLockActive =
-    input.prefersHostTools === true &&
-    messageLooksLikeShellCommandExecutionRequest(input.message) &&
-    executableTools.some((t) => t.name === 'execute_command');
+    declarativeExecutable != null;
 
   const hostToolsClassifierLockActive =
     isModerate &&
     input.prefersHostTools === true &&
     declarativeExecutable == null &&
-    !classifierSchedulePersist &&
-    !hasCalendarListClassifierWindow &&
-    !classifierMailboxUnread &&
-    !classifierMailboxUnreadSummary &&
-    !sendEmailClassifierLockActive &&
-    !shellCommandExecutionLockActive &&
     executableTools.some((t) => t.name === 'execute_command');
-
-  const mandatorySendEmailBlock = '';
 
   const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
     ? `
@@ -531,16 +495,8 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
   const moderateRetryRequiresToolJsonOnly =
     isModerate &&
     (persistToPathRequested ||
-      classifierSchedulePersist ||
-      hasCalendarListClassifierWindow ||
-      sendEmailClassifierLockActive ||
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);
-
-  // SIMPLE path tool enforcement: when user explicitly asks to execute a command
-  const simplePathRequiresToolJson =
-    !isModerate &&
-    shellCommandExecutionLockActive;
 
   const memorySection = buildMemoryPromptSection(input);
   const systemPrompt = `${buildAssistantIdentityPrompt(input)}
@@ -549,14 +505,7 @@ ${buildRuntimeThreeLayersContractPrompt()}
 
 ${describeHostForExecuteCommandPrompt(input.runtimeHints)}
 ${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatorySendEmailBlock}${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}${shellCommandExecutionLockActive ? `
-
-━━━ SHELL_COMMAND_LOCKED ━━━
-The user explicitly asked to EXECUTE a command ("ejecutalo", "run it", etc.).
-You MUST use the **execute_command** tool to run the command — never simulate output.
-Extract the command from context or ask if unclear.
-Canonical shape: {"action":"tool","tool":"execute_command","input":{"command":"gh repo list"}}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''}
+${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 ${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
 
@@ -616,8 +565,7 @@ SEARCH BEFORE ANSWERING:
 - Never answer factual questions from memory alone — memory can be outdated
 - The rule is: when in doubt → web_search — **unless** RELEVANT SKILLS / SKILL_FASTPATH_LOCKED / MAILBOX_* / CALENDAR_* blocks already mandate a registry tool whose data lives on THIS host (then obey that lock — no web_search surrogate)
 - Skip web_search entirely for math, greetings, questions strictly about capabilities/identity,
-  **local agenda / unread mail tooling already described above**, and **the user's own Enzo persisted agenda / meetings / reminders for a named day or week**
-  ("hoy", "mañana", "mis eventos", "esta semana") → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to "their personal Google Calendar"
+  **local agenda / unread mail tooling already described above**, and **the user's own Enzo persisted agenda / meetings / reminders** → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to the user's personal calendar
 - Never invent search results — use web_search
 - Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
 - One tool call per response, no extra fields in the JSON input
@@ -634,9 +582,9 @@ PERSISTENCE / HONESTY (user asked to write to a concrete absolute path):
 ${buildContextAnchorPrompt(input)}
 
 ${
-  input.userLanguage && input.userLanguage !== 'es'
-    ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. NOT in Spanish. NOT in any other language.`
-    : 'Respond in Spanish (es).'
+  input.userLanguage
+    ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. ONLY in this language.`
+    : 'Respond in the same language the user used.'
 }
 If responding with plain text (no tool), write in this language.`;
 

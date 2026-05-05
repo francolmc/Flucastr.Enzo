@@ -185,7 +185,7 @@ async function processMessageInBackground(
     const systemTz = ctx.configService?.getSystemConfig()?.tz?.trim();
     const timeLocale =
       profile?.locale?.trim() ||
-      (langContext.userLanguage.toLowerCase().startsWith('en') ? 'en-US' : 'es-CL');
+      Intl.DateTimeFormat().resolvedOptions().locale;
     const timeZone = profile?.timezone?.trim() || systemTz;
 
     // Step 2: Classify (use persistence user id for memory/session alignment with web/Echo owner)
@@ -585,7 +585,7 @@ El asistente principal no debe inventar contenido visual sin delegar. Elegí en 
 
 Tarea sugerida: Describí en detalle el contenido de la imagen. Si hay código, texto o mensajes de error, transcribilos exactamente. Si hay un diagrama o gráfico, describí su estructura y contenido.`;
     if (captionTrim) {
-      messageText += `\n\nInstrucción del usuario (caption): ${captionTrim}`;
+      messageText += `\n\nUser caption: ${captionTrim}`;
     }
     messageText += `\n\n${pathLine}`;
 
