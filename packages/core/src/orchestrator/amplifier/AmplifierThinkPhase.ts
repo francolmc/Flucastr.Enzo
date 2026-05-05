@@ -204,6 +204,14 @@ Do NOT emit {"action":"none"} when you still need to search, execute a command, 
 - Extract the target directory from the user's message and prefix every path with it
 - Never invent files or folders — only use what execute_command results actually showed
 
+PROGRESS AWARENESS — avoid wasted iterations:
+- Review previous steps in context before deciding your next action
+- If a previous action failed with the same error, try a different approach or stop
+- If you're about to retry the exact same action that just failed, stop and report the blockage
+- Only continue iterating if each step provides NEW information or clear progress
+- If you've gathered enough information to answer, use {"action":"none"} — don't keep searching
+- Watch for loops: repeatedly trying the same thing without new information is a sign to stop
+
 Iteration: ${iteration}/${maxIterations}
 ${context ? `Context from previous steps:\n${context}` : ''}`;
 

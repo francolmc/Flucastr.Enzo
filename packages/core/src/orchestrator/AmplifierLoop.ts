@@ -45,6 +45,13 @@ import {
   messageIndicatesPersistedWriteToAbsolutePath,
 } from './Classifier.js';
 import { resolveTopSkillDeclarativeExecutable } from './skillFastPathLock.js';
+import {
+  IterationProgressTracker,
+  ProgressSignature,
+  quickHash,
+  calculateNoveltyScore,
+  determineOutcomeType,
+} from './IterationProgressTracker.js';
 
 function amplifierImpliesMultiToolLexicalFallbackEnabled(): boolean {
   return process.env.ENZO_AMPLIFIER_IMPLIES_MULTI_TOOL_LEXICAL === 'true';
@@ -1130,7 +1137,9 @@ Do NOT search for more information. Use what is provided.`;
     let forcedToolRetryCount = 0;
     let proseRetryCount = 0;
     let consecutiveAlgorithmToolErrors = 0;
-    while (iteration < this.maxIterations && !hasEnoughInfo) {
+    const progressTracker = new IterationProgressTracker();
+    let dynamicMaxIterations = this.maxIterations;
+    while (iteration < dynamicMaxIterations && !hasEnoughInfo) {
       iteration++;
 
       // THINK: modelo base analiza qué necesita
@@ -1351,6 +1360,37 @@ Do NOT search for more information. Use what is provided.`;
       steps.push(observeStep);
       this.log.info(`[AmplifierLoop] Iteration ${iteration} - Observe output:`, observeStep.output?.substring(0, 200));
 
+      // Record progress signature for stagnation detection
+      const progressSignature = this.computeProgressSignature(
+        actStep,
+        observeStep,
+        currentContext
+      );
+      progressTracker.record(progressSignature);
+
+      // Check for stagnation or healthy progress
+      const continueDecision = progressTracker.shouldContinue(dynamicMaxIterations, iteration);
+
+      if (!continueDecision.continue && continueDecision.reason === 'stagnation_detected') {
+        this.log.warn(
+          `[AmplifierLoop] Stagnation detected after ${iteration} iterations: ${continueDecision.stagnationPattern}`
+        );
+        currentContext =
+          this.contextSynthesizer.compress(steps) +
+          `\n\n[System] Loop terminated early: no meaningful progress detected. ${continueDecision.stagnationPattern}. ` +
+          'Report the failure honestly and suggest alternatives or ask for clarification.';
+        hasEnoughInfo = true;
+        break;
+      }
+
+      // Extend iteration limit for genuinely complex tasks with healthy progress
+      if (continueDecision.reason === 'progress_healthy' && iteration >= dynamicMaxIterations - 1) {
+        dynamicMaxIterations += 3;
+        this.log.info(
+          `[AmplifierLoop] Extending maxIterations to ${dynamicMaxIterations} (healthy progress detected)`
+        );
+      }
+
       if (hasMultiStepSkillRequirement && actStep.action === 'tool') {
         const observeText = (observeStep.output ?? '').toLowerCase();
         const hasToolFailure =
@@ -1414,9 +1454,9 @@ Do NOT search for more information. Use what is provided.`;
         }
       }
 
-      if (iteration >= this.maxIterations) {
+      if (iteration >= dynamicMaxIterations) {
         this.log.warn(
-          `[AmplifierLoop] Reached max iterations (${this.maxIterations}), forcing synthesis`
+          `[AmplifierLoop] Reached max iterations (${dynamicMaxIterations}), forcing synthesis`
         );
         hasEnoughInfo = true;
       }
@@ -1610,4 +1650,31 @@ Do NOT search for more information. Use what is provided.`;
     };
   }
 
+  /**
+   * Computes a progress signature for tracking iteration health.
+   */
+  private computeProgressSignature(
+    actStep: Step,
+    observeStep: Step,
+    currentContext: string
+  ): ProgressSignature {
+    const actionIntent = actStep.target ?? actStep.action ?? 'unknown';
+    const outputText = observeStep.output ?? '';
+    const outputHash = quickHash(outputText);
+
+    const hasError =
+      outputText.toLowerCase().includes('error') ||
+      outputText.toLowerCase().includes('failed') ||
+      actStep.status === 'error';
+
+    const outcomeType = determineOutcomeType(outputText, hasError);
+    const novelInformationScore = calculateNoveltyScore(outputText, currentContext);
+
+    return {
+      actionIntent,
+      outcomeType,
+      outputHash,
+      novelInformationScore,
+    };
+  }
 }

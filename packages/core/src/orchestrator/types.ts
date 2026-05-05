@@ -343,3 +343,6 @@ export const AVAILABLE_TOOLS = [
     },
   },
 ];
+
+// Re-export progress types from IterationProgressTracker for convenience
+export type { ProgressSignature, ContinueDecision } from './IterationProgressTracker.js';
