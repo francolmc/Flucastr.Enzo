@@ -31,7 +31,6 @@ const requestQueue: Array<() => void> = [];
 async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
   // If already processing, wait in queue
   if (isProcessing) {
-    console.log('[Chat] Request queued, waiting for current request to finish...');
     await new Promise<void>((resolve) => requestQueue.push(resolve));
   }
 

@@ -4,6 +4,8 @@ import { ModelManagement } from '../components/config/ModelManagement';
 import { FallbackModelSection } from '../components/config/FallbackModelSection';
 import { ProviderApiKeySection } from '../components/config/ProviderApiKeySection';
 import { DailyRoutineConfigSection } from '../components/config/DailyRoutineConfigSection';
+import { UserConfigSection } from '../components/config/UserConfigSection';
+import { ProfileConfigSection } from '../components/config/ProfileConfigSection';
 import './ConfigPage.css';
 
 const SUPPORTED_LANGUAGES = ['es', 'en', 'pt', 'fr', 'de', 'it', 'zh', 'ja', 'ko', 'ar', 'ru'] as const;
@@ -24,15 +26,9 @@ function ConfigPage() {
     configLoadError,
     systemConfig,
     agents,
-    assistantProfile,
-    userProfile,
-    userId,
-    setUserId,
     loadConfig,
     loadAgents,
     loadProfilesConfig,
-    loadConversations,
-    updateProfilesConfig,
     createAgent,
     updateAgent,
     deleteAgent,
@@ -40,17 +36,6 @@ function ConfigPage() {
     loadSystemConfig,
     updateSystemConfig,
   } = useEnzoStore();
-  const [profileForm, setProfileForm] = useState({
-    assistantName: '',
-    assistantPersona: '',
-    assistantTone: '',
-    assistantStyleGuidelines: '',
-    userDisplayName: '',
-    userImportantInfo: '',
-    userPreferences: '',
-    userLocale: '',
-    userTimezone: '',
-  });
   const [showNewAgentForm, setShowNewAgentForm] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -64,14 +49,8 @@ function ConfigPage() {
     toneOverride: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingSystem, setIsSavingSystem] = useState(false);
   const [isSavingVoice, setIsSavingVoice] = useState(false);
-  const [webUserIdDraft, setWebUserIdDraft] = useState(userId);
-
-  useEffect(() => {
-    setWebUserIdDraft(userId);
-  }, [userId]);
   const [voiceForm, setVoiceForm] = useState<{
     whisperUrl: string;
     whisperLanguage: string;
@@ -117,24 +96,6 @@ function ConfigPage() {
   }, [loadConfig, loadAgents, loadProfilesConfig, loadModelsConfig, loadSystemConfig]);
 
   useEffect(() => {
-    if (!assistantProfile && !userProfile) {
-      return;
-    }
-
-    setProfileForm({
-      assistantName: assistantProfile?.name || '',
-      assistantPersona: assistantProfile?.persona || '',
-      assistantTone: assistantProfile?.tone || '',
-      assistantStyleGuidelines: assistantProfile?.styleGuidelines || '',
-      userDisplayName: userProfile?.displayName || '',
-      userImportantInfo: userProfile?.importantInfo || '',
-      userPreferences: userProfile?.preferences || '',
-      userLocale: userProfile?.locale || '',
-      userTimezone: userProfile?.timezone || '',
-    });
-  }, [assistantProfile, userProfile]);
-
-  useEffect(() => {
     if (!systemConfig) {
       return;
     }
@@ -177,39 +138,7 @@ function ConfigPage() {
     });
   }, [systemConfig]);
 
-  const handleSaveProfiles = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profileForm.assistantName.trim()) {
-      alert('El nombre del asistente es obligatorio');
-      return;
-    }
-
-    setIsSavingProfile(true);
-    try {
-      await updateProfilesConfig({
-        assistantProfile: {
-          name: profileForm.assistantName,
-          persona: profileForm.assistantPersona,
-          tone: profileForm.assistantTone,
-          styleGuidelines: profileForm.assistantStyleGuidelines,
-        },
-        userProfile: {
-          displayName: profileForm.userDisplayName,
-          importantInfo: profileForm.userImportantInfo,
-          preferences: profileForm.userPreferences,
-          locale: profileForm.userLocale,
-          timezone: profileForm.userTimezone,
-        },
-      });
-      alert('Perfil guardado');
-    } catch (error) {
-      console.error('Error saving profiles config:', error);
-      alert('Error al guardar perfil');
-    } finally {
-      setIsSavingProfile(false);
-    }
-  };
-
+  
   const handleSubmitAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.provider || !formData.model) {
@@ -401,150 +330,13 @@ function ConfigPage() {
       <section className="config-section">
         <div className="config-section-header">
           <span className="badge">Paso 2 · Personalizar</span>
-          <h2>Identidad del asistente y perfil de usuario</h2>
+          <h2>Configuración de Usuario y Perfiles</h2>
         </div>
 
-        <div className="surface-card" style={{ marginBottom: '1rem', padding: '1rem 1.25rem' }}>
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>ID de usuario (memoria, proyectos y chat)</h3>
-          <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', lineHeight: 1.5 }}>
-            En <strong>Telegram</strong> tus datos van guardados con tu ID numérico (ej. <code>123456789</code>). En la web,
-            antes se usaba fijo el nombre <code>franco</code>. Si sólo ves memoria vacía en el Dashboard o en{' '}
-            <strong>Memoria</strong>, pon aquí <strong>el mismo ID que usa Telegram</strong> (podés verlo en logs al enviar{' '}
-            <code>/memory</code> o en la consola del bot). Así ves conversaciones y hechos persistentes sin duplicarlos en otra cuenta.
-          </p>
-          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <label htmlFor="webEnzoUserId">User ID (texto)</label>
-            <input
-              id="webEnzoUserId"
-              type="text"
-              value={webUserIdDraft}
-              onChange={(e) => setWebUserIdDraft(e.target.value)}
-              placeholder="Ej. 123456789 o franco"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-          <div className="form-actions" style={{ marginTop: 0 }}>
-            <button
-              type="button"
-              onClick={() => {
-                setUserId(webUserIdDraft);
-                void loadConversations();
-                alert(`ID guardado: ${webUserIdDraft.trim() || 'franco'}. Lista de chats actualizada; revisá Dashboard y Memoria.`);
-              }}
-            >
-              Guardar ID local
-            </button>
-          </div>
-          <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.82rem' }}>
-            Opcional: variable de build <code>VITE_ENZO_USER_ID</code> como valor inicial si no hay nada guardado en este navegador.
-          </p>
+        <div className="config-grid">
+          <UserConfigSection />
+          <ProfileConfigSection />
         </div>
-
-        <form className="agent-form surface-card" onSubmit={handleSaveProfiles}>
-          <div className="form-group">
-            <label htmlFor="assistantName">Nombre del asistente *</label>
-            <input
-              id="assistantName"
-              type="text"
-              value={profileForm.assistantName}
-              onChange={(e) => setProfileForm({ ...profileForm, assistantName: e.target.value })}
-              placeholder="Ej. Enzo"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="assistantPersona">Personalidad</label>
-            <textarea
-              id="assistantPersona"
-              value={profileForm.assistantPersona}
-              onChange={(e) => setProfileForm({ ...profileForm, assistantPersona: e.target.value })}
-              placeholder="Cómo debe comportarse el asistente"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="assistantTone">Forma de hablar (tono)</label>
-            <input
-              id="assistantTone"
-              type="text"
-              value={profileForm.assistantTone}
-              onChange={(e) => setProfileForm({ ...profileForm, assistantTone: e.target.value })}
-              placeholder="Ej. directo, claro y cercano"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="assistantStyleGuidelines">Guías de estilo</label>
-            <textarea
-              id="assistantStyleGuidelines"
-              value={profileForm.assistantStyleGuidelines}
-              onChange={(e) => setProfileForm({ ...profileForm, assistantStyleGuidelines: e.target.value })}
-              placeholder="Reglas adicionales de redacción o formato"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="userDisplayName">Nombre del usuario</label>
-            <input
-              id="userDisplayName"
-              type="text"
-              value={profileForm.userDisplayName}
-              onChange={(e) => setProfileForm({ ...profileForm, userDisplayName: e.target.value })}
-              placeholder="Cómo debe llamarte el asistente"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="userImportantInfo">Información importante del usuario</label>
-            <textarea
-              id="userImportantInfo"
-              value={profileForm.userImportantInfo}
-              onChange={(e) => setProfileForm({ ...profileForm, userImportantInfo: e.target.value })}
-              placeholder="Contexto útil para personalizar respuestas"
-            />
-          </div>
-
-          <div className="form-group-row">
-            <div className="form-group">
-              <label htmlFor="userLocale">Locale</label>
-              <input
-                id="userLocale"
-                type="text"
-                value={profileForm.userLocale}
-                onChange={(e) => setProfileForm({ ...profileForm, userLocale: e.target.value })}
-                placeholder="es-CL"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="userTimezone">Timezone</label>
-              <input
-                id="userTimezone"
-                type="text"
-                value={profileForm.userTimezone}
-                onChange={(e) => setProfileForm({ ...profileForm, userTimezone: e.target.value })}
-                placeholder="America/Santiago"
-              />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="userPreferences">Preferencias del usuario</label>
-            <textarea
-              id="userPreferences"
-              value={profileForm.userPreferences}
-              onChange={(e) => setProfileForm({ ...profileForm, userPreferences: e.target.value })}
-              placeholder="Preferencias de comunicación o trabajo"
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={isSavingProfile}>
-              {isSavingProfile ? 'Guardando...' : 'Guardar identidad y perfil'}
-            </button>
-          </div>
-        </form>
       </section>
 
       <section className="config-section">
