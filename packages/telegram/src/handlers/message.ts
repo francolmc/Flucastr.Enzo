@@ -170,14 +170,18 @@ async function processMessageInBackground(
   try {
     const persistenceUserId = resolveTelegramPersistenceUserId(userId, ctx.configService);
 
-    // Step 0: Setup language middleware
-    const languageMiddleware = new LanguageMiddleware(ctx.orchestrator.getBaseProvider());
-    
-    // Step 1: Detect language; optionally translate input to English (see TELEGRAM_TRANSLATE_INPUT in LanguageMiddleware)
-    const langContext = await languageMiddleware.processInput(messageText, userId);
-    const workingMessage = langContext.translatedInput;
+    // Step 0 & 1: Language detection (simplified for SDK mode)
+    // SDK Mode: LanguageMiddleware requires LLM provider - translation disabled
+    // TODO: Move language detection to API side
+    const langContext = {
+      originalInput: messageText,
+      translatedInput: messageText,
+      userLanguage: 'es',
+      wasTranslated: false,
+    };
+    const workingMessage = messageText;
     const chunkResult = inputChunker.chunk(workingMessage);
-    console.log(`[Telegram] Language: ${langContext.userLanguage}, translated: ${langContext.wasTranslated}`);
+    console.log(`[Telegram] SDK mode - language detection simplified (es)`);
 
     const resolvedAgentId = explicitAgentId;
 
@@ -188,27 +192,33 @@ async function processMessageInBackground(
       Intl.DateTimeFormat().resolvedOptions().locale;
     const timeZone = profile?.timezone?.trim() || systemTz;
 
-    // Step 2: Classify (use persistence user id for memory/session alignment with web/Echo owner)
-    let complexityLevel = await ctx.orchestrator.classify(
-      workingMessage,
-      persistenceUserId,
-      conversationId,
-      'telegram'
-    );
-    if (
-      langContext.wasTranslated &&
-      langContext.originalInput.trim() !== workingMessage.trim()
-    ) {
-      const levelOrig = await ctx.orchestrator.classify(
-        langContext.originalInput.trim(),
-        persistenceUserId,
-        conversationId,
-        'telegram'
-      );
-      complexityLevel = mergeHigherComplexity(complexityLevel, levelOrig);
+    // Step 2: Classify via SDK API
+    if (!ctx.apiClient) {
+      throw new Error('[Telegram] apiClient not available. Ensure ENZO_API_URL is set and API is running.');
     }
+
+    const classification = await ctx.apiClient.chat.classify(workingMessage, {
+      userId: persistenceUserId,
+      conversationId,
+      source: 'telegram',
+    });
+    let complexityLevel = classification.level as ComplexityLevel;
+    
+    // If translated, also classify original
+    if (langContext.wasTranslated && langContext.originalInput.trim() !== workingMessage.trim()) {
+      const classificationOrig = await ctx.apiClient.chat.classify(
+        langContext.originalInput.trim(),
+        {
+          userId: persistenceUserId,
+          conversationId,
+          source: 'telegram',
+        }
+      );
+      complexityLevel = mergeHigherComplexity(complexityLevel, classificationOrig.level as ComplexityLevel);
+    }
+    
     console.log(
-      `[Telegram] Classified as: ${complexityLevel}; persistenceUserId=${persistenceUserId} (telegram id ${userId})`
+      `[Telegram] Classified via API as: ${complexityLevel}; persistenceUserId=${persistenceUserId} (telegram id ${userId})`
     );
 
     // Step 3: Only show progress message for non-SIMPLE tasks
@@ -219,39 +229,13 @@ async function processMessageInBackground(
       progressMessageId = progressMsg.message_id;
     }
 
-    // Step 4: Process with orchestrator (no time limit in background)
-    const result = await ctx.orchestrator.process({
-      message: workingMessage,
-      originalMessage: langContext.originalInput,
+    // Step 4: Process via SDK API (no direct orchestrator access)
+    const result = await ctx.apiClient.chat.send(workingMessage, {
       conversationId,
       userId: persistenceUserId,
       source: 'telegram',
-      requestId,
-      userLanguage: langContext.userLanguage,
       agentId: resolvedAgentId,
-      classifiedLevel: complexityLevel as any,
-      runtimeHints: buildOrchestratorRuntimeHints({
-        homeDir: process.env.HOME,
-        timeLocale,
-        ...(timeZone ? { timeZone } : {}),
-      }),
-      ...(imageContext ? { imageContext } : {}),
-      onProgress: isSimple ? undefined : async (step) => {
-        if (progressMessageId && ctx.chat) {
-          const emoji = getProgressEmoji(step);
-          const text = getProgressText(step);
-          try {
-            await ctx.telegram.editMessageText(
-              ctx.chat.id,
-              progressMessageId,
-              undefined,
-              `${emoji} ${text}`
-            );
-          } catch (err) {
-            console.warn('[Telegram] Failed to update progress message:', err);
-          }
-        }
-      },
+      userLanguage: langContext.userLanguage,
     });
 
     // Photo/synthetic prompts are often >3 chunks (host instructions + Ollama + path). "Capturé N cosas"
@@ -260,15 +244,12 @@ async function processMessageInBackground(
       imageContext?.base64?.trim() && imageContext?.mimeType?.trim()
     );
 
-    // Step 5: Translate response back to user's language
+    // Step 5: Prepare response (SDK Mode: No translation middleware)
     const baseContent =
       chunkResult.isLong && !hasImagePayload
         ? buildChunkCaptureConfirmation(chunkResult)
         : result.content || 'No se pudo procesar tu mensaje.';
-    const translatedContent = await languageMiddleware.processOutput(
-      baseContent,
-      langContext.userLanguage
-    );
+    const translatedContent = baseContent; // Translation disabled in SDK mode
 
     const prefixedContent = responsePrefix
       ? `${responsePrefix}\n${translatedContent}`
@@ -309,20 +290,9 @@ async function processMessageInBackground(
       await sendTextResponse(ctx, prefixedContent, metadata);
     }
 
-    // Extract and save memories in background — no await, no blocking
-    const memoryExtractor = ctx.orchestrator.getMemoryExtractor();
-    const extractMemory = async () => {
-      const messages =
-        hasImagePayload ? [messageText] : getMemoryExtractionMessages(messageText, chunkResult);
-      await Promise.all(
-        messages.map((chunkedMessage) =>
-          memoryExtractor.extractAndSave(persistenceUserId, chunkedMessage, result.content)
-        )
-      );
-    };
-    extractMemory().catch(err => {
-      console.error('[Telegram] Memory extraction error:', err);
-    });
+    // SDK Mode: Memory extraction happens on API side
+    // Background memory extraction disabled - server handles this
+    console.log(`[Telegram] Message processed via API: ${requestId}`);
   } catch (error) {
     console.error('[Telegram] Error processing message:', error, { requestId, userId, conversationId });
     const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
@@ -344,10 +314,17 @@ async function preloadMessageContext(
   const requestId = randomUUID();
 
   let explicitAgentId: string | undefined;
-  try {
-    explicitAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
-  } catch (error) {
-    console.warn('[Telegram] Failed to load conversation active agent:', error);
+  
+  // Try to get active agent from API via SDK
+  if (ctx.apiClient) {
+    try {
+      const conversations = await ctx.apiClient.chat.getConversations(userId);
+      const convs = conversations.conversations as Array<{ id: string; agentId?: string }>;
+      const currentConv = convs.find((c) => c.id === conversationId);
+      explicitAgentId = currentConv?.agentId;
+    } catch (error) {
+      console.warn('[Telegram] Failed to load conversation from API:', error);
+    }
   }
 
   return { conversationId, requestId, explicitAgentId };
@@ -361,12 +338,8 @@ async function allowAndPersistChat(ctx: EnzoContext, userId: string): Promise<bo
     return false;
   }
 
-  const chatId = ctx.chat?.id != null ? String(ctx.chat.id) : undefined;
-  if (chatId) {
-    void ctx.memoryService.remember(userId, 'telegram_chat_id', chatId).catch((error) => {
-      console.warn('[Telegram] Failed to persist telegram_chat_id:', error);
-    });
-  }
+  // Note: Chat persistence now handled by API when processing messages
+  // No direct memoryService access needed
 
   return true;
 }

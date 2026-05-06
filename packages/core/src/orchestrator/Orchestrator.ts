@@ -21,6 +21,7 @@ import {
   OrchestratorResponse,
   Skill,
   AgentConfig,
+  ClassificationResult,
 } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCostUsd } from './CostEstimator.js';
@@ -128,7 +129,7 @@ export class Orchestrator {
     message: string,
     userId: string,
     conversationId?: string,
-    _source: 'web' | 'telegram' | 'unknown' = 'unknown'
+    _source: 'web' | 'telegram' | 'cli' | 'api' | 'echo' | 'unknown' = 'unknown'
   ): Promise<ComplexityLevel> {
     this.syncBaseProviderFromConfig();
     const cid = conversationId ?? `telegram_${userId}`;
@@ -149,6 +150,33 @@ export class Orchestrator {
     const classification = await this.classifier.classify(message, classifierMessages);
     console.log(`[Orchestrator] classify() - Message classified as: ${classification.level}`);
     return classification.level;
+  }
+
+  async classifyDetailed(
+    message: string,
+    userId: string,
+    conversationId?: string,
+    _source: 'web' | 'telegram' | 'cli' | 'api' | 'echo' | 'unknown' = 'unknown'
+  ): Promise<ClassificationResult> {
+    this.syncBaseProviderFromConfig();
+    const cid = conversationId ?? `telegram_${userId}`;
+    const configAssistantProfile = this.configService?.getAssistantProfile();
+    const userProfile = this.configService?.getUserProfile() ?? {};
+    const assistantProfile = this.resolveAssistantProfile(configAssistantProfile, undefined);
+    const { context: conv } = await prepareConversationTurnContext(this.createPrepareConversationBindings(), {
+      conversationId: cid,
+      userId,
+      message,
+      assistantProfile,
+      userProfile,
+    });
+    const classifierMessages: Message[] = [
+      ...conv.continuitySystemBlocks.map((c) => ({ role: 'system' as const, content: c })),
+      ...conv.recentTurns,
+    ];
+    const classification = await this.classifier.classify(message, classifierMessages);
+    console.log(`[Orchestrator] classifyDetailed() - Message classified as: ${classification.level}`);
+    return classification;
   }
 
   private createPrepareConversationBindings(): PrepareConversationBindings {

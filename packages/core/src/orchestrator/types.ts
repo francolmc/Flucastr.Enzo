@@ -260,7 +260,7 @@ export interface OrchestratorInput {
   requestId?: string;
   conversationId: string;
   userId: string;
-  source?: 'web' | 'telegram' | 'unknown' | 'echo';
+  source?: 'web' | 'telegram' | 'cli' | 'api' | 'echo' | 'unknown';
   classifiedLevel?: ComplexityLevel;
   userLanguage?: string;
   agentId?: string;

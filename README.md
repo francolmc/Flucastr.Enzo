@@ -4,6 +4,45 @@ Asistente personal inteligente, local y extensible.
 
 Enzo combina orquestacion multi-paso, herramientas del sistema, skills y canales (Web UI + Telegram) para entregar una experiencia de asistente real sobre modelos base pequenos, con opcion de escalar a proveedores mas potentes cuando se necesita.
 
+## Arquitectura SDK-First (Nuevo)
+
+Enzo ahora usa una arquitectura **API-first** donde todos los clientes (Web UI, Telegram, CLI) se comunican con el core vía REST API usando el SDK oficial.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        CLIENTES                                │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
+│  │ Web UI     │  │ Telegram   │  │ CLI        │                │
+│  │ (React)    │  │ (Node.js)  │  │ (Node.js)  │                │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘                │
+│        │               │               │                        │
+│        └───────────────┼───────────────┘                        │
+│                        │                                        │
+│                   @enzo/sdk                                      │
+│              (HTTP/REST Client)                                  │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      API SERVER                                  │
+│              (Express + @enzo/core)                              │
+│                                                                  │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
+│  │ /api/chat  │  │ /api/cmd   │  │ /api/voice │                │
+│  │ /api/files │  │ /api/mem   │  │ /api/class │                │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘                │
+│        └───────────────┼───────────────┘                        │
+│                        │                                        │
+│                   Orchestrator                                   │
+│              (Core business logic)                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **@enzo/sdk**: Cliente HTTP tipado para consumir la API
+- **@enzo/api**: Servidor Express con endpoints REST
+- **@enzo/core**: Lógica de negocio (orquestador, memoria, modelos)
+- **@enzo/telegram**: Bot que usa solo el SDK (sin acceso directo al core)
+
 ## Proyecto en fase inicial
 
 Este proyecto esta en etapa temprana (alpha). Ya es util para uso diario, pero seguimos priorizando robustez, seguridad, experiencia de usuario y nuevas capacidades antes de una publicacion mas amplia.
@@ -58,6 +97,17 @@ flowchart TD
 - **Optional providers:** Anthropic, OpenAI, Gemini
 - **Channels:** Web UI, Telegram
 
+## Paquetes
+
+| Paquete | Descripción | Documentación |
+|---------|-------------|---------------|
+| `@enzo/sdk` | Cliente HTTP tipado para la API | [README](./packages/sdk/README.md) |
+| `@enzo/api` | Servidor Express con endpoints REST | - |
+| `@enzo/core` | Lógica de negocio (orquestador) | - |
+| `@enzo/telegram` | Bot de Telegram (usa solo SDK) | [README](./packages/telegram/README.md) |
+| `@enzo/web` | UI web en React | - |
+| `@enzo/cli` | Interfaz de línea de comandos | - |
+
 ## Capacidades actuales
 
 - Conversacion natural en espanol
@@ -89,6 +139,28 @@ Servicios por defecto:
 
 - Web UI: `http://localhost:5173`
 - API: `http://127.0.0.1:3001` (host configurable con `ENZO_API_HOST`)
+
+## Uso del SDK
+
+```typescript
+import { EnzoApiClient } from '@enzo/sdk';
+
+const client = new EnzoApiClient({ apiUrl: 'http://localhost:3001' });
+
+// Chat simple
+const response = await client.chat.send('Hola Enzo', {
+  userId: 'user-123',
+  source: 'telegram',
+});
+
+// Ejecutar comando
+await client.commands.execute('chat.new', [], 'user-123');
+
+// Recuperar memorias
+const memories = await client.memory.recall('user-123');
+```
+
+Ver documentación completa: [`@enzo/sdk`](./packages/sdk/README.md)
 
 ## Uso
 

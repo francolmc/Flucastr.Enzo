@@ -77,6 +77,7 @@ import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMessageHandler } from './handlers/message.js';
+import { createTelegramApiClient } from './apiClient.js';
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -177,28 +178,25 @@ async function main() {
       await bot.telegram.sendDocument(chatId, { source: buffer, filename });
     };
 
-    const toolRegistry = createDefaultToolRegistry(memoryService);
-    const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
-    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
-    const orchestrator = new Orchestrator(
-      ollamaProvider,
-      anthropicProvider,
-      memoryService,
-      { skillRegistry, configService, toolRegistry, agentRouter }
-    );
-    console.log('[Telegram] Orchestrator initialized');
+    // SDK Mode: Services below are now provided via API instead of direct instantiation
+    // Kept for reference during migration:
+    // const toolRegistry = createDefaultToolRegistry(memoryService);
+    // const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
+    // const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
+    // const orchestrator = new Orchestrator(...);
 
     process.env.ENZO_RUNTIME_ROLE = process.env.ENZO_RUNTIME_ROLE?.trim() || 'telegram';
 
-    const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
-    const echoNg = getEchoNotificationGateway();
-    bindEchoDeclarativeOrchestrator({
-      orchestrator,
-      memoryService,
-      configService,
-      ...(echoNg ? { notificationGateway: echoNg } : {}),
-    });
-    echoEngine.start();
+    // Initialize API Client for SDK-based communication (PRIMARY MODE)
+    const apiClient = createTelegramApiClient();
+    console.log('[Telegram] API Client initialized (SDK mode)');
+
+    // SDK Mode: Echo engine disabled (uses orchestrator directly)
+    // const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
+    // const echoNg = getEchoNotificationGateway();
+    // bindEchoDeclarativeOrchestrator({ orchestrator, memoryService, configService, ... });
+    // echoEngine.start();
+    console.log('[Telegram] Note: Echo engine disabled in SDK mode');
 
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
@@ -240,8 +238,9 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService, {
+      const nextBot = createBot(null, null, {
         configService,
+        apiClient,
       });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
@@ -291,7 +290,7 @@ async function main() {
     const shutdown = (signal: string) => {
       console.log(`[Telegram] ${signal} received, stopping bot...`);
       skillRegistry.stopWatching();
-      echoEngine.stop();
+      // echoEngine.stop(); // Disabled in SDK mode
       if (configPoller) {
         clearInterval(configPoller);
         configPoller = null;

@@ -25,3 +25,5 @@ export * from './security/EncryptionService.js';
 export * from './security/SecretFile.js';
 export * from './supervisor/supervisorState.js';
 export * from './supervisor/scheduleEnzoSupervisorRestart.js';
+export * from './commands/index.js';
+export * from './text/index.js';

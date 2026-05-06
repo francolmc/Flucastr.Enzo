@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
 import type { Orchestrator, MemoryService, ConfigService, VisionService } from '@enzo/core';
+import type { EnzoApiClient } from './apiClient.js';
 
 export interface TranscriptionResult {
   success: boolean;
@@ -51,19 +52,20 @@ export interface MarkItDownService {
 }
 
 export interface EnzoContext extends Context {
-  orchestrator: Orchestrator;
-  memoryService: MemoryService;
+  orchestrator?: Orchestrator | null;
+  memoryService?: MemoryService | null;
   configService?: ConfigService;
   transcriptionService?: TranscriptionService;
   ttsService?: TTSService;
   fileHandler?: FileHandler;
   visionService?: VisionService;
   markItDownService?: MarkItDownService;
+  apiClient?: EnzoApiClient;
 }
 
 export function createBot(
-  orchestrator: Orchestrator,
-  memoryService: MemoryService,
+  orchestrator: Orchestrator | null,
+  memoryService: MemoryService | null,
   options?: {
     configService?: ConfigService;
     transcriptionService?: TranscriptionService;
@@ -71,6 +73,7 @@ export function createBot(
     fileHandler?: FileHandler;
     visionService?: VisionService;
     markItDownService?: MarkItDownService;
+    apiClient?: EnzoApiClient;
   }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
@@ -113,6 +116,7 @@ export function createBot(
     ctx.fileHandler = options?.fileHandler;
     ctx.visionService = options?.visionService;
     ctx.markItDownService = options?.markItDownService;
+    ctx.apiClient = options?.apiClient;
     return next();
   });
 

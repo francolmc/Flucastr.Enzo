@@ -34,7 +34,17 @@ import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
 import { createEchoRouter } from "./routes/echo.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { createVoiceRouter } from "./routes/voice.js";
+import { createFilesRouter } from "./routes/files.js";
+import { createCommandsRouter } from "./routes/commands.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { 
+  getCommandRegistry, 
+  chatCommands, 
+  memoryCommands, 
+  agentCommands, 
+  systemCommands 
+} from "@enzo/core";
 
 process.env.ENZO_RUNTIME_ROLE ||= "api";
 
@@ -155,6 +165,17 @@ const orchestrator = new Orchestrator(
   { skillRegistry, configService, toolRegistry, agentRouter }
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
+
+// Initialize command registry with built-in commands
+const commandRegistry = getCommandRegistry();
+chatCommands.forEach(cmd => commandRegistry.register(cmd));
+memoryCommands.forEach(cmd => commandRegistry.register(cmd));
+agentCommands.forEach(cmd => commandRegistry.register(cmd));
+systemCommands.forEach(cmd => commandRegistry.register(cmd));
+// Set services for command handlers
+commandRegistry.setServices({ memoryService });
+console.log(`[API] Command registry initialized with ${commandRegistry.size} commands`);
+
 const echoEngine = getEchoEngine({ memoryService, configService });
 const echoNotificationGateway = getEchoNotificationGateway();
 bindEchoDeclarativeOrchestrator({
@@ -249,6 +270,9 @@ app.use(createConfigRouter(configService, encryptionService));
 app.use(createSkillsRouter({ skillRegistry, memoryService, skillsDir: skillsPath }));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
+app.use(createVoiceRouter(orchestrator, memoryService));
+app.use(createFilesRouter(memoryService));
+app.use(createCommandsRouter(commandRegistry));
 
 app.use(errorHandler);
 
