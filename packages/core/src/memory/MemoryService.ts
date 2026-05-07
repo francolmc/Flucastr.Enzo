@@ -954,6 +954,7 @@ Use only when relevant to the current request; never invent new failures from th
   }
 
   updateMCPServer(id: string, data: Partial<MCPServerConfig>): void {
+    console.log(`[MemoryService] updateMCPServer called with id=${id}, data=`, data);
     const now = Date.now();
     const db = this.db.getDb();
 
@@ -962,6 +963,8 @@ Use only when relevant to the current request; never invent new failures from th
       `SELECT id, name, description, transport, command, args, env, url, enabled, createdAt, updatedAt FROM mcp_servers WHERE id = ?`,
       [id]
     );
+
+    console.log(`[MemoryService] current server found:`, current);
 
     if (!current) {
       console.warn(`[MemoryService] MCP server "${id}" not found for update`);

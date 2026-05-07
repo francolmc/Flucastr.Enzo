@@ -150,7 +150,7 @@ export function buildRuntimeThreeLayersContractPrompt(): string {
   return `RUNTIME LAYERS (this turn only):
 - Skills: procedural text in RELEVANT SKILLS — how to build shell lines or follow a workflow. Not invocable tool ids; never put a skill name in JSON "tool".
 - Agents: specialists from the delegation catalog only, invoked with {"action":"delegate",...} using an exact agent id from that catalog. They do not run until the host dispatches delegation.
-- Tools: the ONLY valid names in {"action":"tool","tool":"..."} are those listed under AVAILABLE TOOLS (exact strings, including mcp_…). Host actions use these; for CLIs (gh, git, …) use **execute_command** and put the full line in **input.command**.
+- Tools: the ONLY valid names in {"action":"tool","tool":"..."} are those listed under AVAILABLE TOOLS (exact strings, including mcp_<serverId>_<toolName>). File operations, shell commands, and system actions come from MCP servers — use those tool names exactly.
 
 Acting on this machine is only through Tools as listed. Skills and agents are not tools.`;
 }
@@ -198,20 +198,50 @@ export function extractOutputTemplates(skills: RelevantSkill[]): string {
   return `\nREQUIRED OUTPUT TEMPLATES:\n${templates.join('\n\n')}\n`;
 }
 
-export function buildToolsPrompt(tools: Tool[]): string {
-  const toolList = tools
+export function buildToolsPrompt(tools: Tool[], userMessage?: string): string {
+  // Separate MCP tools from core memory tools
+  const mcpTools = tools.filter((t) => t.name.startsWith('mcp_'));
+  const coreTools = tools.filter((t) => t.name === 'remember' || t.name === 'recall');
+
+  // If no MCP tools available, only show core memory tools
+  const availableTools = mcpTools.length > 0 ? mcpTools : coreTools;
+
+  if (availableTools.length === 0) {
+    return `AVAILABLE TOOLS:
+(none — no MCP servers connected. Only conversation is available.)
+
+Casual replies, greetings, math, conceptual chat without side effects → write plain text only (no JSON).
+
+ONE JSON object per message when using JSON — no prose before or after it.`;
+  }
+
+  const useFullSchema = process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA !== 'false';
+  const toolList = availableTools
     .map(
       (tool) => `- **${tool.name}**: ${tool.description}
-  Input: ${JSON.stringify(tool.parameters?.properties ?? {}, null, 0)}`
+  Input: ${JSON.stringify(useFullSchema ? (tool.parameters ?? {}) : (tool.parameters?.properties ?? {}), null, 0)}`
     )
     .join('\n');
 
-  const exactNames = tools.map((t) => t.name).join(', ');
+  const exactNames = availableTools.map((t) => t.name).join(', ');
+
+  const mcpNote = mcpTools.length > 0
+    ? `\n\nMCP tools use the format mcp_<serverId>_<toolName>. Use the exact name from the list above.`
+    : '\n\nCore memory tools available for saving and recalling user information.';
+
+  const hasResearchTool = mcpTools.some(t => t.name.includes('research'));
+  const mcpExamples = mcpTools.length > 0
+    ? `\n\nMCP TOOL SELECTION EXAMPLES:
+${hasResearchTool ? `- User asks "últimas noticias", "investigá X", "buscar información", "research trends" → MUST use simulate-research-query (the ONLY tool for research/investigation tasks)\n` : ''}- User asks to see file contents, read a document → use a tool with "read" in the name
+- User asks to save, create, write content → use a tool with "write" in the name
+- User asks to explore folders, list files → use a tool with "directory" or "list" in the name
+
+MATCH THE EXACT TOOL NAME to your task. "search" ≠ "research". "trigger-long-running" is NOT for research.`
+    : '';
 
   return `AVAILABLE TOOLS:
 ${toolList}
-
-The names in the list above are the ONLY valid JSON values for "tool". Any prose or skill that mentions terminals, shells, vendors, APIs, Git hosts, containers, orchestrators, or command-line binaries still maps to executing a real shell line via **execute_command** with that line in input.command — never invent an extra tool whose name echoes the topic.
+${mcpNote}${mcpExamples}
 
 CANONICAL TOOL CALL (only when execution is needed):
 {"action":"tool","tool":"<exact_name>","input":{...}}

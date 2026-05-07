@@ -76,6 +76,8 @@ function ConfigPage() {
     enzoSkillsFallbackRelevanceThreshold: '0.12',
     mcpAutoConnect: false,
     enzoNativeToolCalling: false,
+    enzoMcpIncludeFullSchema: true,
+    enzoMcpShowReasoning: false,
     defaultUserLanguage: 'es',
     tz: 'America/Santiago',
     telegramAllowedUsers: '',
@@ -112,6 +114,8 @@ function ConfigPage() {
       enzoSkillsFallbackRelevanceThreshold: String(systemConfig.enzoSkillsFallbackRelevanceThreshold ?? 0.12),
       mcpAutoConnect: !!systemConfig.mcpAutoConnect,
       enzoNativeToolCalling: !!systemConfig.enzoNativeToolCalling,
+      enzoMcpIncludeFullSchema: systemConfig.enzoMcpIncludeFullSchema !== false,
+      enzoMcpShowReasoning: !!systemConfig.enzoMcpShowReasoning,
       defaultUserLanguage: systemConfig.defaultUserLanguage || 'es',
       tz: systemConfig.tz || 'America/Santiago',
       telegramAllowedUsers: systemConfig.telegramAllowedUsers || '',
@@ -239,6 +243,8 @@ function ConfigPage() {
         enzoSkillsFallbackRelevanceThreshold: Number(systemForm.enzoSkillsFallbackRelevanceThreshold),
         mcpAutoConnect: systemForm.mcpAutoConnect,
         enzoNativeToolCalling: systemForm.enzoNativeToolCalling,
+        enzoMcpIncludeFullSchema: systemForm.enzoMcpIncludeFullSchema,
+        enzoMcpShowReasoning: systemForm.enzoMcpShowReasoning,
         defaultUserLanguage: systemForm.defaultUserLanguage,
         tz: systemForm.tz,
         telegramAllowedUsers: systemForm.telegramAllowedUsers,
@@ -565,6 +571,22 @@ function ConfigPage() {
                 onChange={(e) => setSystemForm({ ...systemForm, enzoNativeToolCalling: e.target.checked })}
               />
               Native Tool Calling
+            </label>
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.enzoMcpIncludeFullSchema}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoMcpIncludeFullSchema: e.target.checked })}
+              />
+              MCP Full Schema
+            </label>
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.enzoMcpShowReasoning}
+                onChange={(e) => setSystemForm({ ...systemForm, enzoMcpShowReasoning: e.target.checked })}
+              />
+              MCP Show Reasoning
             </label>
           </div>
 

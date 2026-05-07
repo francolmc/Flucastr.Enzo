@@ -50,19 +50,17 @@ async function runTests() {
   console.log('✓ "how much is 2+2" → SIMPLE (mocked LLM)');
 
   const cAtacama = new Classifier(
-    new QueueProvider(['{"level":"MODERATE","reason":"factual question requiring web search","suggestedTool":"web_search"}'])
+    new QueueProvider(['{"level":"MODERATE","reason":"factual question"}'])
   );
   const r2 = await cAtacama.classify('what is the Atacama Desert?', []);
   assertEq(r2.level, ComplexityLevel.MODERATE, 'Atacama should be MODERATE via LLM');
-  assertEq(r2.suggestedTool, 'web_search', 'factual query should suggest web_search');
   console.log('✓ "what is the Atacama Desert?" → MODERATE (mocked LLM)');
 
   const cCeo = new Classifier(
-    new QueueProvider(['{"level":"MODERATE","reason":"factual question","suggestedTool":"web_search"}'])
+    new QueueProvider(['{"level":"MODERATE","reason":"factual question"}'])
   );
   const r3 = await cCeo.classify('who is the CEO of Apple?', []);
   assertEq(r3.level, ComplexityLevel.MODERATE, 'CEO / Apple should be MODERATE');
-  assertEq(r3.suggestedTool, 'web_search', 'CEO should suggest web_search');
   assertEq(r3.classifierBranch, 'llm', 'CEO query should use LLM branch');
   console.log('✓ "who is the CEO of Apple?" → MODERATE (mocked LLM)');
 

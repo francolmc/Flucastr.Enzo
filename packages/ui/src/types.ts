@@ -47,6 +47,8 @@ export interface SystemConfigView {
   enzoSkillsFallbackRelevanceThreshold: number;
   mcpAutoConnect: boolean;
   enzoNativeToolCalling: boolean;
+  enzoMcpIncludeFullSchema: boolean;
+  enzoMcpShowReasoning: boolean;
   defaultUserLanguage: string;
   tz: string;
   telegramAllowedUsers: string;
@@ -74,6 +76,8 @@ export interface SystemConfigUpdatePayload {
   enzoSkillsFallbackRelevanceThreshold?: number;
   mcpAutoConnect?: boolean;
   enzoNativeToolCalling?: boolean;
+  enzoMcpIncludeFullSchema?: boolean;
+  enzoMcpShowReasoning?: boolean;
   defaultUserLanguage?: string;
   tz?: string;
   telegramAllowedUsers?: string;

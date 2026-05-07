@@ -131,7 +131,6 @@ export function createChatRouter(
       res.json({
         level: classification.level,
         reason: classification.reason,
-        suggestedTool: classification.suggestedTool,
         prefersHostTools: classification.prefersHostTools,
         suppressSimpleModerateFastPath: classification.suppressSimpleModerateFastPath,
         delegationHint: classification.delegationHint,

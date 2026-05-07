@@ -119,6 +119,19 @@ export class MCPRegistry {
   }
 
   /**
+   * Update server configuration (description, name, etc.)
+   */
+  async updateServer(id: string, updates: Partial<MCPServerConfig>): Promise<void> {
+    console.log(`[MCPRegistry] updateServer called with id=${id}, updates=`, updates);
+    if (this.memoryService) {
+      console.log(`[MCPRegistry] Calling memoryService.updateMCPServer`);
+      this.memoryService.updateMCPServer(id, updates);
+    } else {
+      console.warn(`[MCPRegistry] memoryService is not available`);
+    }
+  }
+
+  /**
    * Get a specific server connection
    */
   getServer(id: string): MCPConnection | null {
@@ -153,10 +166,10 @@ export class MCPRegistry {
   }
 
   /**
-   * Call a tool on its corresponding server
+   * Call a tool on the appropriate server
    * Expects tool name in format: "mcp_${serverId}_${toolName}" or just toolName if serverId known
    */
-  async callTool(toolName: string, input: any): Promise<string> {
+  async callTool(toolName: string, input: any, taskContext?: { description: string }): Promise<string> {
     // Try to extract serverId from tool name (format: mcp_${serverId}_${toolName})
     let serverId: string | null = null;
     let actualToolName = toolName;
@@ -164,20 +177,34 @@ export class MCPRegistry {
     if (toolName.startsWith('mcp_')) {
       const parts = toolName.substring(4).split('_');
       if (parts.length >= 2) {
-        // Reconstruct serverId from parts (handles cases like "mcp_my_server_read_file")
-        // We need to find the matching server
-        for (const connection of this.getConnectedServers()) {
-          const serverIdSlug = connection.serverConfig.id
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, '_');
-
-          if (toolName.includes(`mcp_${connection.serverConfig.id}_`)) {
-            serverId = connection.serverConfig.id;
-            actualToolName = toolName.substring(`mcp_${serverId}_`.length);
+        let potentialServerId = parts[0];
+        
+        // Check if any server matches (directly, or if server ID has mcp_ prefix, without it)
+        for (const connection of this.getAllServers()) {
+          const serverIdFromConfig = connection.serverConfig.id;
+          
+          // Match: direct, or server has mcp_ prefix and matches without prefix
+          const serverIdStripped = serverIdFromConfig.startsWith('mcp_') 
+            ? serverIdFromConfig.substring(4)  // Remove 'mcp_' to get '848f563d'
+            : serverIdFromConfig;
+          
+          if (serverIdFromConfig === potentialServerId || serverIdStripped === potentialServerId || serverIdFromConfig.endsWith(potentialServerId)) {
+            serverId = serverIdFromConfig;
+            actualToolName = parts.slice(1).join('_');
+            if (process.env.ENZO_DEBUG === 'true') {
+              console.log(`[MCPRegistry] Found server ${serverId} for tool ${toolName}, actual tool: ${actualToolName}, status: ${connection.connectionStatus}`);
+            }
             break;
           }
         }
       }
+    }
+
+    if (!serverId && process.env.ENZO_DEBUG === 'true') {
+      const parts = toolName.substring(4).split('_');
+      const potentialServerId = parts[0];
+      console.log(`[MCPRegistry] Server not found for tool ${toolName}, potential serverId: ${potentialServerId}`);
+      console.log(`[MCPRegistry] Available servers:`, this.getAllServers().map(c => ({ id: c.serverConfig.id, status: c.connectionStatus })));
     }
 
     if (!serverId) {
@@ -189,7 +216,7 @@ export class MCPRegistry {
       throw new Error(`Server "${serverId}" not found or not connected`);
     }
 
-    return await connection.callTool(actualToolName, input);
+    return await connection.callTool(actualToolName, input, taskContext);
   }
 
   /**
@@ -301,11 +328,22 @@ export class MCPRegistry {
    */
   getMCPToolsForOrchestrator(): any[] {
     const tools: any[] = [];
+    const allServers = this.getAllServers();
+    const connectedServers = this.getConnectedServers();
 
-    for (const connection of this.getConnectedServers()) {
+    console.log(`[MCPRegistry] getMCPToolsForOrchestrator: ${allServers.length} total servers, ${connectedServers.length} connected`);
+    
+    if (allServers.length > 0 && connectedServers.length === 0) {
+      console.log('[MCPRegistry] Servers exist but none are connected. Server states:');
+      allServers.forEach(s => {
+        console.log(`  - ${s.serverConfig.name} (${s.serverConfig.id}): status=${s.connectionStatus}, enabled=${s.serverConfig.enabled}`);
+      });
+    }
+
+    for (const connection of connectedServers) {
       for (const mcpTool of connection.toolList) {
         tools.push({
-          name: `mcp_${connection.serverConfig.id}_${mcpTool.name}`,
+          name: `${connection.serverConfig.id}_${mcpTool.name}`,
           description: `[MCP: ${connection.serverConfig.name}] ${mcpTool.description}`,
           parameters: mcpTool.inputSchema || {},
         });
@@ -313,6 +351,25 @@ export class MCPRegistry {
     }
 
     return tools;
+  }
+
+  /**
+   * Get the input schema for a specific MCP tool
+   */
+  getMCPToolSchema(toolName: string): any | null {
+    if (!toolName.startsWith('mcp_')) return null;
+    
+    const parts = toolName.split('_');
+    if (parts.length < 3) return null;
+    
+    const serverId = `mcp_${parts[1]}`;
+    const actualToolName = parts.slice(2).join('_');
+    
+    const connection = this.getServer(serverId);
+    if (!connection) return null;
+    
+    const tool = connection.toolList.find(t => t.name === actualToolName);
+    return tool?.inputSchema || null;
   }
 
   /**

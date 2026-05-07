@@ -65,6 +65,10 @@ export interface StoredSystemConfig {
   enzoSkillsFallbackAllWhenNoneEnabled: boolean;
   /** Prefer native tool-calling in the think phase. Synced to `ENZO_NATIVE_TOOL_CALLING`. */
   enzoNativeToolCalling: boolean;
+  /** Include full MCP schema in tool prompts for better validation. Synced to `ENZO_MCP_INCLUDE_FULL_SCHEMA`. */
+  enzoMcpIncludeFullSchema: boolean;
+  /** Show MCP selection reasoning in responses. Synced to `ENZO_MCP_SHOW_REASONING`. */
+  enzoMcpShowReasoning: boolean;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
 }
@@ -81,6 +85,8 @@ export interface SystemConfigView {
   enzoSkillsFallbackRelevanceThreshold: number;
   mcpAutoConnect: boolean;
   enzoNativeToolCalling: boolean;
+  enzoMcpIncludeFullSchema: boolean;
+  enzoMcpShowReasoning: boolean;
   defaultUserLanguage: string;
   tz: string;
   telegramAllowedUsers: string;
@@ -113,6 +119,8 @@ export interface SystemConfigUpdate {
   enzoVerifyBeforeSynthesis?: boolean;
   enzoSkillsFallbackAllWhenNoneEnabled?: boolean;
   enzoNativeToolCalling?: boolean;
+  enzoMcpIncludeFullSchema?: boolean;
+  enzoMcpShowReasoning?: boolean;
 }
 
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
@@ -194,6 +202,8 @@ function getDefaultConfig(): ModelsConfig {
       enzoVerifyBeforeSynthesis: booleanFromEnvKey('ENZO_VERIFY_BEFORE_SYNTHESIS', false),
       enzoSkillsFallbackAllWhenNoneEnabled: booleanFromEnvDefaultTrue('ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED'),
       enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
+      enzoMcpIncludeFullSchema: booleanFromEnvDefaultTrue('ENZO_MCP_INCLUDE_FULL_SCHEMA'),
+      enzoMcpShowReasoning: booleanFromEnvKey('ENZO_MCP_SHOW_REASONING', false),
     },
     assistantProfile: {
       name: 'Enzo',
@@ -267,6 +277,14 @@ export class ConfigService {
     system.enzoNativeToolCalling = normalizeStoredBoolean(
       system.enzoNativeToolCalling,
       defaults.system.enzoNativeToolCalling
+    );
+    system.enzoMcpIncludeFullSchema = normalizeStoredBoolean(
+      system.enzoMcpIncludeFullSchema,
+      defaults.system.enzoMcpIncludeFullSchema
+    );
+    system.enzoMcpShowReasoning = normalizeStoredBoolean(
+      system.enzoMcpShowReasoning,
+      defaults.system.enzoMcpShowReasoning
     );
 
     if (loaded?.providers) {
@@ -446,6 +464,8 @@ export class ConfigService {
       ? 'true'
       : 'false';
     process.env.ENZO_NATIVE_TOOL_CALLING = system.enzoNativeToolCalling ? 'true' : 'false';
+    process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA = system.enzoMcpIncludeFullSchema ? 'true' : 'false';
+    process.env.ENZO_MCP_SHOW_REASONING = system.enzoMcpShowReasoning ? 'true' : 'false';
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -641,6 +661,8 @@ export class ConfigService {
       enzoSkillsFallbackRelevanceThreshold: system.enzoSkillsFallbackRelevanceThreshold,
       mcpAutoConnect: system.mcpAutoConnect,
       enzoNativeToolCalling: !!system.enzoNativeToolCalling,
+      enzoMcpIncludeFullSchema: !!system.enzoMcpIncludeFullSchema,
+      enzoMcpShowReasoning: !!system.enzoMcpShowReasoning,
       defaultUserLanguage: system.defaultUserLanguage,
       tz: system.tz,
       telegramAllowedUsers: system.telegramAllowedUsers,
@@ -703,6 +725,12 @@ export class ConfigService {
         : {}),
       ...(update.enzoNativeToolCalling !== undefined
         ? { enzoNativeToolCalling: update.enzoNativeToolCalling }
+        : {}),
+      ...(update.enzoMcpIncludeFullSchema !== undefined
+        ? { enzoMcpIncludeFullSchema: update.enzoMcpIncludeFullSchema }
+        : {}),
+      ...(update.enzoMcpShowReasoning !== undefined
+        ? { enzoMcpShowReasoning: update.enzoMcpShowReasoning }
         : {}),
     };
 

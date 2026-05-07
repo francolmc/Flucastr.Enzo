@@ -259,7 +259,8 @@ ${
 }
 
 /**
- * Two-phase fallback: generate file body then write_file.execute when JSON fast path failed but the user requested persistence.
+ * Two-phase fallback: generate file body then execute via MCP tools when available.
+ * If no MCPs connected, return appropriate message.
  */
 async function attemptPersistWriteRecovery(params: {
   input: AmplifierInput;
@@ -276,111 +277,24 @@ async function attemptPersistWriteRecovery(params: {
   relevantSkillsSection: string;
   requiredTemplateSection: string;
 }): Promise<string> {
-  const writeTool = params.executableTools.find((t) => t.name === 'write_file');
-  if (!writeTool) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'A file save was requested, but write_file is not available in this environment — nothing was written to disk.'
-      : 'Pediste guardar un archivo, pero write_file no está disponible en este entorno — no se escribió nada en disco.';
-  }
-
-  const filePath = extractFilePath(params.input.message);
-  if (!filePath) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'I could not detect the file path in your message. Send the full absolute path (for example /home/you/file.md).'
-      : 'No pude detectar la ruta del archivo en tu mensaje. Indica la ruta absoluta completa (por ejemplo /home/usuario/archivo.md).';
-  }
-
-  const genSystem = `${buildAssistantIdentityPrompt(params.input)}
-The user wants a new file created or overwritten at a path they specified. Output ONLY the full body of that file (Markdown or plain text as appropriate). No preamble, no closing commentary, no claim that the file was saved on disk. Start directly with the file content.`;
-
-  let body = '';
-  try {
-    const gen = await params.withTimeout(
-      params.baseProvider.complete({
-        messages: [
-          { role: 'system', content: genSystem },
-          { role: 'user', content: params.input.message },
-        ],
-        temperature: 0.5,
-        maxTokens: 2048,
-      }),
-      180_000,
-      'persist recovery content gen'
-    );
-    body = (gen.content ?? '').trim();
-  } catch (e) {
-    params.log.error('[AmplifierLoop] persist recovery content gen failed:', e);
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'I could not generate the file content. Please try again.'
-      : 'No pude generar el contenido del archivo. ¿Podés intentar de nuevo?';
-  }
-
-  if (!body) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'Generated content was empty; the file was not written. Please rephrase your request.'
-      : 'El contenido generado quedó vacío; no escribí el archivo. ¿Podés reformular el pedido?';
-  }
-
-  const preparedInput = { path: filePath, content: body };
-  const validationError = validateToolInput(
-    'write_file',
-    preparedInput,
-    params.executableTools,
-    params.mcpRegistry
+  // Check if MCP filesystem tools are available
+  const mcpTools = params.mcpRegistry?.getAllTools() ?? [];
+  const writeTools = mcpTools.filter(t => 
+    t.name.includes('write') || t.name.includes('create') || t.name.includes('file')
   );
-  if (validationError) {
+
+  if (writeTools.length === 0) {
     const lang = (params.input.userLanguage ?? 'es').toLowerCase();
     return lang.startsWith('en')
-      ? `Could not prepare the write operation: ${validationError}`
-      : `No pude preparar la escritura: ${validationError}`;
+      ? 'No filesystem tools available. To write files, please connect a MCP filesystem server. Without MCP tools, I can only chat or use memory (remember/recall).'
+      : 'No hay herramientas de sistema de archivos disponibles. Para escribir archivos, conectá un servidor MCP de filesystem. Sin herramientas MCP, solo puedo conversar o usar memoria (remember/recall).';
   }
 
-  const actStart = Date.now();
-  let rawToolOutput = '';
-  try {
-    const result = await writeTool.execute(preparedInput);
-    rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
-    const actOk = result.success && !rawToolOutput.toLowerCase().startsWith('error');
-    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, actOk);
-    if (!result.success) {
-      const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-      const fallbackErr = lang.startsWith('en') ? 'Error writing the file.' : 'Error al escribir el archivo.';
-      return rawToolOutput || result.error || fallbackErr;
-    }
-  } catch (execErr) {
-    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, false);
-    params.log.error('[AmplifierLoop] persist recovery write failed:', execErr);
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'There was an error writing the file to disk.'
-      : 'Tuve un error al escribir el archivo en disco.';
-  }
-
-  params.toolsUsed.add('write_file');
-  params.log.info(`[AmplifierLoop] persist recovery: write_file ok at ${filePath}`);
-
-  if (shouldReturnRawToolOutput('write_file', params.input.message, rawToolOutput)) {
-    return rawToolOutput;
-  }
-
-  return synthesizeFastPathToolOutput({
-    baseProvider: params.baseProvider,
-    withTimeout: params.withTimeout,
-    input: params.input,
-    relevantSkillsSection: params.relevantSkillsSection,
-    requiredTemplateSection: params.requiredTemplateSection,
-    execName: 'write_file',
-    toolOutput: rawToolOutput,
-    steps: params.steps,
-    modelsUsed: params.modelsUsed,
-    verifyBeforeSynthesize: params.verifyBeforeSynthesize,
-    stageMetrics: params.stageMetrics,
-    log: params.log,
-  });
+  // MCP tools available - model should use them directly, but we end up here if it didn't
+  const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+  return lang.startsWith('en')
+    ? 'Use the available MCP filesystem tools to complete this task.'
+    : 'Usá las herramientas MCP de filesystem disponibles para completar esta tarea.';
 }
 
 /**
@@ -416,6 +330,15 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const mergedToolDefs = mergeAvailableToolDefinitions(input, mcpRegistry);
   const toolsPrompt = buildToolsPrompt(mergedToolDefs);
 
+  let suggestedMCPSection = '';
+  if (input.resolvedMCPs && input.resolvedMCPs.length > 0) {
+    const mcpNames = input.resolvedMCPs.map(m => m.name).join(', ');
+    const mcpReasoning = input.resolvedMCPs[0]?.reasoning 
+      ? ` (razón: ${input.resolvedMCPs[0].reasoning})` 
+      : '';
+    suggestedMCPSection = `\nSUGGESTED MCPs (pre-evaluados como más relevantes): ${mcpNames}${mcpReasoning}\n`;
+  }
+
   let skillListSection = '';
   if (skillRegistry) {
     const enabledSkills = skillRegistry.getEnabled();
@@ -445,7 +368,7 @@ CRITICAL: When you need a tool, respond with ONLY the JSON object.
 No text before, no text after, no explanation.
 When the user needs no tool-backed action, reply in plain text and skip JSON entirely.
 WRONG: "Ejecutando el comando... {"action":"tool"...}"
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/user/Downloads"}}
+RIGHT: {"action":"tool","tool":"mcp_<serverId>_<toolName>","input":{"path":"/Users/franco"}}
 
 If you include any text outside the JSON, the tool will not execute.
 `
@@ -459,23 +382,20 @@ If you include any text outside the JSON, the tool will not execute.
     isModerate &&
     declarativeExecutable != null;
 
-  const hostToolsClassifierLockActive =
+const hostToolsClassifierLockActive =
     isModerate &&
     input.prefersHostTools === true &&
     declarativeExecutable == null &&
-    executableTools.some((t) => t.name === 'execute_command');
+    executableTools.some((t) => t.name.startsWith('mcp_'));
 
   const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
     ? `
 
 ━━━ HOST_TOOLS_CLASSIFIER_LOCKED ━━━
-The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** integrations / authenticated CLIs (see RELEVANT SKILLS and execute_command), NOT web_search and NOT unsolicited **calendar**.
-For this turn ONLY: respond with exactly **ONE** canonical JSON tool call.
-Prefer **execute_command** when GitHub/GitLab/Docker/kubectl/shell tooling matches what the user asked (build the command line from HOST context + SKILLS — no fabricated calendar ranges).
-The registered **tool** id is always **execute_command** — never use raw shell binaries (\`gh\`, \`git\`, \`docker\`, …) as the JSON \`tool\` field (they belong inside \`input.command\`).
-Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}
-Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings — "lista … repositorios" is NOT agenda.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** MCP tools listed in AVAILABLE TOOLS.
+For this turn ONLY: respond with exactly **ONE** canonical JSON tool call using an MCP tool name from the list.
+Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
     : '';
 
   const mandatorySkillFastPathBlock =
@@ -517,6 +437,7 @@ ${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}
 OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
 ${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
 
+${suggestedMCPSection}
 ${toolsPrompt}
 ${skillListSection}
 ${relevantSkillsSection}
@@ -955,25 +876,63 @@ Never invent tool names.`;
             // Build the repair prompt WITHOUT angle-bracket placeholders — small models
             // (qwen2.5:7b) fill "<name>" with the literal word "tool" from surrounding context.
             // Instead, use a concrete example with an actual valid tool name.
-            const exampleTool = input.prefersHostTools
-              ? 'execute_command'
-              : (mergedToolDefs[0]?.name ?? 'execute_command');
-            const exampleInput = input.prefersHostTools
-              ? `{"command":"${input.message.slice(0, 60).replace(/"/g, "'")}"}`
-              : '{}';
+            // Find the appropriate MCP tool based on user request
+            const mcpToolsList = mergedToolDefs.filter(t => t.name.startsWith('mcp_'));
+            
+            // For filesystem requests, find the specific MCP tool needed
+            const messageLower = input.message.toLowerCase();
+            const isListDir = messageLower.includes('lista') || messageLower.includes('mostrar') || 
+                              messageLower.includes('contenido') || messageLower.includes('ls') ||
+                              messageLower.includes('carpeta') || messageLower.includes('folder');
+            const isReadFile = messageLower.includes('leer') || messageLower.includes('read');
+            const isWriteFile = messageLower.includes('escribir') || messageLower.includes('crear') || 
+                                messageLower.includes('guardar') || messageLower.includes('save');
+            
+            // Find the specific tool
+            let exampleTool = 'remember';
+            let exampleInput = '{}';
+            
+            if (isListDir) {
+              const listDirTool = mcpToolsList.find(t => t.name.includes('list_directory'));
+              if (listDirTool) {
+                exampleTool = listDirTool.name;
+                exampleInput = '{"path":"/Users/franco"}';
+              }
+            } else if (isReadFile) {
+              const readTool = mcpToolsList.find(t => t.name.includes('read_file'));
+              if (readTool) {
+                exampleTool = readTool.name;
+                exampleInput = '{"path":"/Users/franco/example.txt"}';
+              }
+            } else if (isWriteFile) {
+              const writeTool = mcpToolsList.find(t => t.name.includes('write_file'));
+              if (writeTool) {
+                exampleTool = writeTool.name;
+                exampleInput = '{"path":"/Users/franco/test.txt","content":"Hello World"}';
+              }
+            } else if (mcpToolsList.length > 0) {
+              // Use first MCP tool as fallback
+              exampleTool = mcpToolsList[0].name;
+            }
+            
             const exampleJson = `{"action":"tool","tool":"${exampleTool}","input":${exampleInput}}`;
 
-            const repairSystemContent = input.prefersHostTools
-              ? `Tool "${toolName}" does not exist. For CLI/shell requests on this host, use "execute_command".
-Valid tools: ${exactAllowlist}
-Output ONE JSON only (no text, no explanation):
-${exampleJson}
-Write the actual shell command inside "command".`
+            const repairSystemContent = mcpToolsList.length > 0
+              ? `Tool "${toolName}" does not exist. You MUST use an MCP tool from the list below.
+
+IMPORTANT: For directory listing use EXACTLY: mcp_*_list_directory with {"path":"/Users/franco"}
+For file reading use: mcp_*_read_file with {"path":"..."}
+For file writing use: mcp_*_write_file with {"path":"...","content":"..."}
+
+Valid tools (USE EXACT NAMES):
+${exactAllowlist}
+
+Output ONE JSON only (no prose, no explanation):
+${exampleJson}`
               : `Tool "${toolName}" does not exist.
 Valid tools: ${exactAllowlist}
-Pick the correct tool for the user request. Output ONE JSON only (no text, no explanation):
-${exampleJson}
-Use a tool name exactly from the valid list above.`;
+Pick the correct tool for the user request. Output ONE JSON only:
+${exampleJson}`;
 
             const allowlistRepair = await withTimeout(
               baseProvider.complete({
@@ -1034,7 +993,15 @@ Use a tool name exactly from the valid list above.`;
     }
   }
 
-  if (persistToPathRequested && !toolsUsed.has('write_file')) {
+  // Only attempt recovery if: 
+  // 1. There was a request to persist/write AND
+  // 2. No tool was successfully executed AND  
+  // 3. There are MCP tools available
+  // (moved outside the block where rawToolOutput is defined, checking in a different way)
+  const mcpToolsAvailable = (mcpRegistry?.getAllTools() ?? []).length > 0;
+  const anyToolUsed = toolsUsed.size > 0;
+  
+  if (persistToPathRequested && !anyToolUsed && mcpToolsAvailable) {
     finalContent = await attemptPersistWriteRecovery({
       input,
       baseProvider,

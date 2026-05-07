@@ -24,6 +24,7 @@ export interface MCPTool {
   description: string;
   inputSchema: object;                 // JSON Schema
   serverId: string;                    // Qué servidor expone esta tool
+  taskSupport?: 'required' | 'optional'; // Whether tool requires/supports task metadata
 }
 
 export interface MCPToolCall {

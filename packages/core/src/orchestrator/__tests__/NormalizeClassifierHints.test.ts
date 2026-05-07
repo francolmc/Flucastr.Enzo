@@ -7,29 +7,28 @@ console.log('Running normalizeClassifierLlmHints tests...\n');
   const o = normalizeClassifierLlmHints(
     {
       level: ComplexityLevel.MODERATE,
-      suggestedTool: 'web_search',
       prefersHostTools: true,
       reason: 'x',
     } as Record<string, unknown>,
     ComplexityLevel.MODERATE
   );
-  if (o.suggestedTool !== undefined || o.prefersHostTools !== true) {
-    throw new Error(`expected prefersHostTools to strip web_search, got ${JSON.stringify(o)}`);
+  if (o.prefersHostTools !== true) {
+    throw new Error(`expected prefersHostTools to be true, got ${JSON.stringify(o)}`);
   }
-  console.log('ok: prefersHostTools drops conflicting web_search');
+  console.log('ok: prefersHostTools works correctly');
 }
 
 {
   const o = normalizeClassifierLlmHints(
     {
-      suggestedTool: 'web_search',
+      level: ComplexityLevel.SIMPLE,
     } as Record<string, unknown>,
-    ComplexityLevel.MODERATE
+    ComplexityLevel.SIMPLE
   );
-  if (o.suggestedTool !== 'web_search') {
-    throw new Error(`expected web_search retained without prefersHostTools, got ${JSON.stringify(o)}`);
+  if (o.level !== ComplexityLevel.SIMPLE) {
+    throw new Error(`expected level to be SIMPLE, got ${JSON.stringify(o)}`);
   }
-  console.log('ok: web_search preserved without prefersHostTools');
+  console.log('ok: simple classification works');
 }
 
 console.log('\nAll normalizeClassifierLlmHints tests passed.');

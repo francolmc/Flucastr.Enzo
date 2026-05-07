@@ -826,6 +826,13 @@ class ApiClient {
     });
   }
 
+  async updateMCPServer(serverId: string, updates: any): Promise<any> {
+    return this.request(`/mcp/servers/${serverId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+
   async getMCPTools(serverId?: string): Promise<any[]> {
     const response = await this.request<any>('/mcp/tools', undefined, API_QUICK_READ_TIMEOUT_MS);
     const allTools = (response as any).tools || response || [];

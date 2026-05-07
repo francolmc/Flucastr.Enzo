@@ -31,10 +31,6 @@ export function normalizeClassifierLlmHints(
   if (prefersHostTools) {
     out.prefersHostTools = true;
   }
-  const suggested = parsed['suggestedTool'];
-  if (suggested === 'web_search' && !prefersHostTools) {
-    out.suggestedTool = 'web_search';
-  }
   if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
     out.suppressSimpleModerateFastPath = true;
   }
@@ -91,17 +87,7 @@ export class Classifier {
       return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
     }
 
-    // Structural fast paths only — no keyword/language-specific detection.
-    // Write-to-absolute-path is structural (detects OS path patterns, not words).
-    if (messageIndicatesPersistedWriteToAbsolutePath(normalizedMessage)) {
-      logClassifierRouting('write_file_lexical_hint', ComplexityLevel.MODERATE);
-      return {
-        level: ComplexityLevel.MODERATE,
-        reason: 'create or persist file content at an absolute host path — requires write_file',
-        classifierBranch: 'write_file_lexical_hint',
-      };
-    }
-
+    // Classification via LLM - handles all cases including tool selection from MCPs
     return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
   }
 
@@ -185,8 +171,7 @@ The user's message may be in ANY natural language — infer intent regardless of
 Core shape (always required):
 {"level":"SIMPLE","reason":"..."}
 Optional keys (omit when irrelevant):
-- "suggestedTool": "web_search" — user needs grounded/current **public** web facts only (never use for host-backed intents below).
-- "prefersHostTools": true — answer must come from THIS machine's **authenticated CLIs** and/or **registered Enzo tools**: the user's repos, namespaces, quotas, kubectl/docker context tied to whoever is logged into this host. **Never** combine with suggestedTool web_search together. Omit for pure public lookups.
+- "prefersHostTools": true — answer must come from THIS machine's **registered MCP tools**: file operations, shell commands, or other tools available via MCP servers. Omit for pure public lookups or casual conversation.
 - "suppressSimpleModerateFastPath": true — REQUIRED when LEVEL is COMPLEX or when TWO OR MORE DISTINCT tool-backed steps are inseparable without an intermediate observation (implicit chains: web+write, read+write, analyze+report to file, reorganize folders with mkdir+mv). ALSO set **true** if you classify as MODERATE but the wording still hides a sequential multi-tool dependency (prefer raising to COMPLEX in that case).
 
 LEVELS — apply in order, first match wins:
@@ -203,18 +188,16 @@ MODERATE — needs exactly ONE tool:
 - Web search: "search for...", "look up...", "what does the web say about...", "busca..."
 - Real-world facts that may be outdated or require verification: current prices, exchange rates, weather, news, recent events, status of a person/company/project, sports results, release dates, any question about "now", "today", "currently", "latest", "recent"
 - Factual questions where being wrong would mislead the user: "who is the CEO of X", "what is the population of Y", "how much does Z cost", "what happened with W"
-- File operations: "read file...", "show contents of...", "list folder...", "create file..."
-- **CRITICAL — never SIMPLE:** If the user asks to create, overwrite, or save **new/original content** to a **concrete absolute file path** on this machine (e.g. \`/home/.../file.md\`, \`/Users/.../x.txt\`, \`C:\\\\...\\\\out.md\`), that is **always MODERATE** — it requires \`write_file\` (a side effect on disk), even when the content is creative (a story, poem, invented text). Never classify that as SIMPLE.
+- File operations: "read file...", "show contents of...", "list folder...", "create file..." — handled via MCP filesystem server tools when available
 - Sending or sharing an existing file to the user via Telegram: "mandame el archivo...", "compartí el reporte", "enviame lo que generaste", "send me the file..." — needs send_file
 - Single command execution
 - Personal statements to remember: "my name is...", "I am a...", "I live in...", "soy..."
   These are ALWAYS MODERATE (save to memory), never COMPLEX
 - Save or remember a single fact: "remember that...", "my name is Franco"
   Even if it contains "and": "I am a developer and I live in Copiapó" = MODERATE
-- Queries about CURRENT system state (RAM, disk, processes, OS version, CPU usage)
-  These REQUIRE execute_command — never classify as SIMPLE (model doesn't know real system state)
-- **Host-backed SaaS/account data on THIS machine:** "my repos on GitHub/GitLab…", "**my** org's …", kubectl/docker context for clusters **configured here**, listing resources visible to **their** authenticated CLIs → MODERATE + prefersHostTools true, omit suggestedTool web_search. The user is asking what's visible locally via tooling/session — NOT a generalized web crawl about the company's public site.
-- Call an HTTP/API endpoint when the user provides a URL → execute_command with curl
+- Queries about CURRENT system state (RAM, disk, processes, OS version, CPU usage) — handled via MCP tools when available
+- **Host-backed data on THIS machine:** "my repos on GitHub/GitLab…", "**my** org's …", kubectl/docker context for clusters **configured here**, listing resources visible to **their** authenticated tools → MODERATE + prefersHostTools true. The user is asking what's visible locally via tooling/session — NOT a generalized web crawl about the company's public site.
+- Call an HTTP/API endpoint when the user provides a URL → handled via MCP shell tools when available
 - Questions about what the user has pending, captured, or said before are MODERATE — they need RecallTool, not web search.
 
 COMPLEX — when there are 2 or more chained actions, OR when reorganizing/moving multiple files:
@@ -229,7 +212,7 @@ COMPLEX — when there are 2 or more chained actions, OR when reorganizing/movin
   "I am a developer and I live in X" = MODERATE (two facts to remember, not chained actions)
 
 CRITICAL RULES:
-- Creating or overwriting a file at a path the user specified = MODERATE (\`write_file\`), **never** SIMPLE — do not treat it as "just chat" because the model could output the text in prose without writing disk
+- Creating or overwriting a file at a path the user specified = MODERATE, **never** SIMPLE — handled via MCP filesystem tools when available
 - Decide from meaning: SIMPLE when no single tool-backed action fits; MODERATE when exactly one such action fits; COMPLEX when multiple chained actions fit
 - When truly in doubt with nothing that requires tools → SIMPLE
 - A greeting is ALWAYS SIMPLE, never MODERATE or COMPLEX
@@ -241,14 +224,14 @@ Examples:
 "hola" → {"level":"SIMPLE","reason":"greeting"}
 "hola cómo estás?" → {"level":"SIMPLE","reason":"greeting"}
 "cuánto es 15% de 200?" → {"level":"SIMPLE","reason":"math calculation"}
-"what is the Atacama Desert?" → {"level":"MODERATE","reason":"factual question requiring web search","suggestedTool":"web_search"}
+"what is the Atacama Desert?" → {"level":"MODERATE","reason":"factual question — uses available MCP tools when connected"}
 "search for AI news" → {"level":"MODERATE","reason":"single web search"}
 "list my Downloads folder" → {"level":"MODERATE","reason":"single file operation"}
 "remember that my name is X" → {"level":"MODERATE","reason":"single remember action"}
 "I am a developer and I live in Y" → {"level":"MODERATE","reason":"personal statement with facts to remember, not chained actions"}
-"how much free RAM do I have?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
-"what OS version am I on?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
-"how much free disk space is there?" → {"level":"MODERATE","reason":"system state query requiring execute_command"}
+"how much free RAM do I have?" → {"level":"MODERATE","reason":"system state query — uses MCP tools when available"}
+"what OS version am I on?" → {"level":"MODERATE","reason":"system state query — uses MCP tools when available"}
+"how much free disk space is there?" → {"level":"MODERATE","reason":"system state query — uses MCP tools when available"}
 "call https://api.example.com/users/123" → {"level":"MODERATE","reason":"single curl API call"}
 "send me the file report.docx from Downloads" → {"level":"MODERATE","reason":"send_file tool"}
 "share what you generated" → {"level":"MODERATE","reason":"send_file tool"}
@@ -262,7 +245,7 @@ Examples:
 "help with my daily routine" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
 "show my repositories" → {"level":"MODERATE","reason":"host-authenticated repos via CLI/tools on machine","prefersHostTools":true}
 "list my GitHub repos" → {"level":"MODERATE","reason":"repos visible via host Git/GitHub tooling","prefersHostTools":true}
-"create the file /tmp/story.md with a short story" → {"level":"MODERATE","reason":"create file at concrete path requires write_file"}
+"create the file /tmp/story.md with a short story" → {"level":"MODERATE","reason":"file creation via MCP tools when available"}
 "please write a README to /tmp/readme-test.md with install steps" → {"level":"MODERATE","reason":"persist new content at absolute path"}
 
 ${this.buildDelegationCatalogSection(agents)}
@@ -270,7 +253,7 @@ ${this.buildDelegationCatalogSection(agents)}
 HOST_SIGNAL has_image_for_turn: ${hasImageContext ? 'true' : 'false'}
 
 OUTPUT — one JSON object only (no markdown, no prose):
-{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"suggestedTool":"optional web_search","prefersHostTools": optional true|false,"suppressSimpleModerateFastPath":true}
+{"level":"SIMPLE"|"MODERATE"|"COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"why this catalog entry fits"},"prefersHostTools": optional true|false,"suppressSimpleModerateFastPath":true}
 
 delegationHint rules (semantic — use catalog text, do not match on surface keywords alone):
 - When HOST_SIGNAL has_image_for_turn is false: delegationHint is OPTIONAL. Include it only when a catalog agent is materially better than plain chat for this request.
@@ -327,8 +310,8 @@ ONLY JSON. NOTHING ELSE.`;
     }
 
     const retrySystemPrompt = `Return ONLY valid JSON with one object:
-{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"suggestedTool":"optional web_search","prefersHostTools":optional,"suppressSimpleModerateFastPath":optional}
-Keys suggestedTool/prefersHostTools/suppressSimpleModerateFastPath may be omitted. Use suggestedTool web_search only when appropriate. When prefersHostTools is true, never emit suggestedTool web_search.
+{"level":"SIMPLE|MODERATE|COMPLEX","reason":"short reason","delegationHint":{"agentId":"optional","reason":"optional"},"prefersHostTools":optional,"suppressSimpleModerateFastPath":optional}
+Keys prefersHostTools/suppressSimpleModerateFastPath may be omitted. Tools come from MCP servers when available.
 No markdown, no prose.`;
     const retryResponse = await this.provider.complete({
       messages: [{ role: 'system', content: retrySystemPrompt }, ...messages],

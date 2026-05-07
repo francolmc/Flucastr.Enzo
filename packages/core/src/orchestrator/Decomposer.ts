@@ -20,8 +20,16 @@ export class Decomposer {
     this.provider = provider;
   }
 
-  async decompose(message: string, availableTools: string[], history?: Message[]): Promise<DecompositionResult> {
+  async decompose(message: string, availableTools: string[], history?: Message[], preferredMCPs?: string[]): Promise<DecompositionResult> {
     const toolsList = availableTools.join(', ');
+    
+    let preferredMcpSection = '';
+    if (preferredMCPs && preferredMCPs.length > 0) {
+      preferredMcpSection = `\n\nPREFERRED MCPs (use these first for this task):
+${preferredMCPs.join(', ')}
+When these MCPs can accomplish the task, use them instead of generic tools like web_search, execute_command, or write_file.`;
+    }
+
     const hasPdfMcpTools = availableTools.some(
       (toolName) =>
         toolName.startsWith('mcp_') &&
@@ -44,7 +52,7 @@ export class Decomposer {
     const systemPrompt = `You are a task decomposer. Break the task into the MINIMUM number of sequential steps.
 Each step must be ONE single action using ONE tool.
 
-Available tools: ${toolsList}
+Available tools: ${toolsList}${preferredMcpSection}
 
 TOOL SELECTION RULES:
 - web_search: search the internet for information
@@ -145,12 +153,19 @@ ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this bloc
 
       const parsed = JSON.parse(jsonMatch);
 
-      if (!parsed.steps || !Array.isArray(parsed.steps)) {
+      // Si el modelo retornó un array directamente, envolverlo en { steps: ... }
+      let steps: Subtask[];
+      if (Array.isArray(parsed)) {
+        console.log('[Decomposer] Model returned array directly, wrapping in steps object');
+        steps = parsed;
+      } else if (parsed.steps && Array.isArray(parsed.steps)) {
+        steps = parsed.steps;
+      } else {
         console.warn('[Decomposer] Invalid steps array, using single-step fallback');
         return this.singleStepFallback(message);
       }
 
-      const normalizedSteps = this.rewritePdfReadStepsToMcp(message, parsed.steps, availableTools);
+      const normalizedSteps = this.rewritePdfReadStepsToMcp(message, steps, availableTools);
       const sanitized = this.stripInvalidExecuteCommandSteps(normalizedSteps);
       if (sanitized.length === 0) {
         console.warn('[Decomposer] All steps removed (placeholders or invalid shell) — returning empty plan');
@@ -173,8 +188,20 @@ ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this bloc
 
   // Extrae el primer JSON object balanceado de un string (stack-based, maneja anidamiento)
   private extractFirstJson(text: string): string | null {
-    const start = text.indexOf('{');
-    if (start === -1) return null;
+    // Try to find object first
+    let start = text.indexOf('{');
+    let isArray = false;
+    
+    // If no object found, try array
+    if (start === -1) {
+      start = text.indexOf('[');
+      if (start === -1) return null;
+      isArray = true;
+    }
+    
+    const openChar = isArray ? '[' : '{';
+    const closeChar = isArray ? ']' : '}';
+    
     let depth = 0;
     let inString = false;
     let escape = false;
@@ -184,8 +211,8 @@ ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this bloc
       if (ch === '\\' && inString) { escape = true; continue; }
       if (ch === '"') { inString = !inString; continue; }
       if (inString) continue;
-      if (ch === '{') depth++;
-      else if (ch === '}') {
+      if (ch === openChar) depth++;
+      else if (ch === closeChar) {
         depth--;
         if (depth === 0) return text.slice(start, i + 1);
       }
