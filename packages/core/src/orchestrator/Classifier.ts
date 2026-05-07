@@ -16,6 +16,7 @@ import {
   ComplexityLevel,
 } from './types.js';
 import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { decisionLogger, type DecisionPhase } from '../logging/DecisionLogger.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
   console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
@@ -73,22 +74,45 @@ export class Classifier {
   async classify(
     message: string,
     history: Message[],
-    options?: ClassifyOptions
+    options?: ClassifyOptions & { requestId?: string; userId?: string }
   ): Promise<ClassificationResult> {
     const normalizedMessage = message.trim();
     const llmAlways = process.env.ENZO_CLASSIFIER_LLM_ALWAYS === 'true';
     const agents = options?.availableAgents ?? [];
+    const requestId = options?.requestId || 'unknown';
+    const userId = options?.userId || 'unknown';
 
     const systemPrompt = this.buildClassifierSystemPrompt(agents, options?.hasImageContext ?? false);
     const messages: Message[] = [...history, { role: 'user', content: message }];
 
+    let result: ClassificationResult;
     if (llmAlways) {
       console.log('[Classifier] ENZO_CLASSIFIER_LLM_ALWAYS — classify via LLM');
-      return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
+      result = await this.runLlmClassification(systemPrompt, messages, normalizedMessage, true, agents);
+    } else {
+      result = await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
     }
 
-    // Classification via LLM - handles all cases including tool selection from MCPs
-    return await this.runLlmClassification(systemPrompt, messages, normalizedMessage, false, agents);
+    decisionLogger.logDecision({
+      requestId,
+      userId,
+      phase: 'classification',
+      decision: {
+        level: result.level,
+        reason: result.reason,
+        classifierBranch: result.classifierBranch,
+        prefersHostTools: result.prefersHostTools,
+        suppressSimpleModerateFastPath: result.suppressSimpleModerateFastPath,
+        delegationHint: result.delegationHint,
+      },
+      reasoning: result.reason,
+      alternatives: ['SIMPLE', 'MODERATE', 'COMPLEX', 'AGENT'],
+      metadata: {
+        classifierBranch: result.classifierBranch,
+      },
+    });
+
+    return result;
   }
 
   private normalizeClassifierLlmOptionalFields(

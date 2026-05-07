@@ -3,6 +3,7 @@ import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { LoadedSkill } from '../skills/SkillLoader.js';
 import { foldDiacritics } from '../utils/foldDiacritics.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { decisionLogger } from '../logging/DecisionLogger.js';
 
 export interface RelevantSkill {
   id: string
@@ -16,6 +17,8 @@ export type SkillResolveOptions = {
   /** When ENZO_SKILLS_LLM_SELECTION is true (default), used together with withTimeout for LLM-based skill selection. Set to false for heuristic-only selection. */
   llm?: LLMProvider;
   withTimeout?: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  requestId?: string;
+  userId?: string;
 };
 
 /** Merge parent message resolution with subtask resolution (max score wins per id), capped. */
@@ -99,6 +102,19 @@ export class SkillResolver {
       if (process.env.ENZO_DEBUG === 'true') {
         console.log('[SkillResolver] LLM selected skills:', llmSelected.map((s) => s.id).join(', '))
       }
+      if (options?.requestId && options?.userId) {
+        decisionLogger.logDecision({
+          requestId: options.requestId,
+          userId: options.userId,
+          phase: 'skill_resolution',
+          decision: {
+            considered: scored.slice(0, 10).map(s => s.name),
+            selected: llmSelected.map(s => s.name),
+            method: 'llm_selection',
+          },
+          reasoning: `Selected ${llmSelected.length} skills via LLM`,
+        });
+      }
       return llmSelected
     }
 
@@ -108,6 +124,20 @@ export class SkillResolver {
 
     if (process.env.ENZO_DEBUG === 'true') {
       console.log('[SkillResolver] Using heuristic fallback:', fallbackResult.map((s) => s.id).join(', '))
+    }
+
+    if (options?.requestId && options?.userId) {
+      decisionLogger.logDecision({
+        requestId: options.requestId,
+        userId: options.userId,
+        phase: 'skill_resolution',
+        decision: {
+          considered: scored.slice(0, 10).map(s => s.name),
+          selected: fallbackResult.map(s => s.name),
+          method: 'heuristic_fallback',
+        },
+        reasoning: `Selected ${fallbackResult.length} skills via heuristic`,
+      });
     }
 
     return fallbackResult

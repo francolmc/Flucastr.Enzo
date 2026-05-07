@@ -18,6 +18,18 @@ import type {
   SynthesisResult,
   Memory,
   ApiError,
+  UserPreferences,
+  UserPreferencesResponse,
+  ProfilesResponse,
+  DecisionsResponse,
+  DecisionSummary,
+  UserDecisionsResponse,
+  DecisionsStats,
+  LessonSummary,
+  LessonDetails,
+  UserLessonsResponse,
+  TaskLessonsResponse,
+  LessonStats,
 } from './types.js';
 
 export interface ClientConfig {
@@ -241,6 +253,123 @@ export class EnzoApiClient {
         `/api/memory/${userId}${params}`
       );
       return response.memories;
+    },
+  };
+
+  // ========== PREFERENCES ==========
+  preferences = {
+    get: async (userId: string): Promise<UserPreferencesResponse> => {
+      return this.request<UserPreferencesResponse>('GET', `/api/config/preferences/${userId}`);
+    },
+
+    update: async (userId: string, updates: Partial<UserPreferences>): Promise<UserPreferencesResponse> => {
+      return this.request<UserPreferencesResponse>('PATCH', `/api/config/preferences/${userId}`, updates);
+    },
+
+    replace: async (userId: string, preferences: UserPreferences): Promise<UserPreferencesResponse> => {
+      return this.request<UserPreferencesResponse>('PUT', `/api/config/preferences/${userId}`, preferences);
+    },
+
+    setProfile: async (userId: string, profile: 'silent' | 'informative' | 'control'): Promise<UserPreferencesResponse> => {
+      return this.request<UserPreferencesResponse>(
+        'POST',
+        `/api/config/preferences/${userId}/profile/${profile}`
+      );
+    },
+
+    getProfiles: async (): Promise<ProfilesResponse> => {
+      return this.request<ProfilesResponse>('GET', '/api/config/preferences/profiles');
+    },
+
+    getGlobal: async (): Promise<{ preferences: UserPreferences }> => {
+      return this.request<{ preferences: UserPreferences }>('GET', '/api/config/preferences');
+    },
+
+    setGlobal: async (preferences: Partial<UserPreferences>): Promise<{ preferences: UserPreferences }> => {
+      return this.request<{ preferences: UserPreferences }>('PUT', '/api/config/preferences', preferences);
+    },
+  };
+
+  // ========== DECISIONS ==========
+  decisions = {
+    getForRequest: async (requestId: string): Promise<DecisionsResponse> => {
+      return this.request<DecisionsResponse>('GET', `/api/decisions/${requestId}`);
+    },
+
+    getSummary: async (requestId: string): Promise<DecisionSummary> => {
+      return this.request<DecisionSummary>('GET', `/api/decisions/${requestId}/summary`);
+    },
+
+    getForUser: async (userId: string, limit?: number): Promise<UserDecisionsResponse> => {
+      const params = limit ? `?limit=${limit}` : '';
+      return this.request<UserDecisionsResponse>('GET', `/api/decisions/user/${userId}${params}`);
+    },
+
+    getRecent: async (limit?: number): Promise<{ count: number; decisions: any[] }> => {
+      const params = limit ? `?limit=${limit}` : '';
+      return this.request<{ count: number; decisions: any[] }>('GET', `/api/decisions/recent${params}`);
+    },
+
+    getStats: async (): Promise<DecisionsStats> => {
+      return this.request<DecisionsStats>('GET', '/api/decisions/stats');
+    },
+
+    clearUser: async (userId: string): Promise<{ message: string }> => {
+      return this.request<{ message: string }>('DELETE', `/api/decisions/user/${userId}`);
+    },
+  };
+
+  // ========== LESSONS / LEARNING ==========
+  lessons = {
+    getForUser: async (userId: string): Promise<UserLessonsResponse> => {
+      return this.request<UserLessonsResponse>('GET', `/api/lessons/${userId}`);
+    },
+
+    getForTask: async (userId: string, taskPattern: string, limit?: number): Promise<TaskLessonsResponse> => {
+      const params = limit ? `?limit=${limit}` : '';
+      return this.request<TaskLessonsResponse>('GET', `/api/lessons/${userId}/task/${taskPattern}${params}`);
+    },
+
+    getDetails: async (lessonId: string): Promise<LessonDetails> => {
+      return this.request<LessonDetails>('GET', `/api/lessons/detail/${lessonId}`);
+    },
+
+    recordSuccess: async (
+      userId: string,
+      taskPattern: string,
+      complexity: string,
+      strategy: any
+    ): Promise<{ success: boolean; lesson: any }> => {
+      return this.request<{ success: boolean; lesson: any }>('POST', `/api/lessons/${userId}`, {
+        taskPattern,
+        complexity,
+        strategy,
+      });
+    },
+
+    recordFailure: async (
+      userId: string,
+      taskPattern: string,
+      reason: string,
+      whatWentWrong?: string
+    ): Promise<{ success: boolean; lesson: any }> => {
+      return this.request<{ success: boolean; lesson: any }>('POST', `/api/lessons/${userId}/failure`, {
+        taskPattern,
+        reason,
+        whatWentWrong,
+      });
+    },
+
+    delete: async (lessonId: string): Promise<{ success: boolean; message: string }> => {
+      return this.request<{ success: boolean; message: string }>('DELETE', `/api/lessons/${lessonId}`);
+    },
+
+    clearUser: async (userId: string): Promise<{ success: boolean; message: string }> => {
+      return this.request<{ success: boolean; message: string }>('DELETE', `/api/lessons/user/${userId}`);
+    },
+
+    getStats: async (): Promise<LessonStats> => {
+      return this.request<LessonStats>('GET', '/api/lessons/stats');
     },
   };
 }

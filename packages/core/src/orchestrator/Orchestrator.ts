@@ -29,6 +29,14 @@ import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 import { executeOrchestratorProcess, type OrchestratorProcessBindings } from './OrchestratorProcess.js';
 import type { AgentRouterContract } from '../agents/AgentRouter.js';
 import { instantiateProviderForAgent } from './instantiateProviderForAgent.js';
+import {
+  UserPreferences,
+  DEFAULT_PREFERENCES,
+  PROFILE_PRESETS,
+  mergePreferences,
+  validatePreferences,
+} from '../config/UserPreferences.js';
+import { LessonLearner, type Lesson, type LessonSummary, type LessonDetails } from '../memory/LessonLearner.js';
 
 export class Orchestrator {
   private classifier: Classifier;
@@ -46,6 +54,9 @@ export class Orchestrator {
   private availableSkills: Skill[];
   private availableAgents: AgentConfig[];
   private agentRouter?: AgentRouterContract;
+  private userPreferences: Map<string, UserPreferences> = new Map();
+  private globalPreferences: UserPreferences = DEFAULT_PREFERENCES;
+  private lessonLearner: LessonLearner = new LessonLearner();
 
   constructor(
     ollamaProvider: OllamaProvider,
@@ -123,6 +134,167 @@ export class Orchestrator {
 
   getMemoryExtractor(): MemoryExtractor {
     return this.memoryExtractor;
+  }
+
+  setGlobalPreferences(prefs: Partial<UserPreferences>): void {
+    this.globalPreferences = mergePreferences(DEFAULT_PREFERENCES, prefs);
+    console.log('[Orchestrator] Global preferences updated:', JSON.stringify(this.globalPreferences, null, 2));
+  }
+
+  getGlobalPreferences(): UserPreferences {
+    return this.globalPreferences;
+  }
+
+  getUserPreferences(userId: string): UserPreferences {
+    const userPrefs = this.userPreferences.get(userId);
+    if (userPrefs) {
+      return userPrefs;
+    }
+
+    if (this.configService) {
+      const savedPrefs = this.configService.getUserPreferences(userId);
+      if (savedPrefs && validatePreferences(savedPrefs)) {
+        this.userPreferences.set(userId, savedPrefs);
+        return savedPrefs;
+      }
+    }
+
+    return this.globalPreferences;
+  }
+
+  async setUserPreferences(
+    userId: string,
+    updates: Partial<UserPreferences>,
+    mode: 'merge' | 'replace' = 'merge'
+  ): Promise<UserPreferences> {
+    let newPrefs: UserPreferences;
+
+    if (mode === 'replace') {
+      newPrefs = mergePreferences(DEFAULT_PREFERENCES, updates);
+    } else {
+      const current = this.getUserPreferences(userId);
+      newPrefs = mergePreferences(current, updates);
+    }
+
+    this.userPreferences.set(userId, newPrefs);
+
+    if (this.configService) {
+      await this.configService.saveUserPreferences(userId, newPrefs);
+    }
+
+    console.log(`[Orchestrator] Updated preferences for user ${userId}:`, JSON.stringify(newPrefs, null, 2));
+    return newPrefs;
+  }
+
+  setUserProfile(userId: string, profile: 'silent' | 'informative' | 'control'): UserPreferences {
+    const profilePrefs = PROFILE_PRESETS[profile];
+    if (!profilePrefs) {
+      console.warn(`[Orchestrator] Unknown profile: ${profile}`);
+      return this.getUserPreferences(userId);
+    }
+
+    this.userPreferences.set(userId, profilePrefs);
+
+    if (this.configService) {
+      this.configService.saveUserPreferences(userId, profilePrefs).catch(err => {
+        console.warn('[Orchestrator] Failed to save profile preferences:', err);
+      });
+    }
+
+    console.log(`[Orchestrator] Set profile "${profile}" for user ${userId}`);
+    return profilePrefs;
+  }
+
+  shouldExplainClassification(userId: string): boolean {
+    return this.getUserPreferences(userId).verbosity.explainClassification;
+  }
+
+  shouldShowSkillsConsidered(userId: string): boolean {
+    return this.getUserPreferences(userId).verbosity.showSkillsConsidered;
+  }
+
+  shouldShowMCPsConsidered(userId: string): boolean {
+    return this.getUserPreferences(userId).verbosity.showMCPsConsidered;
+  }
+
+  shouldAnnounceDecomposition(userId: string): boolean {
+    return this.getUserPreferences(userId).verbosity.announceDecomposition;
+  }
+
+  shouldRequireConfirmation(userId: string, type: 'delegation' | 'complexDecomposition' | 'mcpCall'): boolean {
+    const prefs = this.getUserPreferences(userId).requireConfirmation;
+    switch (type) {
+      case 'delegation':
+        return prefs.beforeDelegation;
+      case 'complexDecomposition':
+        return prefs.beforeComplexDecomposition;
+      case 'mcpCall':
+        return prefs.beforeMCPCall;
+      default:
+        return false;
+    }
+  }
+
+  shouldPreferSkillsOverMCPs(userId: string): boolean {
+    return this.getUserPreferences(userId).execution.preferSkillsOverMCPs;
+  }
+
+  getMaxIterations(userId: string): number {
+    return this.getUserPreferences(userId).execution.maxIterations;
+  }
+
+  shouldEnableLearning(userId: string): boolean {
+    return this.getUserPreferences(userId).execution.enableLearning;
+  }
+
+  async recordLessonSuccess(
+    userId: string,
+    taskPattern: string,
+    complexity: string,
+    strategy: {
+      classification: string;
+      skillsUsed: string[];
+      mcpsUsed: string[];
+      decompositionSteps?: string[];
+      toolsUsed?: string[];
+    }
+  ): Promise<Lesson> {
+    return this.lessonLearner.recordSuccess(userId, taskPattern, complexity, strategy);
+  }
+
+  async recordLessonFailure(
+    userId: string,
+    taskPattern: string,
+    failureInfo: {
+      reason: string;
+      whatWentWrong: string;
+    }
+  ): Promise<Lesson> {
+    return this.lessonLearner.recordFailure(userId, taskPattern, failureInfo);
+  }
+
+  getLessonsForTask(userId: string, taskPattern: string): Promise<Lesson[]> {
+    return this.lessonLearner.getLessonsFor(userId, taskPattern);
+  }
+
+  getUserLessonsSummary(userId: string): LessonSummary[] {
+    return this.lessonLearner.getLessonsSummary(userId);
+  }
+
+  getLessonDetails(lessonId: string): LessonDetails | null {
+    return this.lessonLearner.getLessonDetails(lessonId);
+  }
+
+  deleteLesson(lessonId: string): Promise<boolean> {
+    return this.lessonLearner.deleteLesson(lessonId);
+  }
+
+  clearUserLessons(userId: string): void {
+    this.lessonLearner.clearUserLessons(userId);
+  }
+
+  getLessonStats() {
+    return this.lessonLearner.getStats();
   }
 
   async classify(

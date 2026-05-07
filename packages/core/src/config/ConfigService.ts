@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EncryptionService } from '../security/EncryptionService.js';
+import { UserPreferences, validatePreferences, DEFAULT_PREFERENCES } from './UserPreferences.js';
 
 export interface ProviderConfig {
   name: string;
@@ -224,6 +225,7 @@ export class ConfigService {
   private config: ModelsConfig;
   private configPath: string;
   private encryptionService: EncryptionService;
+  private userPreferencesMap: Map<string, UserPreferences> = new Map();
 
   constructor(encryptionService: EncryptionService, configPath?: string) {
     this.encryptionService = encryptionService;
@@ -783,5 +785,67 @@ export class ConfigService {
     delete copy.system.tavilyApiKeyEncrypted;
 
     return copy;
+  }
+
+  getUserPreferences(userId: string): UserPreferences | undefined {
+    return this.userPreferencesMap.get(userId);
+  }
+
+  async saveUserPreferences(userId: string, prefs: UserPreferences): Promise<void> {
+    if (!validatePreferences(prefs)) {
+      console.warn('[ConfigService] Invalid preferences, not saving:', prefs);
+      return;
+    }
+
+    this.userPreferencesMap.set(userId, prefs);
+
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (!fs.existsSync(userPrefsDir)) {
+        fs.mkdirSync(userPrefsDir, { recursive: true });
+      }
+      fs.writeFileSync(userPrefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
+      console.log(`[ConfigService] Saved preferences for user ${userId}`);
+    } catch (error) {
+      console.error(`[ConfigService] Failed to save user preferences for ${userId}:`, error);
+    }
+  }
+
+  loadUserPreferences(userId: string): UserPreferences | undefined {
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (fs.existsSync(userPrefsPath)) {
+        const content = fs.readFileSync(userPrefsPath, 'utf-8');
+        const prefs = JSON.parse(content);
+        if (validatePreferences(prefs)) {
+          this.userPreferencesMap.set(userId, prefs);
+          return prefs;
+        }
+      }
+    } catch (error) {
+      console.warn(`[ConfigService] Failed to load user preferences for ${userId}:`, error);
+    }
+
+    return undefined;
+  }
+
+  clearUserPreferences(userId: string): void {
+    this.userPreferencesMap.delete(userId);
+
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (fs.existsSync(userPrefsPath)) {
+        fs.unlinkSync(userPrefsPath);
+        console.log(`[ConfigService] Cleared preferences for user ${userId}`);
+      }
+    } catch (error) {
+      console.warn(`[ConfigService] Failed to clear user preferences for ${userId}:`, error);
+    }
   }
 }

@@ -356,7 +356,14 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
 
   const toolUsageRule = isModerate
-    ? `MODERATE ROUTING: If the user needs disk/shell, web search, memory, email, MCP, persisted calendar/agenda (**calendar**, with ISO timestamps), or any side effect on this host, respond with exactly ONE JSON tool call; "tool" MUST be one of: ${exactAllowlist}. If the message is only casual chat, a greeting, math, your identity, or conceptual talk with no need for tools, respond in plain text only (no JSON). Never invent tool names. Never claim an event/reminder was "scheduled" or "confirmed" unless this turn includes executed **calendar** JSON — prose alone does not write the web agenda.${persistToPathRequested ? ` The user named an absolute FILE path AND asked to CREATE/SAVE/WRITE content there → you MUST use write_file in this response (verbatim path + full content); do not claim success in prose alone.` : ''}`
+    ? `MODERATE TASK - TOOL REQUIRED: The classifier determined this is a MODERATE task which REQUIRES a tool. You MUST respond with a JSON tool call, NOT prose.
+
+The user's message requires an action on this host (files, commands, system info, memory, etc.) → use a tool from: ${exactAllowlist}
+
+If you need to read, write, list, or execute something → respond ONLY with JSON tool call:
+{"action":"tool","tool":"<tool_name>","input":{...}}
+
+Never respond with prose explaining what you would do — just DO it with the tool.${persistToPathRequested ? ` The user named an absolute FILE path AND asked to CREATE/SAVE/WRITE content there → you MUST use write_file in this response (verbatim path + full content).` : ''}`
     : persistToPathRequested
       ? `The user expects a REAL file written on disk at the path they gave. Respond with exactly ONE {"action":"tool","tool":"write_file","input":{"path":"…","content":"…"}} JSON (verbatim path + full body). Plain text claiming the file "was created/saved/already exists" without that JSON would be dishonest — if unsure, omit false claims or ask briefly; never pretend disk I/O ran.`
       : `If you can answer directly without tools, respond with plain text.`;
@@ -459,11 +466,36 @@ Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
 {"action":"tool","tool":"execute_command","input":{"command":"uname -a"}}
 {"action":"tool","tool":"web_search","input":{"query":"search terms"}}
 {"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
-{"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\\n\\nFull file body the user asked for — never empty unless they asked for an empty file."}}
+{"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\n\nFull file body the user asked for — never empty unless they asked for an empty file."}}
 {"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
 {"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
 {"action":"tool","tool":"email_unread_count","input":{}}
-{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":24}}
+{"action":"tool","tool","read_email","input":{"unread_only":true,"limit":24}}
+
+MCP TOOL EXAMPLES (use these exact format for MCP tools — copy the EXACT tool name from AVAILABLE TOOLS above):
+${(() => {
+  const mcpTools = mergedToolDefs.filter(t => t.name.startsWith('mcp_'));
+  const exampleMcpTools = mcpTools.slice(0, 5);
+  if (exampleMcpTools.length === 0) return 'No MCP tools available.';
+  return exampleMcpTools.map(t => {
+    if (t.name.includes('read_file') || t.name.includes('read_text')) {
+      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/example.txt"}}`;
+    }
+    if (t.name.includes('list_directory') || t.name.includes('directory')) {
+      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/Downloads"}}`;
+    }
+    if (t.name.includes('write_file') || t.name.includes('create')) {
+      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/newfile.txt","content":"file content"}}`;
+    }
+    if (t.name.includes('get_file_info') || t.name.includes('file_info')) {
+      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/example.txt"}}`;
+    }
+    if (t.name.includes('search_files')) {
+      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}","pattern":"*.txt"}}`;
+    }
+    return `{"action":"tool","tool":"${t.name}","input":{}}`;
+  }).join('\n');
+})()}
 
 ${toolUsageRule}
 

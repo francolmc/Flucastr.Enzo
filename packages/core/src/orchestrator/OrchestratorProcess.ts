@@ -118,6 +118,8 @@ export async function executeOrchestratorProcess(
     : await new Classifier(runtimeProvider).classify(input.message, classifierMessages, {
         availableAgents: agents,
         hasImageContext: hasImagePayload,
+        requestId: input.requestId,
+        userId: input.userId,
       });
   const classification = applyClassificationFloors(rawClassification, {
     hasImageContext: hasImagePayload,

@@ -428,8 +428,8 @@ No markdown. No prose.`;
       );
     }
 
-    if (
-      (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
+if (
+      fastPathLevel === ComplexityLevel.SIMPLE &&
       (!hasMultiStepSkillRequirement ||
         calendarListBypassesMultiStepBlock ||
         skillSingleStepBypassMultiTool) &&
@@ -461,6 +461,10 @@ No markdown. No prose.`;
         capabilityResolver: this.capabilityResolver,
         usageAccumulator,
       });
+    }
+
+    if (fastPathLevel === ComplexityLevel.MODERATE) {
+      this.log.info('[AmplifierLoop] MODERATE level - going through full ReAct loop for tool execution');
     }
 
     if (skipFastPathForMultiTool && (input.classifiedLevel === ComplexityLevel.SIMPLE || input.classifiedLevel === ComplexityLevel.MODERATE)) {
@@ -523,120 +527,43 @@ No markdown. No prose.`;
         const stepsBeforeSubtask = steps.length;
         this.log.info(`[AmplifierLoop] Subtask ${subtask.id}/${subtasks.length}: ${subtask.tool} — ${subtask.description}`);
 
-        // DIRECT MCP EXECUTION: Si el decompose asignó un tool MCP específico, ejecutarlo directamente
-        // sin esperar a que el modelo genere JSON - el modelo no genera tool calls correctamente.
-        if (subtask.tool.startsWith('mcp_') && this.mcpRegistry) {
-          this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct MCP execution: "${subtask.tool}"`);
+        // ============================================================
+        // GENERIC SUBTASK EXECUTOR
+        // ============================================================
+        // Try to find and execute the tool directly, regardless of its type or name.
+        // This replaces all previous tool-specific execution blocks.
+        
+        const tool = findToolByName(subtask.tool, {
+          executableTools: this.executableTools,
+          mcpRegistry: this.mcpRegistry,
+        });
+
+        if (tool && subtask.input) {
+          this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution: "${subtask.tool}" (${tool.kind})`);
           
           try {
-            // Ejecutar la herramienta MCP directamente
-            let mcpInput = subtask.input || {};
+            const resolvedInput = resolveSubtaskInput(subtask, accumulatedContext);
             
-            // Lógica especial para write_file con dependencias: necesita path y content
-            if (subtask.tool.includes('write_file') && subtask.dependsOn !== null && accumulatedContext) {
-              const originalMsg = input.originalMessage ?? input.message;
-              let filePath = extractFilePath(originalMsg) ?? 'output.md';
-              
-              // Si input es un string que parece un path, usarlo
-              if (typeof mcpInput === 'string' && mcpInput.includes('/')) {
-                filePath = mcpInput;
-              } else if (typeof mcpInput === 'string') {
-                // Intentar extraer el path del string
-                const pathMatch = mcpInput.match(/([\/\w\-\.]+\.(?:md|txt|json|csv|log))/);
-                if (pathMatch) {
-                  filePath = pathMatch[1];
-                }
-              }
-              
-              // Filtrar errores del contexto acumulado
-              let contentToWrite = accumulatedContext.trim();
-              
-              // Si el contenido solo contiene errores, usar un mensaje apropiado
-              if (contentToWrite.includes('ERROR') || contentToWrite.includes('MCP error')) {
-                contentToWrite = `# ${originalMsg}\n\nNo se pudo completar la investigación debido a errores en las herramientas.\n\nPor favor, intenta nuevamente o usa otro método de investigación.`;
-                this.log.warn(`[AmplifierLoop] Accumulated context contains errors, using fallback content for write_file`);
-              }
-              
-              // Construir el input completo para write_file
-              mcpInput = {
-                path: filePath,
-                content: contentToWrite
-              };
-              this.log.info(`[AmplifierLoop] Constructed write_file input with path="${filePath}" and content from previous steps`);
+            // Validate input before execution
+            const validationError = validateToolInput(
+              subtask.tool,
+              resolvedInput,
+              this.executableTools,
+              this.mcpRegistry
+            );
+            if (validationError) {
+              throw new Error(validationError);
             }
-            // Si input es un string, intentar parsearlo como JSON o construir un objeto
-            else if (typeof mcpInput === 'string') {
-              try {
-                // Intentar parsear como JSON
-                mcpInput = JSON.parse(mcpInput);
-              } catch {
-                // Si falla, construir objeto basado en el schema del MCP
-                const schema = this.mcpRegistry.getMCPToolSchema(subtask.tool);
-                if (schema?.properties) {
-                  // Obtener el primer campo requerido o el primer campo disponible
-                  const requiredFields = schema.required || [];
-                  const firstField = requiredFields[0] || Object.keys(schema.properties)[0];
-                  
-                  if (firstField) {
-                    mcpInput = { [firstField]: mcpInput };
-                    this.log.info(`[AmplifierLoop] Converted string input to object using field "${firstField}"`);
-                  } else {
-                    // Fallback: usar "query" como campo genérico
-                    mcpInput = { query: mcpInput };
-                  }
-                } else {
-                  // Sin schema disponible, usar "query" como fallback
-                  mcpInput = { query: mcpInput };
-                }
-              }
-            }
+
+            const result = await tool.execute(resolvedInput);
             
-            // Pass task context for tools that require it
-            const taskContext = {
-              description: subtask.description || input.message
-            };
+            this.log.info(
+              `[AmplifierLoop] Subtask ${subtask.id} - ${subtask.tool} result:`,
+              result.output.substring(0, 200)
+            );
             
-            let mcpResult: string;
-            
-            // Try with task context first
-            try {
-              mcpResult = await this.mcpRegistry.callTool(subtask.tool, mcpInput, taskContext);
-            } catch (firstErr) {
-              const errMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-              
-              // If it failed because of task augmentation, generate simulated content
-              if (errMsg.includes('task augmentation') || errMsg.includes('taskSupport')) {
-                this.log.warn(`[AmplifierLoop] MCP requires tasks but server doesn't support it, generating simulated content`);
-                
-                // Generate simulated research content based on the topic
-                const topic = (mcpInput as any).topic || (mcpInput as any).query || subtask.description || 'the requested topic';
-                mcpResult = `# Simulated Research Results: ${topic}
-
-## Overview
-This is simulated content generated because the MCP server doesn't support the full task protocol.
-
-## Key Findings
-1. **Definition**: ${topic} is an important area of study with significant implications
-2. **Current Applications**: Various real-world applications are being developed and deployed
-3. **Future Trends**: Continued growth and innovation expected in this field
-
-## Recommendations
-- Further research recommended in specific sub-areas
-- Consider practical applications and implementations
-- Monitor developments in related fields
-
----
-*Note: This is simulated/test content. For real research, install a proper search MCP (Brave Search, Exa, etc.)*`;
-
-                this.log.info(`[AmplifierLoop] Generated ${mcpResult.length} chars of simulated content`);
-              } else {
-                throw firstErr;
-              }
-            }
-            
-            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - MCP result:`, mcpResult.substring(0, 200));
             toolsUsed.add(subtask.tool);
-            accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${mcpResult}`;
+            accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${result.output}`;
             
             steps.push({
               iteration,
@@ -644,365 +571,30 @@ This is simulated content generated because the MCP server doesn't support the f
               requestId,
               action: 'tool',
               target: subtask.tool,
-              input: JSON.stringify(mcpInput),
-              output: mcpResult,
-              status: 'ok',
+              input: JSON.stringify(resolvedInput),
+              output: result.output,
+              status: result.success ? 'ok' : 'error',
               modelUsed: this.baseProvider.model,
             });
             
-            continue;
+            continue; // Next subtask
           } catch (err) {
-            this.log.error(`[AmplifierLoop] Direct MCP execution failed:`, err);
+            this.log.error(`[AmplifierLoop] Direct execution failed for ${subtask.tool}:`, err);
             accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ERROR - ${err}`;
-          }
-          continue;
-        }
-
-        // DIRECT EXECUTION: Si la subtarea tiene dependencia Y una tool definida por el Decomposer,
-        // ejecutar directamente sin loop ReAct — el modelo solo genera el contenido.
-        // write_file con dependsOn: null no entra aquí: el bucle ReAct de más abajo ejecuta la tool en contexto.
-        if (subtask.dependsOn !== null && subtask.tool !== 'none' && accumulatedContext) {
-          const tool = this.executableTools.find(t => t.name === subtask.tool);
-
-          if (tool) {
-            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution of "${subtask.tool}"`);
-
-            // Para write_file (tras otro paso): el modelo genera el contenido, nosotros ejecutamos la tool
-            if (subtask.tool === 'write_file') {
-              const originalMsg = input.originalMessage ?? input.message;
-              let filePath = extractFilePath(originalMsg) ?? 'output.md';
-              const ext = path.extname(filePath).toLowerCase();
-              const textLikeExtensions = new Set(['.txt', '.md', '.json', '.csv', '.log', '.ts', '.js', '.py']);
-              if (ext && !textLikeExtensions.has(ext)) {
-                const parsed = path.parse(filePath);
-                filePath = path.join(parsed.dir || '.', `${parsed.name}_summary.md`);
-                this.log.warn(
-                  `[AmplifierLoop] write_file target "${parsed.base}" is not text-friendly. Redirecting summary output to "${filePath}"`
-                );
-              }
-
-              this.log.info(`[AmplifierLoop] Target file path: ${filePath}`);
-
-              // Pedir al modelo que genere SOLO el contenido del archivo
-              const contentPrompt = `Based on the following information, write a concise markdown summary.
-Output ONLY the markdown content — no explanations, no preamble, no code blocks.
-Start directly with the content.
-
-INFORMATION:
-${accumulatedContext}`;
-
-              let fileContent = '';
-              try {
-                const contentResponse = await this.withTimeout(
-                  this.baseProvider.complete({
-                    messages: [
-                      { role: 'system', content: contentPrompt },
-                      { role: 'user', content: `Write the content for ${filePath}` },
-                    ],
-                    temperature: 0.5,
-                    maxTokens: 1024,
-                  }),
-                  180_000,
-                  'write_file content generation'
-                );
-                fileContent = contentResponse.content?.trim() ?? '';
-              } catch (err) {
-                this.log.error('[AmplifierLoop] Failed to generate file content:', err);
-                fileContent = accumulatedContext; // Fallback: usar contexto crudo
-              }
-
-              // Ejecutar write_file directamente
-              try {
-                const directInput = { path: filePath, content: fileContent };
-                const validationError = validateToolInput('write_file', directInput, this.executableTools, this.mcpRegistry);
-                if (validationError) {
-                  throw new Error(validationError);
-                }
-                const result = await tool.execute(directInput);
-                const output = result.success
-                  ? `File created successfully at ${filePath}`
-                  : `Error: ${result.error}`;
-
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - write_file result:`, output);
-                toolsUsed.add('write_file');
-                accumulatedContext += `\n\nStep ${subtask.id} (write_file): ${output}\nFile path: ${filePath}`;
-
-                steps.push({
-                  iteration,
-                  type: 'act',
-                  requestId,
-                  action: 'tool',
-                  target: 'write_file',
-                  input: JSON.stringify({ path: filePath }),
-                  output,
-                  status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-                  modelUsed: this.baseProvider.model,
-                });
-              } catch (err) {
-                this.log.error('[AmplifierLoop] write_file execution failed:', err);
-              }
-
-              continue; // Siguiente subtarea
-            }
-
-            // Para execute_command con dependencia: varios modos según lo que pidió el usuario
-            else if (subtask.tool === 'execute_command') {
-              const originalMsg = input.originalMessage ?? input.message;
-
-              // FAST PATH: si el Decomposer generó un comando shell concreto (mv, mkdir, cp...)
-              // simplemente ejecutarlo — no pasar por FileOrganizationService
-              const concreteShellPattern = /^(mv|mkdir|cp|rsync|ln|rm)\s/i;
-              if (concreteShellPattern.test(subtask.input.trim())) {
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Concrete shell command, running directly`);
-                let output = '';
-                try {
-                  const directInput = { command: subtask.input.trim() };
-                  const validationError = validateToolInput('execute_command', directInput, this.executableTools, this.mcpRegistry);
-                  if (validationError) {
-                    throw new Error(validationError);
-                  }
-                  const result = await tool.execute(directInput);
-                  const stdout = result.output ?? '';
-                  // For mv/mkdir commands stdout is empty on success — build a meaningful message
-                  if (result.success) {
-                    output = stdout.trim() || `success`;
-                  } else {
-                    output = `Error: ${result.error}`;
-                  }
-                } catch (err) {
-                  output = `Error: ${err}`;
-                }
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output.substring(0, 200));
-                toolsUsed.add('execute_command');
-                accumulatedContext += `\n\nStep ${subtask.id} (execute_command): ${output}`;
-                steps.push({
-                  iteration,
-                  type: 'act',
-                  requestId,
-                  action: 'tool',
-                  target: 'execute_command',
-                  input: JSON.stringify({ command: subtask.input.trim() }),
-                  output,
-                  status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-                  modelUsed: this.baseProvider.model,
-                });
-                continue;
-              }
-
-              // ORGANIZE PATH: FileOrganizationService
-              // Guard: skip if step 1 failed or returned no usable file list
-              const lsOutputLooksValid = accumulatedContext.trim().length > 0 &&
-                !accumulatedContext.toLowerCase().includes('no such file or directory') &&
-                !accumulatedContext.toLowerCase().startsWith('error:');
-
-              if (!lsOutputLooksValid) {
-                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - Skipping: step 1 produced no valid ls output`);
-                continue;
-              }
-
-              if (!this.fileOrgService) {
-                this.log.warn(
-                  `[AmplifierLoop] Subtask ${subtask.id} - Skipping organize path (file organization disabled)`
-                );
-                continue;
-              }
-
-              // Extract SOURCE directory from step 1's ls command, NOT from user message.
-              // The user message may contain the destination path, which would be wrong as source.
-              const step1 = subtasks.find(s => s.id === subtask.dependsOn);
-              const lsMatch = step1?.input?.match(/ls\s+"?(\/[^\s"]+)"?/);
-              const sourceDir = lsMatch?.[1] ?? extractTargetDir(originalMsg, input.history);
-
-              if (!sourceDir) {
-                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - Could not extract source directory`);
-                continue;
-              }
-
-              const files = this.fileOrgService.extractFilenames(accumulatedContext);
-
-              if (files.length === 0) {
-                this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - No files to organize`);
-                continue;
-              }
-
-              const namedFolder = this.fileOrgService.detectNamedFolder(originalMsg);
-
-              // Detect targeted move: message contains an explicit destination path that is different
-              // from the source (e.g., "move files from /Downloads to /Downloads/Clases")
-              const allPaths = (originalMsg.match(/(\/[^\s'"(),]+)/g) ?? [])
-                .map(p => p.replace(/[?!,;:.]+$/, '').replace(/\/$/, ''));
-              const destPath = allPaths
-                .filter(p => p !== sourceDir)
-                .sort((a, b) => b.length - a.length)[0] ?? null;
-              const isTargetedMove = destPath !== null && destPath.startsWith('/') && destPath !== sourceDir;
-
-              let shellCommand: string;
-              let output: string;
-              let groups: Record<string, string[]> = {};
-
-              if (namedFolder) {
-                // MODE 1: move everything into a single named folder within sourceDir
-                const destFolder = `${sourceDir}/${namedFolder}`;
-                shellCommand = this.fileOrgService.buildNamedFolderCommand(files, sourceDir, namedFolder);
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Move-to-named-folder: ${files.length} items → "${destFolder}"`);
-                try {
-                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
-                  if (validationError) {
-                    throw new Error(validationError);
-                  }
-                  const result = await tool.execute({ command: shellCommand });
-                  output = result.success
-                    ? `Moved ${files.filter(f => f !== namedFolder).length} item(s) to ${destFolder}`
-                    : `Error: ${result.error}`;
-                } catch (err) {
-                  output = `Error: ${err}`;
-                }
-              } else if (isTargetedMove && destPath) {
-                // MODE 2: targeted move — user specified an explicit destination directory
-                // Move only the files that exist in the ls output (skip existing subdirs matching destPath basename)
-                const destBasename = destPath.split('/').pop() ?? '';
-                const filesToMove = files
-                  .filter(f => f !== destBasename) // don't move the destination folder itself
-                  .map(f => `"${sourceDir}/${f.replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`)
-                  .join(' ');
-                shellCommand = filesToMove.length > 0
-                  ? `mkdir -p "${destPath}" && mv ${filesToMove} "${destPath}/"`
-                  : `mkdir -p "${destPath}"`;
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Targeted move: ${files.length} items → "${destPath}"`);
-                try {
-                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
-                  if (validationError) {
-                    throw new Error(validationError);
-                  }
-                  const result = await tool.execute({ command: shellCommand });
-                  output = result.success
-                    ? `Moved ${files.filter(f => f !== destBasename).length} item(s) to ${destPath}`
-                    : `Error: ${result.error}`;
-                } catch (err) {
-                  output = `Error: ${err}`;
-                }
-              } else {
-                // MODE 3: semantic categorization via LLM
-                const mapping = await this.fileOrgService.categorizeFiles(files);
-                const built = this.fileOrgService.buildSemanticOrganizeCommand(mapping, sourceDir);
-                shellCommand = built.command;
-                groups = built.groups;
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Organize (${files.length} files → ${Object.keys(groups).length} folders):`, shellCommand.substring(0, 400));
-                try {
-                  const validationError = validateToolInput('execute_command', { command: shellCommand }, this.executableTools, this.mcpRegistry);
-                  if (validationError) {
-                    throw new Error(validationError);
-                  }
-                  const result = await tool.execute({ command: shellCommand });
-                  const folderList = Object.keys(groups).join(', ');
-                  output = result.success
-                    ? `Organized ${files.length} items into ${Object.keys(groups).length} folders: ${folderList}`
-                    : `Error: ${result.error}`;
-                } catch (err) {
-                  output = `Error: ${err}`;
-                }
-              }
-
-              this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - result:`, output);
-              toolsUsed.add('execute_command');
-              accumulatedContext += `\n\nStep ${subtask.id} (execute_command): ${output}`;
-              steps.push({
-                iteration,
-                type: 'act',
-                requestId,
-                action: 'tool',
-                target: 'execute_command',
-                input: JSON.stringify({ command: shellCommand }),
-                output,
-                status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-                modelUsed: this.baseProvider.model,
-              });
-
-              continue; // Siguiente subtarea
-            }
-          }
-        }
-
-        // DIRECT EXECUTION for execute_command without dependsOn:
-        // Use the command from Decomposer directly — avoids ReAct loop hallucinating wrong paths
-        // Note: use == null (not ===) to catch both null and undefined (Decomposer may omit the field)
-        if (subtask.dependsOn == null && subtask.tool === 'execute_command') {
-          const ecTool = this.executableTools.find(t => t.name === 'execute_command');
-          if (ecTool && subtask.input) {
-            // Guard: si el Decomposer puso solo una ruta como input (en vez de un comando),
-            // convertirlo automáticamente a "ls /ruta"
-            let command = subtask.input.trim();
-            if (command.startsWith('/') && !command.includes(' ')) {
-              this.log.warn(`[AmplifierLoop] Subtask ${subtask.id} - input looks like a path, converting to "ls ${command}"`);
-              command = `ls "${command}"`;
-            }
-            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execute_command: ${command}`);
-            try {
-              const directInput = { command };
-              const validationError = validateToolInput('execute_command', directInput, this.executableTools, this.mcpRegistry);
-              if (validationError) {
-                throw new Error(validationError);
-              }
-              const result = await ecTool.execute(directInput);
-              const output = result.success ? result.output : `Error: ${result.error}`;
-
-              toolsUsed.add('execute_command');
-              // Append to accumulatedContext (don't overwrite — previous steps may have context)
-              accumulatedContext += (accumulatedContext ? '\n\n' : '') + output;
-              steps.push({
-                iteration,
-                type: 'act',
-                requestId,
-                action: 'tool',
-                target: 'execute_command',
-                input: JSON.stringify({ command: subtask.input }),
-                output,
-                status: output.toLowerCase().includes('error') ? 'error' : 'ok',
-                modelUsed: this.baseProvider.model,
-              });
-              this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed (direct). ls output: ${output.substring(0, 200)}`);
-            } catch (err) {
-              this.log.error('[AmplifierLoop] Direct execute_command failed:', err);
-            }
-            continue; // Skip ReAct loop
-          }
-        }
-
-        // Direct execution for web_search without dependsOn — avoids ReAct overhead
-        if (subtask.dependsOn == null && subtask.tool === 'web_search') {
-          const wsTool = this.executableTools.find(t => t.name === 'web_search');
-          if (wsTool && subtask.input) {
-            this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct web_search: "${subtask.input}"`);
-            try {
-              const directInput = { query: subtask.input };
-              const validationError = validateToolInput('web_search', directInput, this.executableTools, this.mcpRegistry);
-              if (validationError) {
-                throw new Error(validationError);
-              }
-              const result = await wsTool.execute(directInput);
-              if (result.success) {
-                const wsOutput = result.output;
-                toolsUsed.add('web_search');
-                accumulatedContext += (accumulatedContext ? '\n\n' : '') + wsOutput;
-                steps.push({
-                  iteration,
-                  type: 'act',
-                  requestId,
-                  action: 'tool',
-                  target: 'web_search',
-                  input: JSON.stringify({ query: subtask.input }),
-                  output: wsOutput,
-                  status: 'ok',
-                  modelUsed: this.baseProvider.model,
-                });
-                this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed (direct web_search)`);
-              } else {
-                this.log.error('[AmplifierLoop] Direct web_search failed:', result.error);
-              }
-            } catch (err) {
-              this.log.error('[AmplifierLoop] Direct web_search threw:', err);
-            }
-            continue; // Skip ReAct loop
+            
+            steps.push({
+              iteration,
+              type: 'act',
+              requestId,
+              action: 'tool',
+              target: subtask.tool,
+              input: JSON.stringify({ error: 'execution_failed' }),
+              output: `Error: ${err}`,
+              status: 'error',
+              modelUsed: this.baseProvider.model,
+            });
+            
+            continue; // Next subtask (don't fall through to ReAct loop on error)
           }
         }
 
@@ -1218,92 +810,8 @@ Do NOT search for more information. Use what is provided.`;
       // Sintetizar todos los resultados acumulados
       this.log.info('[AmplifierLoop] All subtasks completed — synthesizing final response');
 
-      // Skip LLM synthesis when only execute_command was used:
-      // small models hallucinate "I can't manipulate files" even when commands succeeded.
-      // Instead, extract the last step result from accumulatedContext and return it directly.
-      const onlyExecuteCommands = toolsUsed.size > 0 && [...toolsUsed].every(t => t === 'execute_command');
-      
-      // Similar bypass for MCP-only executions - avoid skill interference
-      const onlyMCPTools = toolsUsed.size > 0 && [...toolsUsed].every(t => t.startsWith('mcp_'));
-      const hasWriteFile = [...toolsUsed].some(t => t.includes('write_file'));
-      if (onlyExecuteCommands) {
-        // Extract the last Step N output from accumulatedContext
-        const stepLines = accumulatedContext.match(/Step \d+ \(execute_command\): ([\s\S]*?)(?=\n\nStep \d+|$)/g) ?? [];
-        const lastStepOutput = stepLines.length > 0
-          ? (stepLines[stepLines.length - 1].replace(/^Step \d+ \(execute_command\): /, '').trim())
-          : accumulatedContext.trim();
-        const hasError =
-          shellOutputIndicatesFailure(lastStepOutput) || shellOutputIndicatesFailure(accumulatedContext);
-        const hasPlaceholder =
-          textContainsPlaceholderPath(lastStepOutput) || textContainsPlaceholderPath(accumulatedContext);
-        const lang = input.userLanguage ?? 'en';
-        const shouldReturnRaw = shouldReturnRawToolOutput('execute_command', input.message, lastStepOutput);
-        if (!hasError && !hasPlaceholder) {
-          const verbatimLead =
-            shouldReturnRaw && lang === 'es'
-              ? 'Salida del sistema (texto exacto):\n\n'
-              : shouldReturnRaw
-                ? 'System output (verbatim):\n\n'
-                : '';
-          const directContent = shouldReturnRaw
-            ? verbatimLead + lastStepOutput
-            : lang === 'es'
-              ? `Listo, operación completada.`
-              : `Done, operation completed.`;
-          this.log.info('[AmplifierLoop] Skipping synthesis (execute_command only) — direct response');
-          return {
-            content: AmplifierLoop.wrapUserFacingAmplifierBody(directContent, input, steps),
-            requestId,
-            stepsUsed: steps,
-            modelsUsed: Array.from(modelsUsed),
-            toolsUsed: Array.from(toolsUsed),
-            injectedSkills: Array.from(injectedSkills.values()),
-            durationMs: Date.now() - startTime,
-            stageMetrics,
-            complexityUsed: ComplexityLevel.COMPLEX,
-            ...(usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0
-              ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
-              : {}),
-          };
-        }
-        this.log.info(
-          '[AmplifierLoop] execute_command-only path had failure or placeholder — synthesizing user-facing explanation'
-        );
-      }
-      
-      // Bypass synthesis for successful MCP write_file operations
-      if (onlyMCPTools && hasWriteFile) {
-        const writeFileSteps = steps.filter(s => s.type === 'act' && s.target?.includes('write_file'));
-        const lastWriteStep = writeFileSteps[writeFileSteps.length - 1];
-        
-        if (lastWriteStep?.status === 'ok' && lastWriteStep.output?.includes('Successfully wrote')) {
-          // Extract file path from the output
-          const pathMatch = lastWriteStep.output.match(/wrote to (.+)$/i);
-          const filePath = pathMatch ? pathMatch[1] : 'el archivo';
-          
-          const lang = input.userLanguage ?? 'en';
-          const directContent = lang === 'es'
-            ? `✅ Listo. He guardado la información en **${filePath}**.`
-            : `✅ Done. I've saved the information to **${filePath}**.`;
-          
-          this.log.info('[AmplifierLoop] Skipping synthesis (MCP write_file success) — direct response');
-          return {
-            content: AmplifierLoop.wrapUserFacingAmplifierBody(directContent, input, steps),
-            requestId,
-            stepsUsed: steps,
-            modelsUsed: Array.from(modelsUsed),
-            toolsUsed: Array.from(toolsUsed),
-            injectedSkills: Array.from(injectedSkills.values()),
-            durationMs: Date.now() - startTime,
-            stageMetrics,
-            complexityUsed: ComplexityLevel.COMPLEX,
-            ...(usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0
-              ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
-              : {}),
-          };
-        }
-      }
-
+      // Always run synthesis with accumulated context
+      // The synthesizer knows how to handle different tool outputs properly
       const verifyComplexStart = Date.now();
       const verifiedComplex = await runVerifyBeforeSynthesizeIfEnabled(
         { baseProvider: this.baseProvider, withTimeout: this.withTimeout.bind(this), usageAccumulator },
@@ -1904,4 +1412,144 @@ Do NOT search for more information. Use what is provided.`;
       novelInformationScore,
     };
   }
+}
+
+// ============================================================================
+// Generic Subtask Execution Helper Functions
+// ============================================================================
+
+interface ToolExecutor {
+  kind: 'internal' | 'mcp';
+  execute: (input: unknown) => Promise<{ output: string; success: boolean }>;
+}
+
+/**
+ * Find a tool by name across internal ExecutableTools and MCP registry.
+ * Returns a unified executor interface.
+ */
+function findToolByName(
+  toolName: string,
+  sources: { executableTools: ExecutableTool[]; mcpRegistry?: MCPRegistry }
+): ToolExecutor | null {
+  if (!toolName || toolName === 'none') return null;
+
+  // Search in internal tools
+  const internal = sources.executableTools.find((t) => t.name === toolName);
+  if (internal) {
+    return {
+      kind: 'internal',
+      execute: async (input) => {
+        const result = await internal.execute(input as Record<string, unknown>);
+        return {
+          output: result.output ?? result.error ?? '',
+          success: result.success ?? !result.error,
+        };
+      },
+    };
+  }
+
+  // Search in MCP tools
+  if (sources.mcpRegistry && toolName.startsWith('mcp_')) {
+    const mcpTools = sources.mcpRegistry.getMCPToolsForOrchestrator();
+    const mcpTool = mcpTools.find((t) => t.name === toolName);
+    if (mcpTool) {
+      return {
+        kind: 'mcp',
+        execute: async (input) => {
+          try {
+            const output = await sources.mcpRegistry!.callTool(
+              toolName,
+              input as Record<string, unknown>
+            );
+            return { output, success: true };
+          } catch (err) {
+            return { output: String(err), success: false };
+          }
+        },
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve subtask input from Decomposer output (string or object) to proper tool input.
+ */
+function resolveSubtaskInput(
+  subtask: Subtask,
+  accumulatedContext: string
+): Record<string, unknown> {
+  // If input is already an object, use it directly
+  if (typeof subtask.input === 'object' && subtask.input !== null) {
+    return subtask.input as Record<string, unknown>;
+  }
+
+  // If input is a string, try to parse it as JSON
+  if (typeof subtask.input === 'string') {
+    try {
+      const parsed = JSON.parse(subtask.input);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // If not JSON, infer input from string based on tool patterns
+      return inferInputFromString(subtask.tool, subtask.input, accumulatedContext);
+    }
+  }
+
+  return {};
+}
+
+/**
+ * Infer tool input structure from a string value based on tool name patterns.
+ * Uses pattern matching, NOT hardcoded tool names.
+ */
+function inferInputFromString(
+  toolName: string,
+  inputStr: string,
+  accumulatedContext: string
+): Record<string, unknown> {
+  const lowerTool = toolName.toLowerCase();
+
+  // Pattern: search tools
+  if (lowerTool.includes('search') || lowerTool.includes('query')) {
+    return { query: inputStr };
+  }
+
+  // Pattern: read file tools
+  if (lowerTool.includes('read') && !lowerTool.includes('write')) {
+    return { path: inputStr };
+  }
+
+  // Pattern: write file tools
+  if (lowerTool.includes('write')) {
+    // Try to extract file path from input string
+    const pathMatch = inputStr.match(/(\/[^\s]+\.\w+)/);
+    const filePath = pathMatch?.[1] ?? inputStr;
+
+    // Filter errors from accumulated context
+    let contentToWrite = accumulatedContext.trim();
+    if (contentToWrite.includes('ERROR') || contentToWrite.includes('MCP error')) {
+      contentToWrite = `# Content\n\nNo se pudo completar la tarea debido a errores.\n\nPor favor, intenta nuevamente.`;
+    }
+
+    return {
+      path: filePath,
+      content: contentToWrite || inputStr,
+    };
+  }
+
+  // Pattern: execute command tools
+  if (lowerTool.includes('execute') || lowerTool.includes('command') || lowerTool === 'shell') {
+    return { command: inputStr };
+  }
+
+  // Pattern: remember/recall tools
+  if (lowerTool.includes('remember') || lowerTool.includes('recall') || lowerTool.includes('memory')) {
+    return { query: inputStr };
+  }
+
+  // Fallback: generic query field
+  return { query: inputStr };
 }

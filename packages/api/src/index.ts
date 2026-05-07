@@ -37,6 +37,8 @@ import { createProjectsRouter } from "./routes/projects.js";
 import { createVoiceRouter } from "./routes/voice.js";
 import { createFilesRouter } from "./routes/files.js";
 import { createCommandsRouter } from "./routes/commands.js";
+import { createDecisionsRouter } from "./routes/decisions.js";
+import { createLessonsRouter } from "./routes/lessons.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { 
   getCommandRegistry, 
@@ -266,13 +268,15 @@ app.use(createMemoryRouter(memoryService));
 app.use(createProjectsRouter(memoryService));
 app.use(createAgentsRouter(memoryService));
 app.use(createStatsRouter(memoryService));
-app.use(createConfigRouter(configService, encryptionService));
+app.use(createConfigRouter(configService, encryptionService, orchestrator));
 app.use(createSkillsRouter({ skillRegistry, memoryService, skillsDir: skillsPath }));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
 app.use(createVoiceRouter(orchestrator, memoryService));
 app.use(createFilesRouter(memoryService));
 app.use(createCommandsRouter(commandRegistry));
+app.use(createDecisionsRouter());
+app.use(createLessonsRouter(orchestrator));
 
 app.use(errorHandler);
 

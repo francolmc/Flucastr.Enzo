@@ -44,3 +44,4 @@ export {
   type BuildConversationContextInput,
 } from './ConversationContext.js';
 export { ConversationSummarizer } from './ConversationSummarizer.js';
+export { LessonLearner, lessonLearner, type Lesson, type LessonSummary, type LessonDetails } from './LessonLearner.js';
