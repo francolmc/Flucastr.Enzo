@@ -22,6 +22,7 @@ import {
   buildRelevantSkillsSection,
   capRelevantSkillsForPrompt,
   extractOutputTemplates,
+  buildThinkContractPrompt,
 } from './AmplifierLoopPromptHelpers.js';
 import {
   describeHostForExecuteCommandPrompt,
@@ -52,7 +53,7 @@ import {
 import { resolveTopSkillDeclarativeExecutable } from '../skillFastPathLock.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
-const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
+const FAST_PATH_MAX_TOKENS_DEFAULT = 768;
 const FAST_PATH_MAX_TOKENS_PERSIST = 2048;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_DEFAULT = 220;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_PERSIST = 2048;
@@ -330,23 +331,6 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const mergedToolDefs = mergeAvailableToolDefinitions(input, mcpRegistry);
   const toolsPrompt = buildToolsPrompt(mergedToolDefs);
 
-  let suggestedMCPSection = '';
-  if (input.resolvedMCPs && input.resolvedMCPs.length > 0) {
-    const mcpNames = input.resolvedMCPs.map(m => m.name).join(', ');
-    const mcpReasoning = input.resolvedMCPs[0]?.reasoning 
-      ? ` (razón: ${input.resolvedMCPs[0].reasoning})` 
-      : '';
-    suggestedMCPSection = `\nSUGGESTED MCPs (pre-evaluados como más relevantes): ${mcpNames}${mcpReasoning}\n`;
-  }
-
-  let skillListSection = '';
-  if (skillRegistry) {
-    const enabledSkills = skillRegistry.getEnabled();
-    if (enabledSkills.length > 0) {
-      const skillLines = enabledSkills.map((s) => `- ${s.metadata.name}: ${s.metadata.description}`).join('\n');
-      skillListSection = `\nAVAILABLE SKILLS (list these when asked about capabilities):\n${skillLines}\n`;
-    }
-  }
   const skillsForPrompt = capRelevantSkillsForPrompt(preResolvedSkills);
   const relevantSkillsSection = buildRelevantSkillsSection(skillsForPrompt);
   const requiredTemplateSection = extractOutputTemplates(skillsForPrompt);
@@ -354,32 +338,6 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const exactAllowlist = mergedToolDefs.map((t) => t.name).join(', ');
 
   const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
-
-  const toolUsageRule = isModerate
-    ? `MODERATE TASK - TOOL REQUIRED: The classifier determined this is a MODERATE task which REQUIRES a tool. You MUST respond with a JSON tool call, NOT prose.
-
-The user's message requires an action on this host (files, commands, system info, memory, etc.) → use a tool from: ${exactAllowlist}
-
-If you need to read, write, list, or execute something → respond ONLY with JSON tool call:
-{"action":"tool","tool":"<tool_name>","input":{...}}
-
-Never respond with prose explaining what you would do — just DO it with the tool.${persistToPathRequested ? ` The user named an absolute FILE path AND asked to CREATE/SAVE/WRITE content there → you MUST use write_file in this response (verbatim path + full content).` : ''}`
-    : persistToPathRequested
-      ? `The user expects a REAL file written on disk at the path they gave. Respond with exactly ONE {"action":"tool","tool":"write_file","input":{"path":"…","content":"…"}} JSON (verbatim path + full body). Plain text claiming the file "was created/saved/already exists" without that JSON would be dishonest — if unsure, omit false claims or ask briefly; never pretend disk I/O ran.`
-      : `If you can answer directly without tools, respond with plain text.`;
-
-  const moderateToolJsonOnly = isModerate
-    ? `
-
-CRITICAL: When you need a tool, respond with ONLY the JSON object.
-No text before, no text after, no explanation.
-When the user needs no tool-backed action, reply in plain text and skip JSON entirely.
-WRONG: "Ejecutando el comando... {"action":"tool"...}"
-RIGHT: {"action":"tool","tool":"mcp_<serverId>_<toolName>","input":{"path":"/Users/franco"}}
-
-If you include any text outside the JSON, the tool will not execute.
-`
-    : '';
 
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
@@ -389,43 +347,11 @@ If you include any text outside the JSON, the tool will not execute.
     isModerate &&
     declarativeExecutable != null;
 
-const hostToolsClassifierLockActive =
+  const hostToolsClassifierLockActive =
     isModerate &&
     input.prefersHostTools === true &&
     declarativeExecutable == null &&
     executableTools.some((t) => t.name.startsWith('mcp_'));
-
-  const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
-    ? `
-
-━━━ HOST_TOOLS_CLASSIFIER_LOCKED ━━━
-The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** MCP tools listed in AVAILABLE TOOLS.
-For this turn ONLY: respond with exactly **ONE** canonical JSON tool call using an MCP tool name from the list.
-Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
-
-  const mandatorySkillFastPathBlock =
-    skillFastPathLockActive && declarativeExecutable
-      ? `
-
-━━━ SKILL_FASTPATH_LOCKED ━━━
-Top RELEVANT SKILL **${declarativeExecutable.skillName}** declares exactly **one** registered tool step: **${declarativeExecutable.tool}**. Follow RELEVANT SKILLS fully for schemas and rationale.
-For this turn ONLY: respond with a **single** canonical JSON tool invocation and nothing else — no greetings, no "grant me access/upload a profile URL", no simulation, no fenced markdown around the JSON.${
-          declarativeExecutable.commandHint
-            ? `
-
-Strong shell hint when emitting **execute_command** (adapt to HOST OS/user paths if necessary):
-${declarativeExecutable.commandHint}`
-            : ''
-        }
-Do **not** use web_search for this locked workflow. Omit any prose outside the JSON line.${
-          declarativeExecutable.tool === 'execute_command'
-            ? ' Canonical shape uses **execute_command** as tool id — never `"tool":"gh"`; put **gh …** inside **input.command** only: {"action":"tool","tool":"execute_command","input":{"command":"..."}}.'
-            : ''
-        }
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
 
   const moderateRetryRequiresToolJsonOnly =
     isModerate &&
@@ -433,121 +359,35 @@ Do **not** use web_search for this locked workflow. Omit any prose outside the J
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);
 
+  const webSearchTool = mergedToolDefs.find(t => {
+    const name = t.name.toLowerCase();
+    const desc = (t.description ?? '').toLowerCase();
+    return (
+      (name.includes('web') && name.includes('search')) ||
+      name.includes('web-search') ||
+      (name.endsWith('_search') && (
+        desc.includes('web') ||
+        desc.includes('internet') ||
+        desc.includes('duckduckgo') ||
+        desc.includes('brave') ||
+        desc.includes('search the web') ||
+        desc.includes('buscar en internet')
+      ))
+    );
+  });
+  const hasWebSearch = webSearchTool != null;
+  const webSearchToolName = webSearchTool?.name;
+
   const memorySection = buildMemoryPromptSection(input);
-  const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-${memorySection ? `\n${memorySection}\n` : ''}
-${buildRuntimeThreeLayersContractPrompt()}
-
-${describeHostForExecuteCommandPrompt(input.runtimeHints)}
-${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}
-OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
-${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
-
-${suggestedMCPSection}
-${toolsPrompt}
-${skillListSection}
-${relevantSkillsSection}
-When a tool is required, respond ONLY with canonical JSON (no prose, no markdown fences):
-{"action":"tool","tool":"<exact_name_from_below>","input":{...}}
-
-Exact tool names registered in this runtime (includes MCP as listed above): ${exactAllowlist}
-
-CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Never invent tool names. If you cannot complete the task with these tools, respond in plain text.
-MCP tools appear as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill id, skill title, product name, or CLI/binary name mentioned in prose as your JSON **tool** — those belong inside **execute_command**.input.**command**, not as **tool**.
-WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
-WRONG: {"action":"tool","tool":"<anything_not_in_exact_allowlist>","input":{}}
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
-
-Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
-{"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
-{"action":"tool","tool":"execute_command","input":{"command":"df -h"}}
-{"action":"tool","tool":"execute_command","input":{"command":"uname -a"}}
-{"action":"tool","tool":"web_search","input":{"query":"search terms"}}
-{"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
-{"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\n\nFull file body the user asked for — never empty unless they asked for an empty file."}}
-{"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
-{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
-{"action":"tool","tool":"email_unread_count","input":{}}
-{"action":"tool","tool","read_email","input":{"unread_only":true,"limit":24}}
-
-MCP TOOL EXAMPLES (use these exact format for MCP tools — copy the EXACT tool name from AVAILABLE TOOLS above):
-${(() => {
-  const mcpTools = mergedToolDefs.filter(t => t.name.startsWith('mcp_'));
-  const exampleMcpTools = mcpTools.slice(0, 5);
-  if (exampleMcpTools.length === 0) return 'No MCP tools available.';
-  return exampleMcpTools.map(t => {
-    if (t.name.includes('read_file') || t.name.includes('read_text')) {
-      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/example.txt"}}`;
-    }
-    if (t.name.includes('list_directory') || t.name.includes('directory')) {
-      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/Downloads"}}`;
-    }
-    if (t.name.includes('write_file') || t.name.includes('create')) {
-      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/newfile.txt","content":"file content"}}`;
-    }
-    if (t.name.includes('get_file_info') || t.name.includes('file_info')) {
-      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}/example.txt"}}`;
-    }
-    if (t.name.includes('search_files')) {
-      return `{"action":"tool","tool":"${t.name}","input":{"path":"${homeDir}","pattern":"*.txt"}}`;
-    }
-    return `{"action":"tool","tool":"${t.name}","input":{}}`;
-  }).join('\n');
-})()}
-
-${toolUsageRule}
-
-TOOL SELECTION — CRITICAL:
-- Create or overwrite a FILE with new content at a path the user gave → write_file with {"path":"verbatim absolute path","content":"full text"} — NOT execute_command for the file body (same policy as task decomposition)
-- List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
-- Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
-- User/account-visible data surfaced by **THIS host's** registered tools or authenticated CLIs (see RELEVANT SKILLS and any SKILL_FASTPATH_LOCKED block — e.g. local repo lists, kubectl context, tooling output tied to whoever is logged into this machine) → the mandated concrete tool (**not** web_search unless they clearly asked for public web news/articles)
-- Search the internet for information → web_search (public facts only — never as a shortcut for CLI/host-visible account data covered above)
-- Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
-- How many unread emails **this user has in connected Gmail/Outlook/IMAP inboxes on this machine** → email_unread_count (never prose-only simulation)
-- Summaries or "most important among unread / list unread" Gmail+Outlook/IMAP connected here → **read_email** with \`{"unread_only":true,"limit":32}\` **before** prose — never hypothetical projects or recurring themes not in RESULTADO (no NTT/Data/INACAP fluff unless literal in snippets)
-- Call an HTTP/API endpoint when user provides a URL → execute_command with curl
-  Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
-- Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)
-- External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
-- Run any other shell command → execute_command
-- NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
-RULES:
-- NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
-- FILE AND FOLDER NAMES ARE LITERAL BYTES: every path segment in read_file / execute_command must match EXACTLY what appeared in prior ls (stdout) or in the user's message. NEVER translate, localize, or paraphrase names (e.g. if ls showed organized tasks.txt, do NOT use tareas organizadas.txt or tasks.txt unless that exact name exists).
-- If the user uses a vague or partial filename and the exact name is unclear, run execute_command with ls on that directory again — do NOT invent or guess a path.
-- Never invent file contents — use read_file
-SEARCH BEFORE ANSWERING:
-- If you are not 100% certain your knowledge is current and accurate, use web_search first
-- For any fact about the real world (prices, people, companies, events, status),
-  always verify with web_search before responding
-- Never answer factual questions from memory alone — memory can be outdated
-- The rule is: when in doubt → web_search — **unless** RELEVANT SKILLS / SKILL_FASTPATH_LOCKED / MAILBOX_* / CALENDAR_* blocks already mandate a registry tool whose data lives on THIS host (then obey that lock — no web_search surrogate)
-- Skip web_search entirely for math, greetings, questions strictly about capabilities/identity,
-  **local agenda / unread mail tooling already described above**, and **the user's own Enzo persisted agenda / meetings / reminders** → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to the user's personal calendar
-- Never invent search results — use web_search
-- Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
-- One tool call per response, no extra fields in the JSON input
-- web_search input must be ONLY: {"query": "search terms"} — nothing else
-${
-  persistToPathRequested
-    ? `
-PERSISTENCE / HONESTY (user asked to write to a concrete absolute path):
-- Do NOT say the file "ya está creado", "already exists on disk", "guardado", "listo en el disco", or equivalent unless this same turn includes a write_file tool JSON that will be executed.
-- If you output only prose with the story or text and no write_file, state clearly that nothing was written to disk yet, or emit write_file with path + content.
-`
-    : ''
-}
-${buildContextAnchorPrompt(input)}
-
-${
-  input.userLanguage
-    ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. ONLY in this language.`
-    : 'Respond in the same language the user used.'
-}
-If responding with plain text (no tool), write in this language.`;
+  const systemPrompt = [
+    buildAssistantIdentityPrompt(input),
+    memorySection,
+    toolsPrompt,
+    relevantSkillsSection,
+    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName }),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 

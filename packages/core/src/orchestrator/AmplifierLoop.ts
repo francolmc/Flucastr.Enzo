@@ -288,6 +288,61 @@ No markdown. No prose.`;
     return normalizeFastPathToolCall(parsed.value, this.executableTools);
   }
 
+  /**
+   * When direct input resolution fails validation, ask the model to correct the input
+   * based on the task description, tool schema, and accumulated context.
+   * 
+   * This is generic — works with any MCP tool without hardcoding field names.
+   */
+  private async resolveInputWithModel(
+    subtask: Subtask,
+    accumulatedContext: string,
+    validationError: string
+  ): Promise<Record<string, unknown> | null> {
+    // Get the tool schema to provide context to the model
+    const schema = this.mcpRegistry?.getMCPToolSchema(subtask.tool);
+    const schemaStr = schema 
+      ? JSON.stringify(schema.properties ?? schema, null, 2) 
+      : 'unknown';
+
+    const prompt = `You need to call the tool "${subtask.tool}".
+
+Task: ${subtask.description}
+${accumulatedContext ? `Context from previous steps:\n${accumulatedContext}\n` : ''}
+Tool input schema:
+${schemaStr}
+
+Validation error with previous input: ${validationError}
+
+Respond with ONLY a valid JSON object matching the tool schema.
+No prose, no explanation, just the JSON input object.`;
+
+    try {
+      const response = await this.withTimeout(
+        this.baseProvider.complete({
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: subtask.input ?? subtask.description },
+          ],
+          temperature: 0,
+          maxTokens: 256,
+        }),
+        30_000,
+        'resolve input with model'
+      );
+
+      const parsed = parseFirstJsonObject<Record<string, unknown>>(
+        response.content ?? '',
+        { tryRepair: true }
+      );
+      
+      return parsed?.value ?? null;
+    } catch (err) {
+      this.log.warn('[AmplifierLoop] resolveInputWithModel failed:', err);
+      return null;
+    }
+  }
+
   async amplify(input: AmplifierInput): Promise<AmplifierResult> {
     const startTime = Date.now();
     const steps: Step[] = [];
@@ -429,7 +484,7 @@ No markdown. No prose.`;
     }
 
 if (
-      fastPathLevel === ComplexityLevel.SIMPLE &&
+      (fastPathLevel === ComplexityLevel.SIMPLE || fastPathLevel === ComplexityLevel.MODERATE) &&
       (!hasMultiStepSkillRequirement ||
         calendarListBypassesMultiStepBlock ||
         skillSingleStepBypassMultiTool) &&
@@ -542,7 +597,7 @@ if (
           this.log.info(`[AmplifierLoop] Subtask ${subtask.id} - Direct execution: "${subtask.tool}" (${tool.kind})`);
           
           try {
-            const resolvedInput = resolveSubtaskInput(subtask, accumulatedContext);
+            const resolvedInput = resolveSubtaskInput(subtask, accumulatedContext, this.mcpRegistry);
             
             // Validate input before execution
             const validationError = validateToolInput(
@@ -551,10 +606,65 @@ if (
               this.executableTools,
               this.mcpRegistry
             );
+            
             if (validationError) {
-              throw new Error(validationError);
+              // Don't hardcode conversion — let the model resolve the correct input
+              this.log.warn(
+                `[AmplifierLoop] Subtask ${subtask.id} - Validation failed: ${validationError}. Attempting model-based resolution...`
+              );
+              
+              const modelResolvedInput = await this.resolveInputWithModel(
+                subtask,
+                accumulatedContext,
+                validationError
+              );
+              
+              if (modelResolvedInput) {
+                // Re-validate the model-corrected input
+                const revalidationError = validateToolInput(
+                  subtask.tool,
+                  modelResolvedInput,
+                  this.executableTools,
+                  this.mcpRegistry
+                );
+                
+                if (revalidationError) {
+                  this.log.error(
+                    `[AmplifierLoop] Subtask ${subtask.id} - Model-resolved input still invalid: ${revalidationError}`
+                  );
+                  throw new Error(revalidationError);
+                }
+                
+                // Execute with model-resolved input
+                const result = await tool.execute(modelResolvedInput);
+                this.log.info(
+                  `[AmplifierLoop] Subtask ${subtask.id} - ${subtask.tool} executed successfully with model-resolved input:`,
+                  result.output.substring(0, 200)
+                );
+                
+                toolsUsed.add(subtask.tool);
+                accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${result.output}`;
+                
+                steps.push({
+                  iteration,
+                  type: 'act',
+                  requestId,
+                  action: 'tool',
+                  target: subtask.tool,
+                  input: JSON.stringify(modelResolvedInput),
+                  output: result.output,
+                  status: result.success ? 'ok' : 'error',
+                  modelUsed: this.baseProvider.model,
+                });
+                
+                continue; // Next subtask
+              } else {
+                // Model couldn't resolve — throw original error
+                throw new Error(validationError);
+              }
             }
 
+            // Validation passed — execute directly
             const result = await tool.execute(resolvedInput);
             
             this.log.info(
@@ -1475,27 +1585,47 @@ function findToolByName(
 
 /**
  * Resolve subtask input from Decomposer output (string or object) to proper tool input.
+ * Uses MCP schema to determine correct field names generically (no hardcoding).
  */
 function resolveSubtaskInput(
   subtask: Subtask,
-  accumulatedContext: string
+  accumulatedContext: string,
+  mcpRegistry?: MCPRegistry
 ): Record<string, unknown> {
   // If input is already an object, use it directly
   if (typeof subtask.input === 'object' && subtask.input !== null) {
     return subtask.input as Record<string, unknown>;
   }
 
-  // If input is a string, try to parse it as JSON
+  // If input is a string
   if (typeof subtask.input === 'string') {
+    // Replace templates {{stepN.output}} with actual accumulated context
+    const resolvedStr = subtask.input.replace(/\{\{[^}]+\}\}/g, accumulatedContext.trim());
+
+    // Try to parse as JSON first
     try {
-      const parsed = JSON.parse(subtask.input);
+      const parsed = JSON.parse(resolvedStr);
       if (typeof parsed === 'object' && parsed !== null) {
         return parsed as Record<string, unknown>;
       }
-    } catch {
-      // If not JSON, infer input from string based on tool patterns
-      return inferInputFromString(subtask.tool, subtask.input, accumulatedContext);
+    } catch { /* not JSON, continue */ }
+
+    // Use MCP schema to determine correct field (generic approach)
+    if (mcpRegistry && subtask.tool.startsWith('mcp_')) {
+      const schema = mcpRegistry.getMCPToolSchema(subtask.tool);
+      if (schema?.properties) {
+        // Use first required field, or first property if no required fields
+        const requiredField = (schema.required as string[] | undefined)?.[0]
+          ?? Object.keys(schema.properties)[0];
+        
+        if (requiredField) {
+          return { [requiredField]: resolvedStr };
+        }
+      }
     }
+
+    // Fallback to heuristics for tools without schemas or internal tools
+    return inferInputFromString(subtask.tool, resolvedStr, accumulatedContext);
   }
 
   return {};

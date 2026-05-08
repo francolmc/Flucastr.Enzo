@@ -1,4 +1,5 @@
 import { LLMProvider, Message } from '../providers/types.js';
+import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 
 export interface Subtask {
   id: number;
@@ -25,19 +26,16 @@ export class Decomposer {
     
     let preferredMcpSection = '';
     if (preferredMCPs && preferredMCPs.length > 0) {
-      preferredMcpSection = `\n\nPREFERRED MCPs (use these first for this task):
-${preferredMCPs.join(', ')}
-When these MCPs can accomplish the task, use them instead of generic tools like web_search, execute_command, or write_file.`;
-    }
+      console.log(`[Decomposer] Using MANDATORY MCPs: ${preferredMCPs.join(', ')}`);
+      preferredMcpSection = `
 
-    const hasPdfMcpTools = availableTools.some(
-      (toolName) =>
-        toolName.startsWith('mcp_') &&
-        (toolName.includes('_display_pdf') ||
-          toolName.includes('_interact') ||
-          toolName.includes('_read_pdf_bytes') ||
-          toolName.includes('_list_pdfs'))
-    );
+MANDATORY MCP TOOLS FOR THIS TASK (use these EXACT names — not generic alternatives):
+${preferredMCPs.map(mcp => `- "${mcp}"`).join('\n')}
+
+CRITICAL: For this specific task, you MUST use the MCP tool names listed above.
+Do NOT use execute_command, web_search, write_file, or read_file when an MCP tool above can do the same job.
+The "tool" field in each step MUST be copied CHARACTER BY CHARACTER from the list above.`;
+    }
 
     // Full dialogue slice already token-trimmed upstream (ConversationContext); cap line length for prompt size
     let contextBlock = '';
@@ -49,82 +47,34 @@ When these MCPs can accomplish the task, use them instead of generic tools like 
       contextBlock = `\nCONVERSATION CONTEXT (use this to understand references like "do it", "create those folders", "proceed"):\n${lines.join('\n')}\n`;
     }
 
+    const examplesBlock = this.buildExamplesForPrompt(preferredMCPs ?? []);
+
     const systemPrompt = `You are a task decomposer. Break the task into the MINIMUM number of sequential steps.
 Each step must be ONE single action using ONE tool.
 
 Available tools: ${toolsList}${preferredMcpSection}
 
-TOOL SELECTION RULES:
-- web_search: search the internet for information
-- write_file: create or write content to a file (use this, NOT execute_command, to create files)
-- read_file: read an existing file — the path must be verbatim from the user message or from prior ls output; never translate or paraphrase file names
-- execute_command: run shell commands — NOT for creating files with content
-- remember: save a fact to memory
-${hasPdfMcpTools ? `- mcp_* tools: use these for PDF workflows when available` : ''}
+${examplesBlock}
 
-CRITICAL — for execute_command, the "input" field MUST be the exact shell command to run:
-- List folder: "input": "ls -la /absolute/path" or "ls -Fa /absolute/path" so entry types are visible
-- Create folder: "input": "mkdir -p /absolute/path"
-- Move files: "input": "mv /source /destination"
-- Combined: "input": "mkdir -p /dest && mv /src/file1 /src/file2 /dest/"
-NEVER put just a path in "input" — always put the full shell command.
+RULES:
+- Each "tool" MUST be exactly one string from Available tools — never invent names
+- "dependsOn": null for first step, previous step id for dependent steps
+- MINIMUM steps — never add unnecessary intermediate steps
+- Never use placeholder paths — only paths from the user's message
+- If no real path exists in the message: return "steps": []
 
-PLACEHOLDER PATHS — ABSOLUTELY FORBIDDEN in execute_command:
-- Never use invented templates: /path/to/..., path/to/, <path>, YOUR_PATH_HERE, example/folder
-- Only use absolute paths that appear VERBATIM in the user's message or in CONVERSATION CONTEXT
-- If the user asks for abstract "task management" or "organize my work/life" without giving real directories to move: return "steps": [] (empty array) — do NOT invent mkdir/mv commands
-
-Respond ONLY with valid JSON, no extra text:
-Each "tool" MUST be exactly one string from Available tools (${toolsList}) — never invent names.
+Respond ONLY with valid JSON:
 {
   "steps": [
     {
       "id": 1,
       "description": "what this step does",
-      "tool": "web_search",
-      "input": "exact description of input for this tool",
+      "tool": "EXACT_TOOL_NAME_FROM_AVAILABLE_TOOLS",
+      "input": "description of input",
       "dependsOn": null
-    },
-    {
-      "id": 2,
-      "description": "what this step does",
-      "tool": "write_file",
-      "input": "use result from step 1",
-      "dependsOn": 1
     }
   ]
-}
-
-IMPORTANT: The "dependsOn" field is REQUIRED in every step. First step MUST have "dependsOn": null. Never omit it.
-
-FILE ORGANIZATION TASKS (only when the user names a REAL absolute folder to tidy, e.g. "organize /Users/me/Downloads"):
-- If the file list is NOT in context: generate 2 steps:
-  Step 1: execute_command with "input": "ls -la /absolute/path/to/folder", "dependsOn": null
-  Step 2: execute_command with "input": "organize files using ls output", "dependsOn": 1
-- If the file list IS already in context (from a previous ls): generate 1 step:
-  Step 1: execute_command with the complete mkdir+mv command directly, "dependsOn": null
-- NEVER use relative paths — every path must start with /
-- "input" for execute_command MUST be the actual shell command, never just a folder path
-- If there is no real path in the user message or context: return "steps": [] — do not guess paths
-
-CRITICAL RULES:
-- Use the MINIMUM number of steps — never add intermediate steps that are not necessary
-- To search then save to file: use EXACTLY 2 steps (web_search → write_file)
-- Never use execute_command to create a file with content — use write_file instead
-- Never add a read_file step after a web_search — the search result is already in context
-- NEVER use relative paths — always use the absolute path from the user's message
-
-COMPOSE NEW CONTENT + SAVE TO A FIXED ABSOLUTE FILE PATH (story, poem, invented prose, fresh summary to write, etc.):
-- When the user gives a concrete absolute FILE path (e.g. .md, .txt, .json) AND wants NEW content written there (not just reading an existing file): prefer EXACTLY ONE step: write_file with "input" as a clear natural-language instruction that includes the VERBATIM path and what to write (full text or generate per user). "dependsOn": null.
-- NEVER return a plan where the last step is missing write_file when persistence to that path was requested — do not assume "the model will paste the text in chat instead".
-- If you must split (e.g. read another file first, then write): the final step MUST still be write_file to the user's path; do not stop after generation-only steps.
-${hasPdfMcpTools ? `- If the user asks to read/summarize/extract a .pdf, DO NOT use read_file for that PDF. Prefer MCP PDF tools (mcp_*_display_pdf + mcp_*_interact or other mcp_*_pdf tools).` : ''}
-
-ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this block; only use paths the user or context actually provides):
-- Pattern A — search then write: Step 1 web_search for the topic; Step 2 write_file for the output file the user asked for. Total: 2 steps, no extra steps.
-- Pattern B — list one folder the user named with a real absolute path: Step 1 execute_command with ls -la (or ls -Fa) on exactly that path from their message. Total: 1 step.
-- Pattern C — organize one folder they named, listing not in context yet: Step 1 ls -la on their path; Step 2 shell step that uses step 1 output. Total: 2 steps.
-- Pattern D — compose new text (story, summary, etc.) and save ONLY to a file path the user gave: Step 1 write_file with "dependsOn": null; "input" must name the verbatim path and what to write. Total: 1 step — no separate "generate in chat" step.`;
+}`;
 
     try {
       const messages: Message[] = [
@@ -138,20 +88,20 @@ ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this bloc
       const response = await this.provider.complete({
         messages,
         temperature: 0.2,
-        maxTokens: 512,
+        maxTokens: 2048,
       });
 
       const content = response.content?.trim() ?? '';
       console.log('[Decomposer] Raw response:', content.substring(0, 300));
 
       // Extraer JSON con stack-based matching para manejar objetos anidados correctamente
-      const jsonMatch = this.extractFirstJson(content);
-      if (!jsonMatch) {
+      const result = parseFirstJsonObject<{ steps: Subtask[] }>(content, { tryRepair: true });
+      if (!result) {
         console.warn('[Decomposer] No JSON found in response, using single-step fallback');
         return this.singleStepFallback(message);
       }
 
-      const parsed = JSON.parse(jsonMatch);
+      const parsed = result.value;
 
       // Si el modelo retornó un array directamente, envolverlo en { steps: ... }
       let steps: Subtask[];
@@ -261,6 +211,54 @@ ILLUSTRATIVE PATTERNS (not literal tasks — do NOT copy any path from this bloc
       ],
       originalMessage: message,
     };
+  }
+
+  /**
+   * Generate examples using actual MCP tool names when available,
+   * otherwise use generic fallback examples.
+   */
+  private buildExamplesForPrompt(preferredMCPs: string[]): string {
+    if (preferredMCPs.length === 0) {
+      return `ILLUSTRATIVE PATTERNS:
+- Search then write: Step 1 web_search; Step 2 write_file. Total: 2 steps.
+- List folder: Step 1 execute_command with ls -la on the path. Total: 1 step.`;
+    }
+
+    // Detect which types of tools the pre-resolved MCPs are
+    const listTool = preferredMCPs.find(m => 
+      m.includes('list_directory') || m.includes('list_dir')
+    );
+    const writeTool = preferredMCPs.find(m => 
+      m.includes('write_file') || m.includes('write')
+    );
+    const readTool = preferredMCPs.find(m => 
+      m.includes('read_file') || m.includes('read_text')
+    );
+    const searchTool = preferredMCPs.find(m => 
+      (m.includes('web') && m.includes('search')) || m.includes('web-search')
+    );
+
+    const examples: string[] = [];
+
+    if (listTool && writeTool) {
+      examples.push(`- List directory then save: Step 1 "${listTool}" with path; Step 2 "${writeTool}" with path and content from step 1. Total: 2 steps.`);
+    }
+    if (searchTool && writeTool) {
+      examples.push(`- Search then save: Step 1 "${searchTool}" with query; Step 2 "${writeTool}" with path and content. Total: 2 steps.`);
+    }
+    if (listTool && !writeTool) {
+      examples.push(`- List directory: Step 1 "${listTool}" with path. Total: 1 step.`);
+    }
+    if (readTool) {
+      examples.push(`- Read file: Step 1 "${readTool}" with exact path. Total: 1 step.`);
+    }
+
+    if (examples.length === 0) {
+      examples.push(`- Use "${preferredMCPs[0]}" as the primary tool for this task.`);
+    }
+
+    return `EXAMPLES FOR THIS SPECIFIC TASK (use these exact tool names):
+${examples.join('\n')}`;
   }
 
   private rewritePdfReadStepsToMcp(message: string, steps: Subtask[], availableTools: string[]): Subtask[] {

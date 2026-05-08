@@ -229,14 +229,31 @@ ONE JSON object per message when using JSON — no prose before or after it.`;
     ? `\n\nMCP tools use the format mcp_<serverId>_<toolName>. Use the exact name from the list above.`
     : '\n\nCore memory tools available for saving and recalling user information.';
 
-  const hasResearchTool = mcpTools.some(t => t.name.includes('research'));
-  const mcpExamples = mcpTools.length > 0
-    ? `\n\nMCP TOOL SELECTION EXAMPLES:
-${hasResearchTool ? `- User asks "últimas noticias", "investigá X", "buscar información", "research trends" → MUST use simulate-research-query (the ONLY tool for research/investigation tasks)\n` : ''}- User asks to see file contents, read a document → use a tool with "read" in the name
-- User asks to save, create, write content → use a tool with "write" in the name
-- User asks to explore folders, list files → use a tool with "directory" or "list" in the name
+  // Build alias map 100% from tool descriptions (no name-based detection)
+  const aliasMap: string[] = [];
+  
+  for (const tool of mcpTools) {
+    const desc = (tool.description ?? '').toLowerCase().trim();
+    if (!desc) continue;
+    
+    // Extract meaningful description (remove MCP prefix if present)
+    const cleanDesc = desc.replace(/^\[mcp:\s*[^\]]+\]\s*/i, '').trim();
+    if (!cleanDesc) continue;
+    
+    // Limit description length for readability
+    const shortDesc = cleanDesc.length > 60 
+      ? cleanDesc.substring(0, 60).trim() + '...' 
+      : cleanDesc;
+    
+    aliasMap.push(`- "${shortDesc}" → use "${tool.name}"`);
+  }
+  
+  const mcpExamples = aliasMap.length > 0
+    ? `\n\nTOOL SELECTION GUIDE (match user intent to tool description):
+${aliasMap.join('\n')}
 
-MATCH THE EXACT TOOL NAME to your task. "search" ≠ "research". "trigger-long-running" is NOT for research.`
+CRITICAL: The "tool" field MUST be the exact string from the right side (→ use "...").
+Never invent tool names. Copy CHARACTER BY CHARACTER from the list above.`
     : '';
 
   return `AVAILABLE TOOLS:
@@ -288,4 +305,55 @@ ${userLines}
 Built-in specialists:
 ${builtin}
 `;
+}
+
+/**
+ * Compact JSON contract block — placed at the END of system prompts for maximum
+ * attention from small models (7b). Replaces verbose rules sections.
+ * 
+ * Used by both ThinkPhase and SimplePath to enforce consistent JSON format.
+ */
+export function buildThinkContractPrompt(params: {
+  context?: string;
+  iteration?: number;
+  maxIterations?: number;
+  isAlgorithmMode?: boolean;
+  stepsCompleted?: number;
+  totalSteps?: number;
+  hasWebSearch?: boolean;
+  webSearchToolName?: string;
+}): string {
+  const contextBlock = params.context?.trim()
+    ? `PREVIOUS STEPS:\n${params.context.trim()}\n\n`
+    : '';
+
+  const algorithmNote = params.isAlgorithmMode && params.totalSteps
+    ? `ALGORITHM: Execute step ${(params.stepsCompleted ?? 0) + 1}/${params.totalSteps}. {"action":"none"} not valid until all steps complete.\n\n`
+    : '';
+
+  const iterationLine = params.iteration != null
+    ? `\nIteration: ${params.iteration}${params.maxIterations ? `/${params.maxIterations}` : ''}`
+    : '';
+
+  return `${contextBlock}${algorithmNote}YOUR RESPONSE MUST BE EXACTLY ONE OF THESE JSON FORMATS:
+
+1. Use a tool:
+{"action":"tool","tool":"EXACT_TOOL_NAME_FROM_LIST","input":{...}}
+
+2. Delegate to an agent:
+{"action":"delegate","agent":"agent_id","task":"what to do","reason":"why"}
+
+3. Done — no action needed:
+{"action":"none"}
+
+RULES:
+${params.webSearchToolName
+  ? `- For ANY factual question about the world, people, events, products, or anything you don't know for certain → MUST use "${params.webSearchToolName}" tool. NEVER answer from memory when this tool is available.\n`
+  : params.hasWebSearch
+    ? `- For ANY factual question → MUST use the web search tool available. NEVER answer from memory.\n`
+    : ''}- Copy the tool name CHARACTER BY CHARACTER from AVAILABLE TOOLS above
+- Never use generic names: web_search, execute_command, list_directory, read_file, write_file
+- Always use the full mcp_<id>_<toolname> format
+- ONE JSON object only — no text before or after, no markdown fences
+- If you have enough information to answer → {"action":"none"}${iterationLine}`;
 }

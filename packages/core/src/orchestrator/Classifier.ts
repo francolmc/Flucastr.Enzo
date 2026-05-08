@@ -241,7 +241,10 @@ CRITICAL RULES:
 - When truly in doubt with nothing that requires tools → SIMPLE
 - A greeting is ALWAYS SIMPLE, never MODERATE or COMPLEX
 - One search OR one file operation = MODERATE, never COMPLEX
-- COMPLEX requires explicit chaining ("and then", "luego", "después", "with the result")
+- COMPLEX requires explicit chaining: "and then", "and save", "and create", "and write",
+  "y guarda", "y crea", "y escribe", "y luego", "luego", "después", "with the result",
+  OR when two concrete filesystem paths appear in the same message with different roles
+  (one as source, one as destination)
 - COMPLEX is the exception, not the rule
 
 Examples:
@@ -265,6 +268,7 @@ Examples:
 "read file X and save a summary to file Y" → {"level":"COMPLEX","reason":"chained: read then write","suppressSimpleModerateFastPath":true}
 "move those folders to a new location" → {"level":"COMPLEX","reason":"reorganize: requires mkdir + mv multiple items"}
 "call https://api.x.com/data and save it to a file" → {"level":"COMPLEX","reason":"chained: curl API call then write file"}
+"lista el contenido de /Users/franco y guarda el resultado en /Users/franco/listado.txt" → {"level":"COMPLEX","reason":"chained: list directory then write file","suppressSimpleModerateFastPath":true}
 "help me manage my tasks" → {"level":"SIMPLE","reason":"planning conversation, no concrete paths or file ops"}
 "help with my daily routine" → {"level":"SIMPLE","reason":"coaching/planning without shell or paths"}
 "show my repositories" → {"level":"MODERATE","reason":"host-authenticated repos via CLI/tools on machine","prefersHostTools":true}
