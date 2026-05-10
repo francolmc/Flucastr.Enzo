@@ -198,82 +198,93 @@ export function extractOutputTemplates(skills: RelevantSkill[]): string {
   return `\nREQUIRED OUTPUT TEMPLATES:\n${templates.join('\n\n')}\n`;
 }
 
-export function buildToolsPrompt(tools: Tool[], userMessage?: string): string {
-  // Separate MCP tools from core memory tools
+export function buildToolsPrompt(tools: Tool[]): string {
   const mcpTools = tools.filter((t) => t.name.startsWith('mcp_'));
   const coreTools = tools.filter((t) => t.name === 'remember' || t.name === 'recall');
+  const allTools = [...mcpTools, ...coreTools];
 
-  // If no MCP tools available, only show core memory tools
-  const availableTools = mcpTools.length > 0 ? mcpTools : coreTools;
-
-  if (availableTools.length === 0) {
+  if (allTools.length === 0) {
     return `AVAILABLE TOOLS:
 (none — no MCP servers connected. Only conversation is available.)
 
-Casual replies, greetings, math, conceptual chat without side effects → write plain text only (no JSON).
-
-ONE JSON object per message when using JSON — no prose before or after it.`;
+Plain text only — no JSON needed for casual replies.`;
   }
 
-  const useFullSchema = process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA !== 'false';
-  const toolList = availableTools
-    .map(
-      (tool) => `- **${tool.name}**: ${tool.description}
-  Input: ${JSON.stringify(useFullSchema ? (tool.parameters ?? {}) : (tool.parameters?.properties ?? {}), null, 0)}`
-    )
+  const exactNames = allTools.map((t) => t.name).join(', ');
+
+  const aliasLines = buildAliasMap(allTools);
+
+  const toolList = allTools
+    .map((t) => `  "${t.name}" — ${t.description}`)
     .join('\n');
 
-  const exactNames = availableTools.map((t) => t.name).join(', ');
-
-  const mcpNote = mcpTools.length > 0
-    ? `\n\nMCP tools use the format mcp_<serverId>_<toolName>. Use the exact name from the list above.`
-    : '\n\nCore memory tools available for saving and recalling user information.';
-
-  // Build alias map 100% from tool descriptions (no name-based detection)
-  const aliasMap: string[] = [];
-  
-  for (const tool of mcpTools) {
-    const desc = (tool.description ?? '').toLowerCase().trim();
-    if (!desc) continue;
-    
-    // Extract meaningful description (remove MCP prefix if present)
-    const cleanDesc = desc.replace(/^\[mcp:\s*[^\]]+\]\s*/i, '').trim();
-    if (!cleanDesc) continue;
-    
-    // Limit description length for readability
-    const shortDesc = cleanDesc.length > 60 
-      ? cleanDesc.substring(0, 60).trim() + '...' 
-      : cleanDesc;
-    
-    aliasMap.push(`- "${shortDesc}" → use "${tool.name}"`);
-  }
-  
-  const mcpExamples = aliasMap.length > 0
-    ? `\n\nTOOL SELECTION GUIDE (match user intent to tool description):
-${aliasMap.join('\n')}
-
-CRITICAL: The "tool" field MUST be the exact string from the right side (→ use "...").
-Never invent tool names. Copy CHARACTER BY CHARACTER from the list above.`
-    : '';
-
-  return `AVAILABLE TOOLS:
+  return `AVAILABLE TOOLS (use EXACT names in JSON — no shortcuts):
 ${toolList}
-${mcpNote}${mcpExamples}
 
-CANONICAL TOOL CALL (only when execution is needed):
-{"action":"tool","tool":"<exact_name>","input":{...}}
+ALIAS MAP — when you want to do this, use this exact tool name:
+${aliasLines}
 
-The "tool" value MUST be one of these strings exactly — never invent or rename tools:
-${exactNames}
+MEMORY TOOLS (always available):
+  "remember" — save a fact about the user
+  "recall" — retrieve saved facts
 
-Casual replies, greetings, math, conceptual chat without side effects → write plain text only (no JSON).
-To delegate:
-{"action":"delegate","agent":"agent_name","task":"description","reason":"why"}
+CANONICAL TOOL CALL:
+{"action":"tool","tool":"<EXACT_NAME_FROM_LIST_ABOVE>","input":{...}}
 
-When in a reasoning loop with nothing left to execute:
-{"action":"none"}
+CRITICAL: The "tool" value must be copied character-by-character from the list above.
+Never use: web_search, execute_command, list_directory, read_file, write_file
+Always use the full mcp_<id>_<action> name.
 
-ONE JSON object per message when using JSON — no prose before or after it.`;
+Valid exact names for this session: ${exactNames}
+
+Plain text only for casual replies, greetings, math — no JSON needed.
+{"action":"none"} when reasoning is complete and no tool is needed.
+ONE JSON object per message — no prose before or after.`;
+}
+
+function buildAliasMap(tools: Tool[]): string {
+  const aliases: Array<{ patterns: string[]; toolName: string }> = [];
+
+  for (const tool of tools) {
+    const name = tool.name;
+    const desc = (tool.description ?? '').toLowerCase();
+
+    const shortName = name.split('_').slice(2).join('_');
+
+    const patterns: string[] = [];
+
+    if (shortName.includes('list_directory') || shortName.includes('list_dir')) {
+      patterns.push('list folder', 'show directory', 'ls', 'listar carpeta', 'mostrar carpeta');
+    } else if (shortName.includes('read_file') || shortName.includes('read_text')) {
+      patterns.push('read file', 'leer archivo', 'show file contents');
+    } else if (shortName.includes('write_file') || shortName.includes('create_file')) {
+      patterns.push('write file', 'create file', 'save file', 'guardar archivo', 'crear archivo');
+    } else if (shortName.includes('web') && shortName.includes('search')) {
+      patterns.push('web search', 'search internet', 'buscar en internet', 'buscar web');
+    } else if (shortName.includes('search') && !shortName.includes('web')) {
+      patterns.push('search files', 'find files', 'buscar archivos');
+    } else if (shortName.includes('move_file') || shortName.includes('move')) {
+      patterns.push('move file', 'mover archivo', 'rename file');
+    } else if (shortName.includes('create_directory') || shortName.includes('mkdir')) {
+      patterns.push('create folder', 'mkdir', 'crear carpeta');
+    } else if (shortName.includes('directory_tree') || shortName.includes('tree')) {
+      patterns.push('directory tree', 'folder tree', 'árbol de carpetas');
+    } else if (shortName.includes('get_file_info') || shortName.includes('file_info')) {
+      patterns.push('file info', 'file details', 'info del archivo');
+    } else if (shortName.includes('edit_file')) {
+      patterns.push('edit file', 'modify file', 'editar archivo');
+    }
+
+    if (patterns.length > 0) {
+      aliases.push({ patterns, toolName: name });
+    }
+  }
+
+  if (aliases.length === 0) return '(No alias mapping available — use exact tool names above)';
+
+  return aliases
+    .map((a) => `- "${a.patterns.join('" / "')}" → use "${a.toolName}"`)
+    .join('\n');
 }
 
 /** THINK-phase catalog: user preset ids + built-in delegation specialists. */
