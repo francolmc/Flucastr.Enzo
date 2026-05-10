@@ -420,32 +420,19 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   })();
 
   if (isModerate && (!normalizedContent.startsWith('{') || !rawLooksLikeToolCall)) {
-    const strictPrompt = persistToPathRequested
-      ? `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON. The user asked to CREATE or SAVE a file at an absolute path on this machine — you MUST use write_file.
+    const strictPrompt = `You must respond with ONLY a JSON tool call. No prose, no markdown, no backticks.
 
-Output ONLY one JSON object (no prose, no markdown fences):
-{"action":"tool","tool":"write_file","input":{"path":"<verbatim absolute path from the user's message>","content":"<complete file body>"}}
+Available tools (use EXACT names):
+${exactAllowlist}
 
-Use the exact path from the user's message. Do not invent tool names.`
-      : moderateRetryRequiresToolJsonOnly
-        ? `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON. This turn mandated a LOCKED canonical tool invocation (calendar, mailbox, prefersHostTools/host CLI, SKILL_FASTPATH, or persisted file body).
+${webSearchToolName ? `For web searches use: "${webSearchToolName}"` : ''}
 
-Emit ONLY **one** JSON object (no prose, no markdown fences):
-{"action":"tool","tool":"<name>","input":{...}}
-where **<name>** MUST be copied exactly from: ${exactAllowlist}.${declarativeExecutable && skillFastPathLockActive ? ` Prefer "${declarativeExecutable.tool}".${declarativeExecutable.commandHint ? ` Align execute_command payloads with intent such as ${JSON.stringify(declarativeExecutable.commandHint)}.` : ''}` : ''}
+Format:
+{"action":"tool","tool":"EXACT_TOOL_NAME","input":{...}}
 
-Do not substitute web_search for host-visible data blocks. Never invent tool names or describe actions you cannot execute via JSON here.`
-        : `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON for a request that may need tools.
+User request: ${input.message}
 
-Return EXACTLY ONE of:
-A) One JSON object only (no prose): {"action":"tool","tool":"<name>","input":{...}}
-   where <name> is copied exactly from: ${exactAllowlist}
-B) If the user's message needs no tool-backed action: one short plain-text reply — no JSON, no markdown.
-
-Never invent tool names.`;
+Pick the correct tool and respond with JSON only.`;
     try {
       const retry = await withTimeout(
         baseProvider.complete({
