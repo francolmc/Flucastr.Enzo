@@ -352,7 +352,7 @@ export function buildThinkContractPrompt(params: {
   webSearchToolName?: string;
 }): string {
   const contextBlock = params.context?.trim()
-    ? `PREVIOUS STEPS:\n${params.context.trim()}\n\n`
+    ? `PREVIOUS STEPS:\n${params.context.trim()}\n\nIf the above steps already completed the task → respond with {"action":"none"} now.\n\n`
     : '';
 
   const algorithmNote = params.isAlgorithmMode && params.totalSteps
@@ -386,5 +386,6 @@ ${params.webSearchToolName
 - Never use generic names: web_search, execute_command, list_directory, read_file, write_file
 - Always use the full mcp_<id>_<toolname> format
 - ONE JSON object only — no text before or after, no markdown fences
-- If you have enough information to answer → {"action":"none"}${iterationLine}`;
+- If you have enough information to answer → {"action":"none"}
+- If PREVIOUS STEPS already contain a successful tool result → emit {"action":"none"} immediately to trigger synthesis. Do NOT ask follow-up questions.${iterationLine}`;
 }
