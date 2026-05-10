@@ -195,9 +195,14 @@ Extract ONLY facts that fit these EXACT keys:
 - "preferences": their preferences or likes
 - "routines": daily routines or habits
 - "family": family information
-- "other": any other durable personal fact that doesn't fit above keys
+- "other": ONLY for concrete, durable personal facts not covered above — like hobbies, pets, important life events. NOT for: conversation tone, language used, greetings, task requests, file paths, search queries, or anything temporary.
 
-VALIDATION RULES:
+STRICT RULES FOR "other":
+- If the conversation is just a greeting, task request, or casual exchange → {"facts": []}
+- Never save: language detected, user's tone, that user asked for help, file paths, search terms, OS info, temporary states
+- A fact is worth saving ONLY if it would be useful context in a future conversation weeks later
+
+General validation:
 - "city" must be a geographic location — NEVER a company, product, or service name
 - "employer" is for companies and organizations — NEVER a city or country
 - If unsure which key fits → use "other" with a descriptive value
