@@ -87,6 +87,25 @@ export function createMCPRouter(mcpRegistry: MCPRegistry): Router {
     }
   });
 
+  // PUT /api/mcp/servers/:id - Actualizar servidor
+  router.put('/api/mcp/servers/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      console.log(`[API MCP] PUT /mcp/servers/${id} called with body:`, req.body);
+      const updates = req.body as Partial<MCPServerConfig>;
+      await mcpRegistry.updateServer(id, updates);
+      const server = mcpRegistry.getServer(id);
+      if (server) {
+        res.json({ success: true, server: { ...server.serverConfig, ...server.getState() } });
+      } else {
+        res.status(404).json({ error: 'Server not found' });
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: errorMsg });
+    }
+  });
+
   // POST /api/mcp/servers/:id/reconnect - Reconectar servidor
   router.post('/api/mcp/servers/:id/reconnect', async (req: Request, res: Response) => {
     try {

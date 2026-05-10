@@ -8,35 +8,19 @@ export interface FlowDetection {
   confidence: number;
 }
 
-const TOPIC_SHIFT_RE =
-  /\b(dejemos\s+eso|olvida\s+eso|cambiemos\s+de\s+tema|otro\s+tema|hablemos\s+de\s+otra\s+cosa|new\s+topic|let'?s\s+talk\s+about|switching\s+gears|moving\s+on)\b/i;
-
-const FOLLOW_START_RE =
-  /^(y\s+eso|eso\s+qu[eé]|qu[eé]\s+es\s+eso|lo\s+anterior|lo\s+de\s+antes|segu[ií]|sigue|contin[uú]a|do\s+it|proceed|go\s+ahead|what\s+about\s+that|y\s+entonces)\b/i;
-
 /**
- * Lightweight follow-up vs topic shift detection (heuristics + regex).
- * Does not replace the model; gives explicit hints for continuity.
+ * Structural follow-up vs topic shift detection — no language-specific keywords.
+ * Uses only message length and dialogue history as signals.
+ * The LLM has full conversation context and handles semantic flow detection.
  */
 export function detectFollowUp(userMessage: string, recentDialogue: Message[]): FlowDetection {
   const m = userMessage.trim();
-  if (TOPIC_SHIFT_RE.test(m)) {
-    return { kind: 'topic_shift', confidence: 0.85 };
-  }
   if (recentDialogue.length === 0) {
     return { kind: 'new_topic', confidence: 0.75 };
   }
-  if (FOLLOW_START_RE.test(m.trim())) {
-    return { kind: 'follow_up', confidence: 0.82 };
-  }
-  if (
-    /\b(the\s+same|that\s+folder|those\s+files|ese\s+archivo|esa\s+carpeta|eso\s+mismo|lo\s+mismo)\b/i.test(m)
-  ) {
-    return { kind: 'follow_up', confidence: 0.78 };
-  }
   const short = m.length < 48 && !/[.!?]{2,}/.test(m);
-  if (short && /\b(why|how\s+come|y\s+eso|eso)\b/i.test(m)) {
-    return { kind: 'follow_up', confidence: 0.55 };
+  if (short) {
+    return { kind: 'follow_up', confidence: 0.60 };
   }
   return { kind: 'new_topic', confidence: 0.45 };
 }

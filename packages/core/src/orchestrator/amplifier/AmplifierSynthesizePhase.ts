@@ -15,6 +15,8 @@ const SUBTASK_GUARD_MARK = '(SubtaskGuard)';
 export type SynthesizePhaseDeps = {
   baseProvider: LLMProvider;
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  /** Mutable accumulator — caller passes by reference to collect real token counts. */
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
 
 export async function runSynthesizePhase(
@@ -25,7 +27,7 @@ export async function runSynthesizePhase(
   modelsUsed: Set<string>,
   resolvedSkills: RelevantSkill[] = []
 ): Promise<Step> {
-  const { baseProvider, withTimeout } = deps;
+  const { baseProvider, withTimeout, usageAccumulator } = deps;
   const startTime = Date.now();
   const userLanguage = input.userLanguage || 'en';
   const skillsForPrompt = capRelevantSkillsForPrompt(resolvedSkills);
@@ -75,6 +77,10 @@ The language of the context does NOT affect the language of your response.`;
   );
 
   modelsUsed.add(baseProvider.model);
+  if (usageAccumulator) {
+    usageAccumulator.inputTokens += response.usage?.inputTokens ?? 0;
+    usageAccumulator.outputTokens += response.usage?.outputTokens ?? 0;
+  }
 
   return {
     iteration,

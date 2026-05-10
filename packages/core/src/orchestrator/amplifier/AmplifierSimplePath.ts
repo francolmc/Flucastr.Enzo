@@ -22,9 +22,9 @@ import {
   buildRelevantSkillsSection,
   capRelevantSkillsForPrompt,
   extractOutputTemplates,
+  buildThinkContractPrompt,
 } from './AmplifierLoopPromptHelpers.js';
 import {
-  computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt,
   describeHostForExecuteCommandPrompt,
   describeLocalWallClockPromptLine,
   humanOsLabel,
@@ -49,19 +49,11 @@ import type { RelevantSkill } from '../SkillResolver.js';
 import type { CapabilityResolver } from '../CapabilityResolver.js';
 import {
   messageIndicatesPersistedWriteToAbsolutePath,
-  messageLooksLikeShellCommandExecutionRequest,
-  resolveCalendarListFastPathIntent,
-  resolveCalendarScheduleFastPathIntent,
 } from '../Classifier.js';
-import {
-  mailboxUnreadSummaryLockCorpus,
-  messageLooksLikeMailboxUnreadStatsQuery,
-  messageLooksLikeMailboxUnreadSummaryQuery,
-} from '../mailboxUnreadIntent.js';
 import { resolveTopSkillDeclarativeExecutable } from '../skillFastPathLock.js';
 import { extractFilePath } from '../../utils/PathExtractor.js';
 
-const FAST_PATH_MAX_TOKENS_DEFAULT = 384;
+const FAST_PATH_MAX_TOKENS_DEFAULT = 768;
 const FAST_PATH_MAX_TOKENS_PERSIST = 2048;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_DEFAULT = 220;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_PERSIST = 2048;
@@ -90,6 +82,8 @@ export type SimpleModeratePathContext = {
   ) => Promise<{ toolName: string; toolInput: any } | null>;
   verifyBeforeSynthesize?: boolean;
   capabilityResolver?: CapabilityResolver;
+  /** Mutable accumulator — caller passes by reference to collect real token counts. */
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
 
 function resolveHomeDir(input: AmplifierInput): string {
@@ -146,10 +140,11 @@ async function synthesizeFastPathToolOutput(params: {
   verifyBeforeSynthesize: boolean;
   stageMetrics: StageMetrics;
   log: AmplifierLoopLog;
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 }): Promise<string> {
   const verifyStart = Date.now();
   const verified = await runVerifyBeforeSynthesizeIfEnabled(
-    { baseProvider: params.baseProvider, withTimeout: params.withTimeout },
+    { baseProvider: params.baseProvider, withTimeout: params.withTimeout, usageAccumulator: params.usageAccumulator },
     params.input,
     params.toolOutput,
     params.steps.length + 1,
@@ -251,6 +246,10 @@ ${
     );
     if (synthesisResponse) {
       recordStageMetric(params.stageMetrics, 'synthesize', Date.now() - synthStart, true);
+      if (params.usageAccumulator) {
+        params.usageAccumulator.inputTokens += synthesisResponse.usage?.inputTokens ?? 0;
+        params.usageAccumulator.outputTokens += synthesisResponse.usage?.outputTokens ?? 0;
+      }
     }
     return synthesisResponse?.content?.trim() ? synthesisResponse.content.trim() : params.toolOutput;
   } catch (synthErr) {
@@ -261,7 +260,8 @@ ${
 }
 
 /**
- * Two-phase fallback: generate file body then write_file.execute when JSON fast path failed but the user requested persistence.
+ * Two-phase fallback: generate file body then execute via MCP tools when available.
+ * If no MCPs connected, return appropriate message.
  */
 async function attemptPersistWriteRecovery(params: {
   input: AmplifierInput;
@@ -278,111 +278,24 @@ async function attemptPersistWriteRecovery(params: {
   relevantSkillsSection: string;
   requiredTemplateSection: string;
 }): Promise<string> {
-  const writeTool = params.executableTools.find((t) => t.name === 'write_file');
-  if (!writeTool) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'A file save was requested, but write_file is not available in this environment — nothing was written to disk.'
-      : 'Pediste guardar un archivo, pero write_file no está disponible en este entorno — no se escribió nada en disco.';
-  }
-
-  const filePath = extractFilePath(params.input.message);
-  if (!filePath) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'I could not detect the file path in your message. Send the full absolute path (for example /home/you/file.md).'
-      : 'No pude detectar la ruta del archivo en tu mensaje. Indica la ruta absoluta completa (por ejemplo /home/usuario/archivo.md).';
-  }
-
-  const genSystem = `${buildAssistantIdentityPrompt(params.input)}
-The user wants a new file created or overwritten at a path they specified. Output ONLY the full body of that file (Markdown or plain text as appropriate). No preamble, no closing commentary, no claim that the file was saved on disk. Start directly with the file content.`;
-
-  let body = '';
-  try {
-    const gen = await params.withTimeout(
-      params.baseProvider.complete({
-        messages: [
-          { role: 'system', content: genSystem },
-          { role: 'user', content: params.input.message },
-        ],
-        temperature: 0.5,
-        maxTokens: 2048,
-      }),
-      180_000,
-      'persist recovery content gen'
-    );
-    body = (gen.content ?? '').trim();
-  } catch (e) {
-    params.log.error('[AmplifierLoop] persist recovery content gen failed:', e);
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'I could not generate the file content. Please try again.'
-      : 'No pude generar el contenido del archivo. ¿Podés intentar de nuevo?';
-  }
-
-  if (!body) {
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'Generated content was empty; the file was not written. Please rephrase your request.'
-      : 'El contenido generado quedó vacío; no escribí el archivo. ¿Podés reformular el pedido?';
-  }
-
-  const preparedInput = { path: filePath, content: body };
-  const validationError = validateToolInput(
-    'write_file',
-    preparedInput,
-    params.executableTools,
-    params.mcpRegistry
+  // Check if MCP filesystem tools are available
+  const mcpTools = params.mcpRegistry?.getAllTools() ?? [];
+  const writeTools = mcpTools.filter(t => 
+    t.name.includes('write') || t.name.includes('create') || t.name.includes('file')
   );
-  if (validationError) {
+
+  if (writeTools.length === 0) {
     const lang = (params.input.userLanguage ?? 'es').toLowerCase();
     return lang.startsWith('en')
-      ? `Could not prepare the write operation: ${validationError}`
-      : `No pude preparar la escritura: ${validationError}`;
+      ? 'No filesystem tools available. To write files, please connect a MCP filesystem server. Without MCP tools, I can only chat or use memory (remember/recall).'
+      : 'No hay herramientas de sistema de archivos disponibles. Para escribir archivos, conectá un servidor MCP de filesystem. Sin herramientas MCP, solo puedo conversar o usar memoria (remember/recall).';
   }
 
-  const actStart = Date.now();
-  let rawToolOutput = '';
-  try {
-    const result = await writeTool.execute(preparedInput);
-    rawToolOutput = extractToolOutput(result, { maxChars: 3000 });
-    const actOk = result.success && !rawToolOutput.toLowerCase().startsWith('error');
-    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, actOk);
-    if (!result.success) {
-      const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-      const fallbackErr = lang.startsWith('en') ? 'Error writing the file.' : 'Error al escribir el archivo.';
-      return rawToolOutput || result.error || fallbackErr;
-    }
-  } catch (execErr) {
-    recordStageMetric(params.stageMetrics, 'act', Date.now() - actStart, false);
-    params.log.error('[AmplifierLoop] persist recovery write failed:', execErr);
-    const lang = (params.input.userLanguage ?? 'es').toLowerCase();
-    return lang.startsWith('en')
-      ? 'There was an error writing the file to disk.'
-      : 'Tuve un error al escribir el archivo en disco.';
-  }
-
-  params.toolsUsed.add('write_file');
-  params.log.info(`[AmplifierLoop] persist recovery: write_file ok at ${filePath}`);
-
-  if (shouldReturnRawToolOutput('write_file', params.input.message, rawToolOutput)) {
-    return rawToolOutput;
-  }
-
-  return synthesizeFastPathToolOutput({
-    baseProvider: params.baseProvider,
-    withTimeout: params.withTimeout,
-    input: params.input,
-    relevantSkillsSection: params.relevantSkillsSection,
-    requiredTemplateSection: params.requiredTemplateSection,
-    execName: 'write_file',
-    toolOutput: rawToolOutput,
-    steps: params.steps,
-    modelsUsed: params.modelsUsed,
-    verifyBeforeSynthesize: params.verifyBeforeSynthesize,
-    stageMetrics: params.stageMetrics,
-    log: params.log,
-  });
+  // MCP tools available - model should use them directly, but we end up here if it didn't
+  const lang = (params.input.userLanguage ?? 'es').toLowerCase();
+  return lang.startsWith('en')
+    ? 'Use the available MCP filesystem tools to complete this task.'
+    : 'Usá las herramientas MCP de filesystem disponibles para completar esta tarea.';
 }
 
 /**
@@ -409,6 +322,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     requestToolInputCorrection,
     verifyBeforeSynthesize = false,
     capabilityResolver,
+    usageAccumulator,
   } = ctx;
 
   const isModerate = classifiedLevel === ComplexityLevel.MODERATE;
@@ -417,18 +331,6 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const mergedToolDefs = mergeAvailableToolDefinitions(input, mcpRegistry);
   const toolsPrompt = buildToolsPrompt(mergedToolDefs);
 
-  const isCapabilityQuery =
-    /\b(qu[eé] puedes|what can you|capabilities|habilidades|skills|funciones|qu[eé] sabes|what do you|qu[eé] eres capaz|qu[eé] haces|what are you)\b/i.test(
-      input.message
-    );
-  let skillListSection = '';
-  if (isCapabilityQuery && skillRegistry) {
-    const enabledSkills = skillRegistry.getEnabled();
-    if (enabledSkills.length > 0) {
-      const skillLines = enabledSkills.map((s) => `- ${s.metadata.name}: ${s.metadata.description}`).join('\n');
-      skillListSection = `\nAVAILABLE SKILLS (list these when asked about capabilities):\n${skillLines}\n`;
-    }
-  }
   const skillsForPrompt = capRelevantSkillsForPrompt(preResolvedSkills);
   const relevantSkillsSection = buildRelevantSkillsSection(skillsForPrompt);
   const requiredTemplateSection = extractOutputTemplates(skillsForPrompt);
@@ -437,303 +339,55 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
 
   const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
 
-  const toolUsageRule = isModerate
-    ? `MODERATE ROUTING: If the user needs disk/shell, web search, memory, email, MCP, persisted calendar/agenda (**calendar**, with ISO timestamps), or any side effect on this host, respond with exactly ONE JSON tool call; "tool" MUST be one of: ${exactAllowlist}. If the message is only casual chat, a greeting, math, your identity, or conceptual talk with no need for tools, respond in plain text only (no JSON). Never invent tool names. Never claim an event/reminder was "scheduled" or "confirmed" unless this turn includes executed **calendar** JSON — prose alone does not write the web agenda.${persistToPathRequested ? ` The user named an absolute FILE path AND asked to CREATE/SAVE/WRITE content there → you MUST use write_file in this response (verbatim path + full content); do not claim success in prose alone.` : ''}`
-    : persistToPathRequested
-      ? `The user expects a REAL file written on disk at the path they gave. Respond with exactly ONE {"action":"tool","tool":"write_file","input":{"path":"…","content":"…"}} JSON (verbatim path + full body). Plain text claiming the file "was created/saved/already exists" without that JSON would be dishonest — if unsure, omit false claims or ask briefly; never pretend disk I/O ran.`
-      : `If you can answer directly without tools, respond with plain text.`;
-
-  const moderateToolJsonOnly = isModerate
-    ? `
-
-CRITICAL: When you need a tool, respond with ONLY the JSON object.
-No text before, no text after, no explanation.
-When the user needs no tool-backed action, reply in plain text and skip JSON entirely.
-WRONG: "Ejecutando el comando... {"action":"tool"...}"
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"ls -la /home/franco"}}
-
-If you include any text outside the JSON, the tool will not execute.
-`
-    : '';
-
   const homeDir = resolveHomeDir(input);
   const osLabel = resolveOsLabel(input);
-  const calendarCorpus = [input.originalMessage, input.message].filter(Boolean).join('\n');
-  const mailboxUnreadSummarizeCorpus = mailboxUnreadSummaryLockCorpus({
-    message: input.message,
-    originalMessage: input.originalMessage,
-    conversation: input.conversation,
-  });
-  const calendarRoutingInput = {
-    message: input.message,
-    originalMessage: input.originalMessage,
-    suggestedTool: input.suggestedTool,
-    calendarIntent: input.calendarIntent,
-    prefersHostTools: input.prefersHostTools,
-  };
-  const classifierSchedulePersist =
-    isModerate &&
-    executableTools.some((t) => t.name === 'calendar') &&
-    resolveCalendarScheduleFastPathIntent(calendarRoutingInput);
-
-  const classifierCalendarList =
-    isModerate &&
-    executableTools.some((t) => t.name === 'calendar') &&
-    !classifierSchedulePersist &&
-    resolveCalendarListFastPathIntent(calendarRoutingInput);
-
-  const listWindowIso = classifierCalendarList
-    ? computeInclusiveUtcIsoRangeForPersistedCalendarListLexicalPrompt(calendarCorpus, input.runtimeHints)
-    : null;
-
-  const mandatoryCalendarBlock =
-    classifierSchedulePersist
-      ? `
-
-━━━ SCHEDULE_PERSIST_LOCKED ━━━
-The user explicitly asked to save a timed entry to Enzo persisted agenda (SQLite; visible in web UI Agenda). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no greetings, no "listo").
-{"action":"tool","tool":"calendar","input":{"action":"add","title":"<short>","start_iso":"<ISO8601>","notes":"<detail>","end_iso":""}}
-CLOCK LOCK — **no invented offset:** combine the civil **date** from the **User local time** line with the user's wall-clock **HH:MM** (24h unless they wrote am/pm). Build **start_iso** as that exact local instant encoded in ISO8601 with a real **Z / numeric offset**, not a guessed +3h "correction". If they said **hoy/today** with 15:50, **start_iso** MUST land on **the same calendar day** as that line — never silently roll to **tomorrow** unless they asked for tomorrow/mañana. Omit end_iso entirely if absent (or use ""). Title should reflect what to do (e.g. "Tomar medicamento"). Prose confirmations without this JSON leave the agenda empty — forbidden here.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
-
-  const mandatoryCalendarListBlock =
-    classifierCalendarList && listWindowIso
-      ? `
-
-━━━ CALENDAR_LIST_LOCKED ━━━
-The user asked to **list** entries from their **Enzo persisted agenda** (same SQLite DB as the web UI Agenda — not Google Calendar). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "no tengo acceso a tu calendario", no web_search).
-{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"${listWindowIso.from_iso}","to_iso":"${listWindowIso.to_iso}"}}
-Ranges are UTC instants inclusive; the window matches the user's asked day scope (today / mañana / esta semana) in their **User local time** zone. Plain text answers without this JSON are blocked here.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
-
-  const classifierMailboxUnread =
-    isModerate &&
-    executableTools.some((t) => t.name === 'email_unread_count') &&
-    (input.mailboxIntent === 'unread_stats' || messageLooksLikeMailboxUnreadStatsQuery(calendarCorpus));
-
-  const mandatoryMailboxUnreadBlock = classifierMailboxUnread
-    ? `
-
-━━━ MAILBOX_UNREAD_LOCKED ━━━
-The user asked for **counts of unread emails** in mailboxes configured on THIS Enzo host (Gmail, Outlook/Microsoft, IMAP connected in Correo — not hypothetical). For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no "open your browser yourself", no simulation).
-{"action":"tool","tool":"email_unread_count","input":{}}
-Optional: narrow to one mailbox with {"action":"tool","tool":"email_unread_count","input":{"accountId":"<configured id>"}} if they named a single account id. Plain text totals without executing this JSON are blocked here — the counts come from Gmail label INBOX unread, Outlook Graph inbox \`unreadItemCount\`, or IMAP UNSEEN SEARCH.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
-
-  const classifierMailboxUnreadSummary =
-    isModerate &&
-    executableTools.some((t) => t.name === 'read_email') &&
-    (input.mailboxIntent === 'unread_summarize' ||
-      messageLooksLikeMailboxUnreadSummaryQuery(mailboxUnreadSummarizeCorpus));
-
-  const mandatoryMailboxUnreadSummarizeBlock = classifierMailboxUnreadSummary
-    ? `
-
-━━━ MAILBOX_UNREAD_SUMMARY_LOCKED ━━━
-The user asked to **inspect or summarise UNREAD emails** among connected Gmail / Outlook / IMAP accounts on THIS host. For this turn ONLY: respond with a single canonical JSON tool call and nothing else (no simulations, no "I need permission").
-{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":32}}
-Higher limit is allowed if explicitly needed (still ≤50). Omit accountId unless they named exactly one mailbox id — unread_only MUST stay true unless they pivoted entirely away from unread. Afterwards you summarize ONLY lines returned by read_email — never fabricated subjects/companies/courses.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
 
   const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
-  const hasCalendarListClassifierWindow = Boolean(classifierCalendarList && listWindowIso);
   const skillFastPathLockActive =
     isModerate &&
-    declarativeExecutable != null &&
-    !classifierSchedulePersist &&
-    !hasCalendarListClassifierWindow &&
-    !classifierMailboxUnread &&
-    !classifierMailboxUnreadSummary;
-
-  // Send email classifier lock: when suggestedTool is send_email, force using the send_email tool
-  const sendEmailClassifierLockActive =
-    isModerate &&
-    input.suggestedTool === 'send_email' &&
-    executableTools.some((t) => t.name === 'send_email');
-
-  // Shell command execution lock: when user explicitly says "execute it/run it" with prefersHostTools
-  const shellCommandExecutionLockActive =
-    input.prefersHostTools === true &&
-    messageLooksLikeShellCommandExecutionRequest(input.message) &&
-    executableTools.some((t) => t.name === 'execute_command');
+    declarativeExecutable != null;
 
   const hostToolsClassifierLockActive =
     isModerate &&
     input.prefersHostTools === true &&
     declarativeExecutable == null &&
-    !classifierSchedulePersist &&
-    !hasCalendarListClassifierWindow &&
-    !classifierMailboxUnread &&
-    !classifierMailboxUnreadSummary &&
-    !sendEmailClassifierLockActive &&
-    !shellCommandExecutionLockActive &&
-    executableTools.some((t) => t.name === 'execute_command');
-
-  const mandatorySendEmailBlock = sendEmailClassifierLockActive
-    ? `
-
-━━━ SEND_EMAIL_CLASSIFIER_LOCKED ━━━
-The classifier flagged **send_email**: you MUST send an email using the **send_email** tool.
-For this turn ONLY: respond with exactly **ONE** canonical JSON tool call to send_email.
-Extract from the conversation: recipient email address, subject line, and body content.
-If any information is missing (recipient, subject, or body), ask the user with a plain text response instead of calling the tool.
-Canonical shape: {"action":"tool","tool":"send_email","input":{"to":"recipient@example.com","subject":"Subject line","body":"Email body content"}}
-Do NOT simulate sending — you MUST use the send_email tool.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
-
-  const mandatoryHostToolsClassifierBlock = hostToolsClassifierLockActive
-    ? `
-
-━━━ HOST_TOOLS_CLASSIFIER_LOCKED ━━━
-The classifier flagged **prefersHostTools**: the answer MUST come from **THIS host's** integrations / authenticated CLIs (see RELEVANT SKILLS and execute_command), NOT web_search and NOT unsolicited **calendar**.
-For this turn ONLY: respond with exactly **ONE** canonical JSON tool call.
-Prefer **execute_command** when GitHub/GitLab/Docker/kubectl/shell tooling matches what the user asked (build the command line from HOST context + SKILLS — no fabricated calendar ranges).
-The registered **tool** id is always **execute_command** — never use raw shell binaries (\`gh\`, \`git\`, \`docker\`, …) as the JSON \`tool\` field (they belong inside \`input.command\`).
-Canonical shape includes: {"action":"tool","tool":"execute_command","input":{"command":"..."}}
-Do **NOT** emit **calendar** unless the user wording explicitly asks for appointments/agenda/meetings — "lista … repositorios" is NOT agenda.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    : '';
-
-  const mandatorySkillFastPathBlock =
-    skillFastPathLockActive && declarativeExecutable
-      ? `
-
-━━━ SKILL_FASTPATH_LOCKED ━━━
-Top RELEVANT SKILL **${declarativeExecutable.skillName}** declares exactly **one** registered tool step: **${declarativeExecutable.tool}**. Follow RELEVANT SKILLS fully for schemas and rationale.
-For this turn ONLY: respond with a **single** canonical JSON tool invocation and nothing else — no greetings, no "grant me access/upload a profile URL", no simulation, no fenced markdown around the JSON.${
-          declarativeExecutable.commandHint
-            ? `
-
-Strong shell hint when emitting **execute_command** (adapt to HOST OS/user paths if necessary):
-${declarativeExecutable.commandHint}`
-            : ''
-        }
-Do **not** use web_search for this locked workflow. Omit any prose outside the JSON line.${
-          declarativeExecutable.tool === 'execute_command'
-            ? ' Canonical shape uses **execute_command** as tool id — never `"tool":"gh"`; put **gh …** inside **input.command** only: {"action":"tool","tool":"execute_command","input":{"command":"..."}}.'
-            : ''
-        }
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-      : '';
+    executableTools.some((t) => t.name.startsWith('mcp_'));
 
   const moderateRetryRequiresToolJsonOnly =
     isModerate &&
     (persistToPathRequested ||
-      classifierSchedulePersist ||
-      hasCalendarListClassifierWindow ||
-      classifierMailboxUnread ||
-      classifierMailboxUnreadSummary ||
-      sendEmailClassifierLockActive ||
       skillFastPathLockActive ||
       hostToolsClassifierLockActive);
 
-  // SIMPLE path tool enforcement: when user explicitly asks to execute a command
-  const simplePathRequiresToolJson =
-    !isModerate &&
-    shellCommandExecutionLockActive;
+  const webSearchTool = mergedToolDefs.find(t => {
+    const name = t.name.toLowerCase();
+    const desc = (t.description ?? '').toLowerCase();
+    return (
+      (name.includes('web') && name.includes('search')) ||
+      name.includes('web-search') ||
+      (name.endsWith('_search') && (
+        desc.includes('web') ||
+        desc.includes('internet') ||
+        desc.includes('duckduckgo') ||
+        desc.includes('brave') ||
+        desc.includes('search the web') ||
+        desc.includes('buscar en internet')
+      ))
+    );
+  });
+  const hasWebSearch = webSearchTool != null;
+  const webSearchToolName = webSearchTool?.name;
 
   const memorySection = buildMemoryPromptSection(input);
-  const systemPrompt = `${buildAssistantIdentityPrompt(input)}
-${memorySection ? `\n${memorySection}\n` : ''}
-${buildRuntimeThreeLayersContractPrompt()}
-
-${describeHostForExecuteCommandPrompt(input.runtimeHints)}
-${describeLocalWallClockPromptLine(input.runtimeHints)}
-${mandatoryCalendarBlock}${mandatoryCalendarListBlock}${mandatoryMailboxUnreadBlock}${mandatoryMailboxUnreadSummarizeBlock}${mandatorySendEmailBlock}${mandatoryHostToolsClassifierBlock}${mandatorySkillFastPathBlock}${shellCommandExecutionLockActive ? `
-
-━━━ SHELL_COMMAND_LOCKED ━━━
-The user explicitly asked to EXECUTE a command ("ejecutalo", "run it", etc.).
-You MUST use the **execute_command** tool to run the command — never simulate output.
-Extract the command from context or ask if unclear.
-Canonical shape: {"action":"tool","tool":"execute_command","input":{"command":"gh repo list"}}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''}
-OS: ${osLabel}. Home directory: ${homeDir}. ALWAYS use absolute paths (e.g. ${homeDir}/Downloads, NOT /home/user/...).
-${input.prefersHostTools ? 'CLASSIFIER: prefersHostTools — treat this ask as answers from THIS host (tools/sessions/data already connected here), not generalized public web lookups.\n' : ''}
-
-${toolsPrompt}
-${skillListSection}
-${relevantSkillsSection}
-When a tool is required, respond ONLY with canonical JSON (no prose, no markdown fences):
-{"action":"tool","tool":"<exact_name_from_below>","input":{...}}
-
-Exact tool names registered in this runtime (includes MCP as listed above): ${exactAllowlist}
-
-CRITICAL: "action", "tool", "input" are CODE IDENTIFIERS — NEVER translate them to Spanish or any other language.
-Never invent tool names. If you cannot complete the task with these tools, respond in plain text.
-MCP tools appear as mcp_<serverId>_<toolName> — copy the EXACT string from the list. Never use a skill id, skill title, product name, or CLI/binary name mentioned in prose as your JSON **tool** — those belong inside **execute_command**.input.**command**, not as **tool**.
-WRONG: {"accion":"ejecutar","herramienta":"df","entrada":{}}
-WRONG: {"action":"tool","tool":"<anything_not_in_exact_allowlist>","input":{}}
-RIGHT: {"action":"tool","tool":"execute_command","input":{"command":"df -h"}}${moderateToolJsonOnly}
-
-Valid examples (adapt utilities to HOST OS above — linux vs macOS vs Windows):
-{"action":"tool","tool":"execute_command","input":{"command":"ls /path/to/folder"}}
-{"action":"tool","tool":"execute_command","input":{"command":"df -h"}}
-{"action":"tool","tool":"execute_command","input":{"command":"uname -a"}}
-{"action":"tool","tool":"web_search","input":{"query":"search terms"}}
-{"action":"tool","tool":"read_file","input":{"path":"/path/to/file.txt"}}
-{"action":"tool","tool":"write_file","input":{"path":"/absolute/path/to/file.md","content":"# Title\\n\\nFull file body the user asked for — never empty unless they asked for an empty file."}}
-{"action":"tool","tool":"remember","input":{"key":"key_name","value":"value"}}
-{"action":"tool","tool":"calendar","input":{"action":"list","from_iso":"2026-05-01T12:00:00Z","to_iso":"2026-05-08T12:00:00Z"}}
-{"action":"tool","tool":"email_unread_count","input":{}}
-{"action":"tool","tool":"read_email","input":{"unread_only":true,"limit":24}}
-
-${toolUsageRule}
-
-TOOL SELECTION — CRITICAL:
-- Create or overwrite a FILE with new content at a path the user gave → write_file with {"path":"verbatim absolute path","content":"full text"} — NOT execute_command for the file body (same policy as task decomposition)
-- List / show folder contents → execute_command; use a form that shows file vs directory unambiguously, e.g. \`ls -la /path\` or \`ls -Fa /path\` (not plain \`ls\` alone when the user needs trustworthy names and types)
-- Read a FILE → read_file (ONLY for files, NEVER for folders/directories)
-- User/account-visible data surfaced by **THIS host's** registered tools or authenticated CLIs (see RELEVANT SKILLS and any SKILL_FASTPATH_LOCKED block — e.g. local repo lists, kubectl context, tooling output tied to whoever is logged into this machine) → the mandated concrete tool (**not** web_search unless they clearly asked for public web news/articles)
-- Search the internet for information → web_search (public facts only — never as a shortcut for CLI/host-visible account data covered above)
-- Schedule or inspect personal agenda / deadlines / appointments for this user → calendar with action add|list|update|delete (ISO8601 timestamps; never put user identifiers in calendar input — the runtime scopes by user automatically)
-- How many unread emails **this user has in connected Gmail/Outlook/IMAP inboxes on this machine** → email_unread_count (never prose-only simulation)
-- Summaries or "most important among unread / list unread" Gmail+Outlook/IMAP connected here → **read_email** with \`{"unread_only":true,"limit":32}\` **before** prose — never hypothetical projects or recurring themes not in RESULTADO (no NTT/Data/INACAP fluff unless literal in snippets)
-- Call an HTTP/API endpoint when user provides a URL → execute_command with curl
-  Example: {"action":"tool","tool":"execute_command","input":{"command":"curl -s 'https://api.example.com/data'"}}
-- Query current system state (RAM, disk, processes, OS version, CPU) → execute_command — pick binaries/flags appropriate for HOST (e.g. Linux: free, /proc; macOS: vm_stat, sysctl; Windows: WMI/PowerShell where needed)
-- External APIs / third-party services (when an mcp_… tool is listed) → use that exact tool name and input schema from the list
-- Run any other shell command → execute_command
-- NEVER use web_search when the user provides an explicit URL — use execute_command + curl instead
-RULES:
-- NEVER use read_file on a folder/directory — it will fail. Use execute_command + ls instead.
-- FILE AND FOLDER NAMES ARE LITERAL BYTES: every path segment in read_file / execute_command must match EXACTLY what appeared in prior ls (stdout) or in the user's message. NEVER translate, localize, or paraphrase names (e.g. if ls showed organized tasks.txt, do NOT use tareas organizadas.txt or tasks.txt unless that exact name exists).
-- If the user uses a vague or partial filename and the exact name is unclear, run execute_command with ls on that directory again — do NOT invent or guess a path.
-- Never invent file contents — use read_file
-SEARCH BEFORE ANSWERING:
-- If you are not 100% certain your knowledge is current and accurate, use web_search first
-- For any fact about the real world (prices, people, companies, events, status),
-  always verify with web_search before responding
-- Never answer factual questions from memory alone — memory can be outdated
-- The rule is: when in doubt → web_search — **unless** RELEVANT SKILLS / SKILL_FASTPATH_LOCKED / MAILBOX_* / CALENDAR_* blocks already mandate a registry tool whose data lives on THIS host (then obey that lock — no web_search surrogate)
-- Skip web_search entirely for math, greetings, questions strictly about capabilities/identity,
-  **local agenda / unread mail tooling already described above**, and **the user's own Enzo persisted agenda / meetings / reminders for a named day or week**
-  ("hoy", "mañana", "mis eventos", "esta semana") → use the **calendar** tool \`list\` (data is stored here in SQLite), never web_search, never claim you lack access to "their personal Google Calendar"
-- Never invent search results — use web_search
-- Never invent system metrics (RAM, disk, processes) — always run the command with execute_command
-- One tool call per response, no extra fields in the JSON input
-- web_search input must be ONLY: {"query": "search terms"} — nothing else
-${
-  persistToPathRequested
-    ? `
-PERSISTENCE / HONESTY (user asked to write to a concrete absolute path):
-- Do NOT say the file "ya está creado", "already exists on disk", "guardado", "listo en el disco", or equivalent unless this same turn includes a write_file tool JSON that will be executed.
-- If you output only prose with the story or text and no write_file, state clearly that nothing was written to disk yet, or emit write_file with path + content.
-`
-    : ''
-}
-${buildContextAnchorPrompt(input)}
-
-${
-  input.userLanguage && input.userLanguage !== 'es'
-    ? `CRITICAL: Respond in ${input.userLanguage.toUpperCase()}. NOT in Spanish. NOT in any other language.`
-    : 'Respond in Spanish (es).'
-}
-If responding with plain text (no tool), write in this language.`;
+  const systemPrompt = [
+    buildAssistantIdentityPrompt(input),
+    memorySection,
+    toolsPrompt,
+    relevantSkillsSection,
+    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName }),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 
@@ -759,6 +413,10 @@ If responding with plain text (no tool), write in this language.`;
     throw err;
   }
   recordStageMetric(stageMetrics, 'think', Date.now() - fastThinkStart, true);
+  if (usageAccumulator && firstResponse) {
+    usageAccumulator.inputTokens += firstResponse.usage?.inputTokens ?? 0;
+    usageAccumulator.outputTokens += firstResponse.usage?.outputTokens ?? 0;
+  }
 
   rawContent = applyCompletionToolCallsToText(
     firstResponse.content ?? '',
@@ -834,6 +492,10 @@ Never invent tool names.`;
         60_000,
         'SIMPLE moderate strict-tool retry'
       );
+      if (usageAccumulator) {
+        usageAccumulator.inputTokens += retry.usage?.inputTokens ?? 0;
+        usageAccumulator.outputTokens += retry.usage?.outputTokens ?? 0;
+      }
       const retried = applyCompletionToolCallsToText(
         retry.content ?? '',
         retry.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
@@ -1053,6 +715,7 @@ Never invent tool names.`;
                   verifyBeforeSynthesize: !!verifyBeforeSynthesize,
                   stageMetrics,
                   log,
+                  usageAccumulator,
                 });
               }
             }
@@ -1085,25 +748,63 @@ Never invent tool names.`;
             // Build the repair prompt WITHOUT angle-bracket placeholders — small models
             // (qwen2.5:7b) fill "<name>" with the literal word "tool" from surrounding context.
             // Instead, use a concrete example with an actual valid tool name.
-            const exampleTool = input.prefersHostTools
-              ? 'execute_command'
-              : (mergedToolDefs[0]?.name ?? 'execute_command');
-            const exampleInput = input.prefersHostTools
-              ? `{"command":"${input.message.slice(0, 60).replace(/"/g, "'")}"}`
-              : '{}';
+            // Find the appropriate MCP tool based on user request
+            const mcpToolsList = mergedToolDefs.filter(t => t.name.startsWith('mcp_'));
+            
+            // For filesystem requests, find the specific MCP tool needed
+            const messageLower = input.message.toLowerCase();
+            const isListDir = messageLower.includes('lista') || messageLower.includes('mostrar') || 
+                              messageLower.includes('contenido') || messageLower.includes('ls') ||
+                              messageLower.includes('carpeta') || messageLower.includes('folder');
+            const isReadFile = messageLower.includes('leer') || messageLower.includes('read');
+            const isWriteFile = messageLower.includes('escribir') || messageLower.includes('crear') || 
+                                messageLower.includes('guardar') || messageLower.includes('save');
+            
+            // Find the specific tool
+            let exampleTool = 'remember';
+            let exampleInput = '{}';
+            
+            if (isListDir) {
+              const listDirTool = mcpToolsList.find(t => t.name.includes('list_directory'));
+              if (listDirTool) {
+                exampleTool = listDirTool.name;
+                exampleInput = '{"path":"/Users/franco"}';
+              }
+            } else if (isReadFile) {
+              const readTool = mcpToolsList.find(t => t.name.includes('read_file'));
+              if (readTool) {
+                exampleTool = readTool.name;
+                exampleInput = '{"path":"/Users/franco/example.txt"}';
+              }
+            } else if (isWriteFile) {
+              const writeTool = mcpToolsList.find(t => t.name.includes('write_file'));
+              if (writeTool) {
+                exampleTool = writeTool.name;
+                exampleInput = '{"path":"/Users/franco/test.txt","content":"Hello World"}';
+              }
+            } else if (mcpToolsList.length > 0) {
+              // Use first MCP tool as fallback
+              exampleTool = mcpToolsList[0].name;
+            }
+            
             const exampleJson = `{"action":"tool","tool":"${exampleTool}","input":${exampleInput}}`;
 
-            const repairSystemContent = input.prefersHostTools
-              ? `Tool "${toolName}" does not exist. For CLI/shell requests on this host, use "execute_command".
-Valid tools: ${exactAllowlist}
-Output ONE JSON only (no text, no explanation):
-${exampleJson}
-Write the actual shell command inside "command".`
+            const repairSystemContent = mcpToolsList.length > 0
+              ? `Tool "${toolName}" does not exist. You MUST use an MCP tool from the list below.
+
+IMPORTANT: For directory listing use EXACTLY: mcp_*_list_directory with {"path":"/Users/franco"}
+For file reading use: mcp_*_read_file with {"path":"..."}
+For file writing use: mcp_*_write_file with {"path":"...","content":"..."}
+
+Valid tools (USE EXACT NAMES):
+${exactAllowlist}
+
+Output ONE JSON only (no prose, no explanation):
+${exampleJson}`
               : `Tool "${toolName}" does not exist.
 Valid tools: ${exactAllowlist}
-Pick the correct tool for the user request. Output ONE JSON only (no text, no explanation):
-${exampleJson}
-Use a tool name exactly from the valid list above.`;
+Pick the correct tool for the user request. Output ONE JSON only:
+${exampleJson}`;
 
             const allowlistRepair = await withTimeout(
               baseProvider.complete({
@@ -1122,6 +823,10 @@ Use a tool name exactly from the valid list above.`;
               60_000,
               'SIMPLE allowlist-tool retry'
             );
+            if (usageAccumulator) {
+              usageAccumulator.inputTokens += allowlistRepair.usage?.inputTokens ?? 0;
+              usageAccumulator.outputTokens += allowlistRepair.usage?.outputTokens ?? 0;
+            }
             let mergedTxt = applyCompletionToolCallsToText(
               allowlistRepair.content ?? '',
               allowlistRepair.toolCalls as Array<{
@@ -1160,7 +865,15 @@ Use a tool name exactly from the valid list above.`;
     }
   }
 
-  if (persistToPathRequested && !toolsUsed.has('write_file')) {
+  // Only attempt recovery if: 
+  // 1. There was a request to persist/write AND
+  // 2. No tool was successfully executed AND  
+  // 3. There are MCP tools available
+  // (moved outside the block where rawToolOutput is defined, checking in a different way)
+  const mcpToolsAvailable = (mcpRegistry?.getAllTools() ?? []).length > 0;
+  const anyToolUsed = toolsUsed.size > 0;
+  
+  if (persistToPathRequested && !anyToolUsed && mcpToolsAvailable) {
     finalContent = await attemptPersistWriteRecovery({
       input,
       baseProvider,
@@ -1201,5 +914,8 @@ Use a tool name exactly from the valid list above.`;
     durationMs: Date.now() - startTime,
     stageMetrics,
     complexityUsed: classifiedLevel,
+    ...(usageAccumulator && (usageAccumulator.inputTokens > 0 || usageAccumulator.outputTokens > 0)
+      ? { usage: { inputTokens: usageAccumulator.inputTokens, outputTokens: usageAccumulator.outputTokens } }
+      : {}),
   };
 }

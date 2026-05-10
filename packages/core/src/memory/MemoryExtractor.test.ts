@@ -203,7 +203,98 @@ async function runTests(): Promise<void> {
   console.log('MemoryExtractor tests passed.');
 }
 
+async function runFormatTests(): Promise<void> {
+  console.log('MemoryExtractor.formatMemoryFactsBlock tests...\n');
+  const provider = new MockMemoryExtractorProvider();
+  const extractor = new MemoryExtractor(provider, {} as MemoryService);
+  const now = Date.now();
+
+  function mem(key: string, value: string) {
+    return { id: 'x', userId: 'u1', key, value, createdAt: now, updatedAt: now };
+  }
+
+  console.log('Test: name formatted as sentence form');
+  {
+    const block = extractor.formatMemoryFactsBlock([mem('name', 'Franco')]);
+    assert(block.includes('The user\'s name is "Franco"'), `expected sentence form, got: ${block}`);
+    assert(!block.includes('name: Franco'), 'should not use kv format for name');
+    console.log('  ✓ name uses sentence form\n');
+  }
+
+  console.log('Test: profession formatted as sentence');
+  {
+    const block = extractor.formatMemoryFactsBlock([mem('profession', 'software developer')]);
+    assert(block.includes('profession: software developer'), `expected profession sentence, got: ${block}`);
+    console.log('  ✓ profession formatted correctly\n');
+  }
+
+  console.log('Test: city formatted as sentence');
+  {
+    const block = extractor.formatMemoryFactsBlock([mem('city', 'Santiago')]);
+    assert(block.includes('The user lives in Santiago'), `expected city sentence, got: ${block}`);
+    console.log('  ✓ city formatted correctly\n');
+  }
+
+  console.log('Test: block includes "FACTS ABOUT THE USER" header');
+  {
+    const block = extractor.formatMemoryFactsBlock([mem('name', 'Ana')]);
+    assert(block.includes('FACTS ABOUT THE USER'), `expected FACTS header, got: ${block}`);
+    console.log('  ✓ FACTS ABOUT THE USER header present\n');
+  }
+
+  console.log('Test: block includes anti-confusion footer');
+  {
+    const block = extractor.formatMemoryFactsBlock([mem('name', 'Ana')]);
+    assert(
+      block.includes('NOT the assistant') || block.includes('never apply them to the assistant'),
+      `expected anti-confusion footer, got: ${block}`
+    );
+    console.log('  ✓ anti-confusion footer present\n');
+  }
+
+  console.log('Test: empty memory array returns empty string');
+  {
+    const block = extractor.formatMemoryFactsBlock([]);
+    assert(block === '', `expected empty string, got: "${block}"`);
+    console.log('  ✓ empty array → empty string\n');
+  }
+
+  console.log('Test: anti-poisoning — assistant name in response filtered from user name facts');
+  {
+    const antiPoison = createMemoryServiceDouble();
+    const mockProvider = new MockMemoryExtractorProvider();
+    // Model returns name="Enzo" but the assistant response says "my name is Enzo"
+    // The extractor should filter this out
+    (mockProvider as any).queue = undefined;
+    mockProvider.setScenario('name');
+    // Patch to return "Enzo" as the user name
+    const patchedProvider = {
+      name: 'mock',
+      model: 'mock',
+      isAvailable: async () => true,
+      async complete(_req: any) {
+        return {
+          content: JSON.stringify({ facts: [{ key: 'name', value: 'Enzo', confidence: 0.9 }] }),
+          usage: { inputTokens: 1, outputTokens: 1 },
+          model: 'mock',
+          provider: 'mock',
+        };
+      },
+    } as any;
+    const extAnti = new MemoryExtractor(patchedProvider, antiPoison.service);
+    // Assistant response says "mi nombre es Enzo" — should block saving name=Enzo
+    await extAnti.extractAndSave('u-anti', 'cómo te llamas?', 'Mi nombre es Enzo, soy tu asistente.');
+    const payloads = antiPoison.getRememberPayloads();
+    const namePayload = payloads.find((p) => p.key === 'name' && p.value === 'Enzo');
+    assert(!namePayload, `anti-poisoning failed: assistant name "Enzo" was saved as user name`);
+    console.log('  ✓ anti-poisoning: assistant self-name not saved as user name\n');
+  }
+
+  console.log('MemoryExtractor format tests passed.');
+}
+
 runTests()
+  .then(() => runFormatTests())
   .then(() => {
     process.exit(0);
   })

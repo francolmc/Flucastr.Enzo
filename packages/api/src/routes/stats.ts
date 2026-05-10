@@ -26,17 +26,17 @@ export function createStatsRouter(memoryService: MemoryService): Router {
 
       const fromTimestamp = typeof from === 'string' ? parseInt(from, 10) : undefined;
       const toTimestamp = typeof to === 'string' ? parseInt(to, 10) : undefined;
-      const sourceFilter = source === 'web' || source === 'telegram' || source === 'unknown'
+      const sourceFilter = source === 'web' || source === 'telegram' || source === 'unknown' || source === 'echo'
         ? source
         : undefined;
 
       console.log('[GET /api/stats/:userId] userId:', userId);
-      const stats = await (memoryService as any).getStats(
+      const stats = await memoryService.getStats(
         userId,
         Number.isFinite(fromTimestamp) ? fromTimestamp : undefined,
         Number.isFinite(toTimestamp) ? toTimestamp : undefined,
         sourceFilter
-      ) as UsageStat[];
+      );
       console.log('[GET /api/stats/:userId] stats count:', stats.length);
 
       // Calculate aggregations

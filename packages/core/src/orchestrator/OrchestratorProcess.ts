@@ -118,6 +118,8 @@ export async function executeOrchestratorProcess(
     : await new Classifier(runtimeProvider).classify(input.message, classifierMessages, {
         availableAgents: agents,
         hasImageContext: hasImagePayload,
+        requestId: input.requestId,
+        userId: input.userId,
       });
   const classification = applyClassificationFloors(rawClassification, {
     hasImageContext: hasImagePayload,
@@ -148,12 +150,22 @@ export async function executeOrchestratorProcess(
 
   const skills = resolveSkillsForOrchestrator(b.getSkillRegistry(), b.getAvailableSkills());
 
-  const mergedHints = { ...buildOrchestratorRuntimeHints(), ...(input.runtimeHints ?? {}) };
+  const configTz = b.getConfigService()?.getSystemConfig().tz?.trim() || undefined;
+  const profileTz = configUserProfile?.timezone?.trim() || undefined;
+  const profileLocale = configUserProfile?.locale?.trim() || undefined;
+  const callerTimeZone = profileTz ?? configTz;
+  const callerLocale = profileLocale;
+
+  const mergedHints = {
+    ...buildOrchestratorRuntimeHints({
+      ...(callerTimeZone ? { timeZone: callerTimeZone } : {}),
+      ...(callerLocale ? { timeLocale: callerLocale } : {}),
+    }),
+    ...(input.runtimeHints ?? {}),
+  };
   const runtimeHints = {
     ...mergedHints,
-    timeZone: resolvePreferredWallClockTimeZoneId(
-      mergedHints.timeZone ?? process.env.TZ ?? 'America/Santiago'
-    ),
+    timeZone: resolvePreferredWallClockTimeZoneId(mergedHints.timeZone),
   };
 
   const userMemories = rankedMemoryFacts;
@@ -178,10 +190,7 @@ export async function executeOrchestratorProcess(
       assistantProfile,
       userProfile,
       classifiedLevel: classification.level,
-      suggestedTool: classification.suggestedTool,
       prefersHostTools: classification.prefersHostTools,
-      calendarIntent: classification.calendarIntent,
-      mailboxIntent: classification.mailboxIntent,
       suppressSimpleModerateFastPath: classification.suppressSimpleModerateFastPath,
       userLanguage: input.userLanguage ?? 'es',
       onProgress: input.onProgress,
@@ -211,10 +220,7 @@ export async function executeOrchestratorProcess(
         assistantProfile,
         userProfile,
         classifiedLevel: classification.level,
-        suggestedTool: classification.suggestedTool,
         prefersHostTools: classification.prefersHostTools,
-        calendarIntent: classification.calendarIntent,
-        mailboxIntent: classification.mailboxIntent,
         suppressSimpleModerateFastPath: classification.suppressSimpleModerateFastPath,
         userLanguage: input.userLanguage ?? 'es',
         onProgress: input.onProgress,
@@ -266,8 +272,10 @@ export async function executeOrchestratorProcess(
   const providerUsed = runtimeProvider.name || b.resolveProvider(modelUsed);
   const source = input.source || 'unknown';
 
-  const inputTokens = Math.ceil(input.message.length / 4);
-  const outputTokens = Math.ceil(amplifierResult.content.length / 4);
+  const realInputTokens = amplifierResult.usage?.inputTokens ?? 0;
+  const realOutputTokens = amplifierResult.usage?.outputTokens ?? 0;
+  const inputTokens = realInputTokens > 0 ? realInputTokens : Math.ceil(input.message.length / 4);
+  const outputTokens = realOutputTokens > 0 ? realOutputTokens : Math.ceil(amplifierResult.content.length / 4);
   const estimatedCostUsd = estimateCostUsd({
     provider: providerUsed,
     model: modelUsed,

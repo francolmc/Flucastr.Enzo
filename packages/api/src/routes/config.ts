@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { ConfigService, ModelsConfig, ProviderConfig, AssistantProfile, UserProfile, SystemConfigUpdate, SystemConfigView, DailyRoutineConfig, DailyRoutineConfigUpdate } from '@enzo/core';
-import { EncryptionService } from '@enzo/core';
+import { ConfigService, ModelsConfig, ProviderConfig, AssistantProfile, UserProfile, SystemConfigUpdate, SystemConfigView } from '@enzo/core';
+import { EncryptionService, UserPreferences, PROFILE_PRESETS } from '@enzo/core';
+import type { Orchestrator } from '@enzo/core';
 
 interface OllamaModel {
   name: string;
@@ -64,13 +65,157 @@ async function fetchWithTimeout(
 
 export function createConfigRouter(
   configService?: ConfigService,
-  encryptionService?: EncryptionService
+  encryptionService?: EncryptionService,
+  orchestrator?: Orchestrator
 ): Router {
   const router = Router();
 
   // Initialize services if not provided
   const encryption = encryptionService || new EncryptionService(process.env.ENZO_SECRET || '');
   const config = configService || new ConfigService(encryption);
+
+  // User Preferences endpoints
+  /**
+   * GET /api/config/preferences/:userId
+   * Get user preferences
+   */
+  router.get('/api/config/preferences/:userId', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    try {
+      const prefs = orchestrator.getUserPreferences(userId);
+      res.json({ userId, preferences: prefs });
+    } catch (error) {
+      console.error('[GET /api/config/preferences/:userId] error:', error);
+      res.status(500).json({ error: 'InternalError', message: 'Failed to get preferences' });
+    }
+  });
+
+  /**
+   * PATCH /api/config/preferences/:userId
+   * Update user preferences (merge mode)
+   */
+  router.patch('/api/config/preferences/:userId', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const updates = req.body;
+
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    try {
+      const prefs = await orchestrator.setUserPreferences(userId, updates, 'merge');
+      res.json({ userId, preferences: prefs });
+    } catch (error) {
+      console.error('[PATCH /api/config/preferences/:userId] error:', error);
+      res.status(500).json({ error: 'InternalError', message: 'Failed to update preferences' });
+    }
+  });
+
+  /**
+   * PUT /api/config/preferences/:userId
+   * Replace user preferences
+   */
+  router.put('/api/config/preferences/:userId', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const updates = req.body;
+
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    try {
+      const prefs = await orchestrator.setUserPreferences(userId, updates, 'replace');
+      res.json({ userId, preferences: prefs });
+    } catch (error) {
+      console.error('[PUT /api/config/preferences/:userId] error:', error);
+      res.status(500).json({ error: 'InternalError', message: 'Failed to replace preferences' });
+    }
+  });
+
+  /**
+   * POST /api/config/preferences/:userId/profile/:profile
+   * Set user profile preset (silent, informative, control)
+   */
+  router.post('/api/config/preferences/:userId/profile/:profile', async (req: Request, res: Response) => {
+    const { userId, profile } = req.params;
+
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    const validProfiles = ['silent', 'informative', 'control'];
+    if (!validProfiles.includes(profile)) {
+      res.status(400).json({
+        error: 'ValidationError',
+        message: `Invalid profile. Use: ${validProfiles.join(', ')}`
+      });
+      return;
+    }
+
+    try {
+      const prefs = orchestrator.setUserProfile(userId, profile as 'silent' | 'informative' | 'control');
+      res.json({ userId, profile, preferences: prefs });
+    } catch (error) {
+      console.error('[POST /api/config/preferences/:userId/profile/:profile] error:', error);
+      res.status(500).json({ error: 'InternalError', message: 'Failed to set profile' });
+    }
+  });
+
+  /**
+   * GET /api/config/preferences/profiles
+   * Get available profile presets
+   */
+  router.get('/api/config/preferences/profiles', async (_req: Request, res: Response) => {
+    res.json({
+      profiles: Object.keys(PROFILE_PRESETS).map(name => ({
+        name,
+        description: getProfileDescription(name)
+      }))
+    });
+  });
+
+  /**
+   * GET /api/config/preferences
+   * Get global/default preferences
+   */
+  router.get('/api/config/preferences', async (_req: Request, res: Response) => {
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    res.json({ preferences: orchestrator.getGlobalPreferences() });
+  });
+
+  /**
+   * PUT /api/config/preferences
+   * Update global preferences
+   */
+  router.put('/api/config/preferences', async (req: Request, res: Response) => {
+    const updates = req.body;
+
+    if (!orchestrator) {
+      res.status(503).json({ error: 'ServiceUnavailable', message: 'Orchestrator not available' });
+      return;
+    }
+
+    try {
+      orchestrator.setGlobalPreferences(updates);
+      res.json({ preferences: orchestrator.getGlobalPreferences() });
+    } catch (error) {
+      console.error('[PUT /api/config/preferences] error:', error);
+      res.status(500).json({ error: 'InternalError', message: 'Failed to update global preferences' });
+    }
+  });
 
   /**
    * GET /api/config/models
@@ -473,54 +618,18 @@ export function createConfigRouter(
     }
   });
 
-  /**
-   * GET /api/config/daily-routine
-   * Get daily routine notification settings
-   */
-  router.get('/api/config/daily-routine', async (req: Request, res: Response) => {
-    try {
-      const dailyRoutine = config.getDailyRoutineConfig();
-      res.json({
-        success: true,
-        dailyRoutine,
-      });
-    } catch (error) {
-      console.error('[GET /api/config/daily-routine] error:', error);
-      res.status(500).json({
-        error: 'ConfigError',
-        message: error instanceof Error ? error.message : 'Failed to retrieve daily routine config',
-        statusCode: 500,
-      });
-    }
-  });
-
-  /**
-   * PUT /api/config/daily-routine
-   * Update daily routine notification settings
-   */
-  router.put('/api/config/daily-routine', async (req: Request, res: Response) => {
-    try {
-      const body = (req.body || {}) as {
-        morningBriefing?: { time?: string; enabled?: boolean };
-        middayCheckin?: { time?: string; enabled?: boolean };
-        afternoonPrep?: { time?: string; enabled?: boolean };
-        eveningRecap?: { time?: string; enabled?: boolean };
-      };
-
-      config.setDailyRoutineConfig(body);
-      res.json({
-        success: true,
-        dailyRoutine: config.getDailyRoutineConfig(),
-      });
-    } catch (error) {
-      console.error('[PUT /api/config/daily-routine] error:', error);
-      res.status(500).json({
-        error: 'ConfigError',
-        message: error instanceof Error ? error.message : 'Failed to update daily routine config',
-        statusCode: 500,
-      });
-    }
-  });
-
   return router;
+}
+
+function getProfileDescription(profile: string): string {
+  switch (profile) {
+    case 'silent':
+      return 'Silencioso - Solo responde, no explica decisiones';
+    case 'informative':
+      return 'Informativo - Explica qué hace y por qué';
+    case 'control':
+      return 'Control - Pide confirmación antes de acciones importantes';
+    default:
+      return '';
+  }
 }

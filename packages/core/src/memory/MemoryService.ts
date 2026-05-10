@@ -25,6 +25,25 @@ import {
 import { recordMemoryRecallTurn } from './MemoryMetrics.js';
 import { MCPServerConfig } from '../mcp/types.js';
 
+interface SkillConfigRow {
+  id: string;
+  enabled: number | boolean;
+}
+
+interface MCPServerRow {
+  id: string;
+  name: string;
+  description?: string | null;
+  transport: string;
+  command?: string | null;
+  args?: string | null;
+  env?: string | null;
+  url?: string | null;
+  enabled: number | boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export class MemoryService {
   private db: DatabaseManager;
   private readonly resolvedDbPath: string;
@@ -801,7 +820,7 @@ Use only when relevant to the current request; never invent new failures from th
 
   // Skills configuration
   getSkillConfig(id: string): { enabled: boolean } | null {
-    const row = this.db.getDb().get(
+    const row = this.db.getDb().get<SkillConfigRow>(
       `SELECT enabled FROM skills_config WHERE id = ?`,
       [id]
     );
@@ -810,7 +829,7 @@ Use only when relevant to the current request; never invent new failures from th
 
   saveSkillConfig(id: string, enabled: boolean): void {
     const now = Date.now();
-    const existing = this.db.getDb().get(
+    const existing = this.db.getDb().get<SkillConfigRow>(
       `SELECT id FROM skills_config WHERE id = ?`,
       [id]
     );
@@ -830,7 +849,7 @@ Use only when relevant to the current request; never invent new failures from th
   }
 
   getAllSkillConfigs(): { id: string; enabled: boolean }[] {
-    const rows = this.db.getDb().all(
+    const rows = this.db.getDb().all<SkillConfigRow>(
       `SELECT id, enabled FROM skills_config`,
       []
     );
@@ -900,7 +919,7 @@ Use only when relevant to the current request; never invent new failures from th
   }
 
   getMCPServers(): MCPServerConfig[] {
-    const rows = this.db.getDb().all(
+    const rows = this.db.getDb().all<MCPServerRow>(
       `SELECT id, name, description, transport, command, args, env, url, enabled, createdAt, updatedAt FROM mcp_servers`,
       []
     );
@@ -916,7 +935,7 @@ Use only when relevant to the current request; never invent new failures from th
       id: row.id,
       name: row.name,
       description: row.description || undefined,
-      transport: row.transport,
+      transport: row.transport as MCPServerConfig['transport'],
       command: row.command || undefined,
       args: row.args ? JSON.parse(row.args) : undefined,
       env: row.env ? JSON.parse(row.env) : undefined,
@@ -935,14 +954,17 @@ Use only when relevant to the current request; never invent new failures from th
   }
 
   updateMCPServer(id: string, data: Partial<MCPServerConfig>): void {
+    console.log(`[MemoryService] updateMCPServer called with id=${id}, data=`, data);
     const now = Date.now();
     const db = this.db.getDb();
 
     // Get current server to preserve fields not being updated
-    const current = db.get(
+    const current = db.get<MCPServerRow>(
       `SELECT id, name, description, transport, command, args, env, url, enabled, createdAt, updatedAt FROM mcp_servers WHERE id = ?`,
       [id]
     );
+
+    console.log(`[MemoryService] current server found:`, current);
 
     if (!current) {
       console.warn(`[MemoryService] MCP server "${id}" not found for update`);

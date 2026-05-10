@@ -35,30 +35,67 @@ export function buildAssistantIdentityPrompt(input: AmplifierInput): string {
 }
 
 /**
- * Injects user profile memory directly into the system prompt so it lands early (high attention),
- * not as a trailing system message that small models tend to ignore.
+ * Resolves the user's display name with explicit precedence:
+ * dynamic memory (extracted from conversation) > static profile (configured by user).
+ * This is the single source of truth for "who is the person chatting".
+ */
+export function resolveUserDisplayName(input: AmplifierInput): string | undefined {
+  const nameMatch = input.memoryBlock?.match(/The user's name is "([^"]+)"/i);
+  if (nameMatch?.[1]) return nameMatch[1];
+  return input.userProfile?.displayName || undefined;
+}
+
+/**
+ * Merges static UserProfile and dynamic memory facts into a single USER CONTEXT block.
+ *
+ * Precedence rules:
+ * - name / profession / city: dynamic memory wins (extracted from natural conversation)
+ * - locale / timezone: static profile wins (explicitly configured by user — authoritative)
+ * - importantInfo / preferences: static profile appended unless memory has a matching key
+ *
+ * Injected early in the system prompt so small models don't lose it under tool rules.
  */
 export function buildMemoryPromptSection(input: AmplifierInput): string {
   const parts: string[] = [];
-
   const profile = input.userProfile;
-  if (profile) {
-    const profileLines: string[] = [];
-    if (profile.displayName) profileLines.push(`name: ${profile.displayName}`);
-    if (profile.importantInfo) profileLines.push(`info: ${profile.importantInfo}`);
-    if (profile.preferences) profileLines.push(`preferences: ${profile.preferences}`);
-    if (profile.locale) profileLines.push(`locale: ${profile.locale}`);
-    if (profile.timezone) profileLines.push(`timezone: ${profile.timezone}`);
-    if (profileLines.length > 0) {
-      parts.push(`USER PROFILE (configured settings):\n${profileLines.join('\n')}`);
-    }
-  }
 
+  // --- Dynamic memory (ranked facts from conversation history) ---
+  // These override static profile for personal identity fields (name, profession, city).
   if (input.memoryBlock?.trim()) {
     parts.push(input.memoryBlock.trim());
   } else if (input.userMemories && input.userMemories.length > 0) {
-    const facts = input.userMemories.map((m) => `${m.key}: ${m.value}`).join(', ');
-    parts.push(`[IMPORTANT - USER PROFILE: ${facts}]\nIf the user asks about themselves (name, city, profession, etc.), answer from this profile.`);
+    const facts = input.userMemories
+      .map((m) => `${m.key}: ${m.value}`)
+      .join('\n');
+    parts.push(`FACTS ABOUT THE USER (the person chatting with you — NOT the assistant):\n${facts}\nWhen the user asks "what is my name?" or "who am I?", answer using the facts above.`);
+  }
+
+  // --- Static profile (explicitly configured settings) ---
+  // Authoritative for locale/timezone; supplements dynamic memory for name/profession
+  // only when dynamic memory has no value for that field.
+  if (profile) {
+    const dynamicKeys = new Set(
+      (input.userMemories ?? []).map((m) => m.key.toLowerCase())
+    );
+    const hasDynamicName = dynamicKeys.has('name') || /The user's name is "/i.test(input.memoryBlock ?? '');
+    const hasDynamicProfession = dynamicKeys.has('profession') || /The user's profession:/i.test(input.memoryBlock ?? '');
+
+    const staticLines: string[] = [];
+    if (profile.displayName && !hasDynamicName) {
+      staticLines.push(`name: ${profile.displayName}`);
+    }
+    if (profile.profession && !hasDynamicProfession) {
+      staticLines.push(`profession: ${profile.profession}`);
+    }
+    if (profile.importantInfo) staticLines.push(`info: ${profile.importantInfo}`);
+    if (profile.preferences) staticLines.push(`preferences: ${profile.preferences}`);
+    // locale and timezone are always from static config — they are user-configured, not inferred
+    if (profile.locale) staticLines.push(`locale: ${profile.locale}`);
+    if (profile.timezone) staticLines.push(`timezone: ${profile.timezone}`);
+
+    if (staticLines.length > 0) {
+      parts.push(`USER PROFILE (configured settings):\n${staticLines.join('\n')}`);
+    }
   }
 
   if (parts.length === 0) return '';
@@ -66,9 +103,9 @@ export function buildMemoryPromptSection(input: AmplifierInput): string {
 }
 
 /**
- * Compact anchor appended at the END of the system prompt so the model reads identity + user name
- * last — right before generating. Mitigates attention dilution in long prompts (e.g. Gemini ignoring
- * the identity block buried under hundreds of tokens of tool rules).
+ * Compact anchor appended at the END of the system prompt.
+ * Mitigates attention dilution in long prompts (small models ignore identity buried early).
+ * Uses resolveUserDisplayName() as single source of truth for the user's name.
  */
 export function buildContextAnchorPrompt(input: AmplifierInput): string {
   const identity = getAssistantIdentityContext(input);
@@ -77,11 +114,9 @@ export function buildContextAnchorPrompt(input: AmplifierInput): string {
     `- Your name is "${identity.name}". You are a privately configured AI assistant. NEVER say you are "trained by Google", "a Google model", "trained by Anthropic", or any other company. If asked who made you, say only that you are a privately configured assistant named "${identity.name}".`,
   ];
 
-  const nameMatch = input.memoryBlock?.match(/The user's name is "([^"]+)"/i);
-  if (nameMatch?.[1]) {
-    lines.push(`- The person chatting with you is named ${nameMatch[1]}. Use their name naturally when relevant.`);
-  } else if (input.userProfile?.displayName) {
-    lines.push(`- The person chatting with you is named ${input.userProfile.displayName}. Use their name naturally when relevant.`);
+  const userName = resolveUserDisplayName(input);
+  if (userName) {
+    lines.push(`- The person chatting with you is named ${userName}. Use their name naturally when relevant.`);
   }
 
   return lines.join('\n');
@@ -115,7 +150,7 @@ export function buildRuntimeThreeLayersContractPrompt(): string {
   return `RUNTIME LAYERS (this turn only):
 - Skills: procedural text in RELEVANT SKILLS — how to build shell lines or follow a workflow. Not invocable tool ids; never put a skill name in JSON "tool".
 - Agents: specialists from the delegation catalog only, invoked with {"action":"delegate",...} using an exact agent id from that catalog. They do not run until the host dispatches delegation.
-- Tools: the ONLY valid names in {"action":"tool","tool":"..."} are those listed under AVAILABLE TOOLS (exact strings, including mcp_…). Host actions use these; for CLIs (gh, git, …) use **execute_command** and put the full line in **input.command**.
+- Tools: the ONLY valid names in {"action":"tool","tool":"..."} are those listed under AVAILABLE TOOLS (exact strings, including mcp_<serverId>_<toolName>). File operations, shell commands, and system actions come from MCP servers — use those tool names exactly.
 
 Acting on this machine is only through Tools as listed. Skills and agents are not tools.`;
 }
@@ -163,20 +198,67 @@ export function extractOutputTemplates(skills: RelevantSkill[]): string {
   return `\nREQUIRED OUTPUT TEMPLATES:\n${templates.join('\n\n')}\n`;
 }
 
-export function buildToolsPrompt(tools: Tool[]): string {
-  const toolList = tools
+export function buildToolsPrompt(tools: Tool[], userMessage?: string): string {
+  // Separate MCP tools from core memory tools
+  const mcpTools = tools.filter((t) => t.name.startsWith('mcp_'));
+  const coreTools = tools.filter((t) => t.name === 'remember' || t.name === 'recall');
+
+  // If no MCP tools available, only show core memory tools
+  const availableTools = mcpTools.length > 0 ? mcpTools : coreTools;
+
+  if (availableTools.length === 0) {
+    return `AVAILABLE TOOLS:
+(none — no MCP servers connected. Only conversation is available.)
+
+Casual replies, greetings, math, conceptual chat without side effects → write plain text only (no JSON).
+
+ONE JSON object per message when using JSON — no prose before or after it.`;
+  }
+
+  const useFullSchema = process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA !== 'false';
+  const toolList = availableTools
     .map(
       (tool) => `- **${tool.name}**: ${tool.description}
-  Input: ${JSON.stringify(tool.parameters?.properties ?? {}, null, 0)}`
+  Input: ${JSON.stringify(useFullSchema ? (tool.parameters ?? {}) : (tool.parameters?.properties ?? {}), null, 0)}`
     )
     .join('\n');
 
-  const exactNames = tools.map((t) => t.name).join(', ');
+  const exactNames = availableTools.map((t) => t.name).join(', ');
+
+  const mcpNote = mcpTools.length > 0
+    ? `\n\nMCP tools use the format mcp_<serverId>_<toolName>. Use the exact name from the list above.`
+    : '\n\nCore memory tools available for saving and recalling user information.';
+
+  // Build alias map 100% from tool descriptions (no name-based detection)
+  const aliasMap: string[] = [];
+  
+  for (const tool of mcpTools) {
+    const desc = (tool.description ?? '').toLowerCase().trim();
+    if (!desc) continue;
+    
+    // Extract meaningful description (remove MCP prefix if present)
+    const cleanDesc = desc.replace(/^\[mcp:\s*[^\]]+\]\s*/i, '').trim();
+    if (!cleanDesc) continue;
+    
+    // Limit description length for readability
+    const shortDesc = cleanDesc.length > 60 
+      ? cleanDesc.substring(0, 60).trim() + '...' 
+      : cleanDesc;
+    
+    aliasMap.push(`- "${shortDesc}" → use "${tool.name}"`);
+  }
+  
+  const mcpExamples = aliasMap.length > 0
+    ? `\n\nTOOL SELECTION GUIDE (match user intent to tool description):
+${aliasMap.join('\n')}
+
+CRITICAL: The "tool" field MUST be the exact string from the right side (→ use "...").
+Never invent tool names. Copy CHARACTER BY CHARACTER from the list above.`
+    : '';
 
   return `AVAILABLE TOOLS:
 ${toolList}
-
-The names in the list above are the ONLY valid JSON values for "tool". Any prose or skill that mentions terminals, shells, vendors, APIs, Git hosts, containers, orchestrators, or command-line binaries still maps to executing a real shell line via **execute_command** with that line in input.command — never invent an extra tool whose name echoes the topic.
+${mcpNote}${mcpExamples}
 
 CANONICAL TOOL CALL (only when execution is needed):
 {"action":"tool","tool":"<exact_name>","input":{...}}
@@ -223,4 +305,55 @@ ${userLines}
 Built-in specialists:
 ${builtin}
 `;
+}
+
+/**
+ * Compact JSON contract block — placed at the END of system prompts for maximum
+ * attention from small models (7b). Replaces verbose rules sections.
+ * 
+ * Used by both ThinkPhase and SimplePath to enforce consistent JSON format.
+ */
+export function buildThinkContractPrompt(params: {
+  context?: string;
+  iteration?: number;
+  maxIterations?: number;
+  isAlgorithmMode?: boolean;
+  stepsCompleted?: number;
+  totalSteps?: number;
+  hasWebSearch?: boolean;
+  webSearchToolName?: string;
+}): string {
+  const contextBlock = params.context?.trim()
+    ? `PREVIOUS STEPS:\n${params.context.trim()}\n\n`
+    : '';
+
+  const algorithmNote = params.isAlgorithmMode && params.totalSteps
+    ? `ALGORITHM: Execute step ${(params.stepsCompleted ?? 0) + 1}/${params.totalSteps}. {"action":"none"} not valid until all steps complete.\n\n`
+    : '';
+
+  const iterationLine = params.iteration != null
+    ? `\nIteration: ${params.iteration}${params.maxIterations ? `/${params.maxIterations}` : ''}`
+    : '';
+
+  return `${contextBlock}${algorithmNote}YOUR RESPONSE MUST BE EXACTLY ONE OF THESE JSON FORMATS:
+
+1. Use a tool:
+{"action":"tool","tool":"EXACT_TOOL_NAME_FROM_LIST","input":{...}}
+
+2. Delegate to an agent:
+{"action":"delegate","agent":"agent_id","task":"what to do","reason":"why"}
+
+3. Done — no action needed:
+{"action":"none"}
+
+RULES:
+${params.webSearchToolName
+  ? `- For ANY factual question about the world, people, events, products, or anything you don't know for certain → MUST use "${params.webSearchToolName}" tool. NEVER answer from memory when this tool is available.\n`
+  : params.hasWebSearch
+    ? `- For ANY factual question → MUST use the web search tool available. NEVER answer from memory.\n`
+    : ''}- Copy the tool name CHARACTER BY CHARACTER from AVAILABLE TOOLS above
+- Never use generic names: web_search, execute_command, list_directory, read_file, write_file
+- Always use the full mcp_<id>_<toolname> format
+- ONE JSON object only — no text before or after, no markdown fences
+- If you have enough information to answer → {"action":"none"}${iterationLine}`;
 }

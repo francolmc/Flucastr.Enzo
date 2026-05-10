@@ -3,6 +3,7 @@ import { SkillRegistry } from '../skills/SkillRegistry.js';
 import { LoadedSkill } from '../skills/SkillLoader.js';
 import { foldDiacritics } from '../utils/foldDiacritics.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { decisionLogger } from '../logging/DecisionLogger.js';
 
 export interface RelevantSkill {
   id: string
@@ -16,6 +17,8 @@ export type SkillResolveOptions = {
   /** When ENZO_SKILLS_LLM_SELECTION is true (default), used together with withTimeout for LLM-based skill selection. Set to false for heuristic-only selection. */
   llm?: LLMProvider;
   withTimeout?: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  requestId?: string;
+  userId?: string;
 };
 
 /** Merge parent message resolution with subtask resolution (max score wins per id), capped. */
@@ -99,6 +102,19 @@ export class SkillResolver {
       if (process.env.ENZO_DEBUG === 'true') {
         console.log('[SkillResolver] LLM selected skills:', llmSelected.map((s) => s.id).join(', '))
       }
+      if (options?.requestId && options?.userId) {
+        decisionLogger.logDecision({
+          requestId: options.requestId,
+          userId: options.userId,
+          phase: 'skill_resolution',
+          decision: {
+            considered: scored.slice(0, 10).map(s => s.name),
+            selected: llmSelected.map(s => s.name),
+            method: 'llm_selection',
+          },
+          reasoning: `Selected ${llmSelected.length} skills via LLM`,
+        });
+      }
       return llmSelected
     }
 
@@ -108,6 +124,20 @@ export class SkillResolver {
 
     if (process.env.ENZO_DEBUG === 'true') {
       console.log('[SkillResolver] Using heuristic fallback:', fallbackResult.map((s) => s.id).join(', '))
+    }
+
+    if (options?.requestId && options?.userId) {
+      decisionLogger.logDecision({
+        requestId: options.requestId,
+        userId: options.userId,
+        phase: 'skill_resolution',
+        decision: {
+          considered: scored.slice(0, 10).map(s => s.name),
+          selected: fallbackResult.map(s => s.name),
+          method: 'heuristic_fallback',
+        },
+        reasoning: `Selected ${fallbackResult.length} skills via heuristic`,
+      });
     }
 
     return fallbackResult
@@ -141,58 +171,11 @@ export class SkillResolver {
     return null
   }
 
-  private generateSyntheticExample(name: string, description: string): string {
-    const normalizedName = name.toLowerCase().trim()
-    const normalizedDesc = description.toLowerCase()
-
-    const templates: Record<string, string[]> = {
-      weather: ['dime el clima en [ciudad]', 'qué tiempo hace en [ciudad]'],
-      datetime: ['qué hora es', 'qué día es hoy'],
-      capture: ['anota esta idea', 'quiero capturar una idea'],
-      'enzo-notes': ['toma nota de', 'escribe esto en notas'],
-      'focus-advisor': ['ayúdame a concentrarme', 'cómo puedo ser más productivo'],
-      'morning-briefing': ['dame el briefing matutino', 'resumen de la mañana'],
-      'project-context': ['qué es este proyecto', 'dame contexto del proyecto'],
-      'github-cli-enzo': ['busca en github', 'muéstrame los commits'],
-    }
-
-    if (templates[normalizedName]) {
-      return templates[normalizedName][0]
-    }
-
-    if (normalizedDesc.includes('clima') || normalizedDesc.includes('tiempo') || normalizedDesc.includes('temperatura')) {
-      return 'dime el clima en [ciudad]'
-    }
-    if (normalizedDesc.includes('fecha') || normalizedDesc.includes('hora')) {
-      return 'qué hora es'
-    }
-    if (normalizedDesc.includes('nota') || normalizedDesc.includes('idea') || normalizedDesc.includes('capturar')) {
-      return 'anota esta idea'
-    }
-    if (normalizedDesc.includes('focus') || normalizedDesc.includes('concentr')) {
-      return 'ayúdame a concentrarme'
-    }
-    if (normalizedDesc.includes('briefing') || normalizedDesc.includes('mañana')) {
-      return 'dame el briefing matutino'
-    }
-    if (normalizedDesc.includes('proyecto') || normalizedDesc.includes('contexto')) {
-      return 'qué es este proyecto'
-    }
-    if (normalizedDesc.includes('github')) {
-      return 'busca en github'
-    }
-
-    return `quiero usar ${normalizedName}`
-  }
-
   private buildFewShotExamples(skills: { id: string; name: string; description: string; content: string }[]): string {
     const examples: string[] = []
 
     for (const skill of skills) {
-      let example = this.extractExampleFromSkill(skill.content)
-      if (!example) {
-        example = this.generateSyntheticExample(skill.name, skill.description)
-      }
+      const example = this.extractExampleFromSkill(skill.content)
       if (example) {
         examples.push(`- "${example}" -> {"skillIds": ["${skill.id}"]}`)
       }

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useEnzoStore } from '../stores/enzoStore';
+import { MetricCard } from '../components/stats/MetricCard';
+import { InsightCard } from '../components/stats/InsightCard';
 import './StatsPage.css';
 
 type SourceFilter = 'all' | 'web' | 'telegram' | 'unknown';
@@ -51,9 +53,6 @@ function StatsPage() {
   const mostUsedComplexity = stats.byComplexity.length
     ? stats.byComplexity.reduce((prev, curr) => (prev.count > curr.count ? prev : curr)).level
     : 'N/A';
-  const topCostProvider = stats.byProvider.length
-    ? stats.byProvider.reduce((prev, curr) => (prev.costUsd > curr.costUsd ? prev : curr)).provider
-    : 'N/A';
   const byModelTop = [...stats.byModel].sort((a, b) => b.costUsd - a.costUsd).slice(0, 8);
 
   return (
@@ -93,69 +92,87 @@ function StatsPage() {
       </div>
 
       <div className="stats-cards">
-        <div className="stat-card surface-card">
-          <div className="stat-value">{stats.totalMessages}</div>
-          <div className="stat-label">Mensajes totales</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{stats.totalTokens.toLocaleString()}</div>
-          <div className="stat-label">Tokens totales</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{stats.averageDurationMs}ms</div>
-          <div className="stat-label">Latencia promedio</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">${stats.totalCostUsd.toFixed(4)}</div>
-          <div className="stat-label">Costo total (USD)</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">${avgCostPerMessage.toFixed(4)}</div>
-          <div className="stat-label">Costo por mensaje</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{mostUsedProvider}</div>
-          <div className="stat-label">Provider más usado</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{topCostProvider}</div>
-          <div className="stat-label">Provider más costoso</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{avgTokensPerMessage}</div>
-          <div className="stat-label">Tokens por mensaje</div>
-        </div>
-        <div className="stat-card surface-card">
-          <div className="stat-value">{mostUsedComplexity}</div>
-          <div className="stat-label">Complejidad dominante</div>
-        </div>
+        <MetricCard
+          title="Mensajes totales"
+          value={stats.totalMessages.toLocaleString()}
+          icon="💬"
+          color="primary"
+        />
+        <MetricCard
+          title="Tokens totales"
+          value={stats.totalTokens.toLocaleString()}
+          icon="🔤"
+          color="primary"
+        />
+        <MetricCard
+          title="Latencia promedio"
+          value={`${stats.averageDurationMs}ms`}
+          icon="⚡"
+          color={hasLatencyRisk ? 'warning' : 'success'}
+        />
+        <MetricCard
+          title="Costo total"
+          value={`$${stats.totalCostUsd.toFixed(4)}`}
+          icon="💰"
+          color={stats.totalCostUsd > 10 ? 'warning' : 'success'}
+        />
+        <MetricCard
+          title="Costo por mensaje"
+          value={`$${avgCostPerMessage.toFixed(4)}`}
+          icon="📊"
+          color="primary"
+        />
+        <MetricCard
+          title="Provider más usado"
+          value={mostUsedProvider}
+          icon="🏆"
+          color="primary"
+        />
+        <MetricCard
+          title="Tokens por mensaje"
+          value={avgTokensPerMessage.toLocaleString()}
+          icon="📈"
+          color="primary"
+        />
+        <MetricCard
+          title="Complejidad dominante"
+          value={mostUsedComplexity}
+          icon="🎯"
+          color="primary"
+        />
       </div>
 
       <section className="insight-strip">
-        <article className={`insight-card ${hasLatencyRisk ? 'warning' : 'ok'}`}>
-          <h3>Latencia</h3>
-          <p>
-            {hasLatencyRisk
-              ? 'Detectamos latencia alta. Considera ajustar modelo principal/fallback.'
-              : 'Latencia estable para el volumen actual.'}
-          </p>
-        </article>
-        <article className={`insight-card ${hasProviderConcentrationRisk ? 'warning' : 'ok'}`}>
-          <h3>Concentración por provider</h3>
-          <p>
-            {hasProviderConcentrationRisk
-              ? 'Un provider concentra más del 75% del tráfico; evalúa balanceo.'
-              : 'Uso distribuido sin riesgo alto de dependencia.'}
-          </p>
-        </article>
-        <article className={`insight-card ${hasCostConcentrationRisk ? 'warning' : 'ok'}`}>
-          <h3>Concentración de costo</h3>
-          <p>
-            {hasCostConcentrationRisk
-              ? 'Más del 80% del costo cae en un solo provider. Considera mix de modelos.'
-              : 'Costo razonablemente distribuido entre providers.'}
-          </p>
-        </article>
+        <InsightCard
+          type={hasLatencyRisk ? 'warning' : 'success'}
+          title="Rendimiento"
+          message={hasLatencyRisk 
+            ? 'Detectamos latencia alta en las respuestas.' 
+            : 'El rendimiento es estable para el volumen actual.'}
+          recommendation={hasLatencyRisk 
+            ? 'Considera ajustar el modelo principal o configurar modelos fallback más rápidos.' 
+            : 'Mantén la configuración actual para un rendimiento óptimo.'}
+        />
+        <InsightCard
+          type={hasProviderConcentrationRisk ? 'warning' : 'success'}
+          title="Distribución de carga"
+          message={hasProviderConcentrationRisk 
+            ? 'Un provider concentra más del 75% del tráfico.' 
+            : 'Uso distribuido sin riesgo alto de dependencia.'}
+          recommendation={hasProviderConcentrationRisk 
+            ? 'Configura múltiples providers para mejorar la resiliencia y disponibilidad.' 
+            : 'Continúa con la estrategia de balanceo actual.'}
+        />
+        <InsightCard
+          type={hasCostConcentrationRisk ? 'warning' : 'success'}
+          title="Optimización de costos"
+          message={hasCostConcentrationRisk 
+            ? 'Más del 80% del costo se concentra en un solo provider.' 
+            : 'Costo razonablemente distribuido entre providers.'}
+          recommendation={hasCostConcentrationRisk 
+            ? 'Considera usar modelos más económicos para tareas simples y reservar los costosos para tareas complejas.' 
+            : 'La estrategia de costos actual es eficiente.'}
+        />
       </section>
 
       <div className="stats-tables">

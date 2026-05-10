@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useEnzoStore } from '../stores/enzoStore';
+import { chatLogger } from '../utils/logger';
 import './ChatPage.css';
 
 const ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
@@ -35,7 +36,7 @@ function ChatPage() {
   const runMessage = async (message: string) => {
     if (!message.trim()) return;
     if (isThinking) {
-      console.warn('[ChatPage] Already processing a message, ignoring...');
+      chatLogger.debug('Already processing a message, ignoring...');
       return;
     }
 
@@ -51,7 +52,7 @@ function ChatPage() {
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Failed to send message';
-      console.error('Failed to send message:', error);
+      chatLogger.error('Failed to send message:', error);
       setErrorMessage(errMsg);
       setShowErrorBanner(true);
     }
@@ -201,12 +202,20 @@ function ChatPage() {
         {isThinking && (
           <div className="message message-assistant">
             <div className="message-content">
-              <p className="thinking-status">
-                Pensando
-                <span className="thinking-dot">●</span>
-                <span className="thinking-dot">●</span>
-                <span className="thinking-dot">●</span>
-              </p>
+              <div className="thinking-status">
+                <div className="thinking-header">
+                  <span className="thinking-icon">🤔</span>
+                  <span>Procesando tu mensaje</span>
+                </div>
+                <div className="thinking-dots">
+                  <span className="thinking-dot"></span>
+                  <span className="thinking-dot"></span>
+                  <span className="thinking-dot"></span>
+                </div>
+                <div className="thinking-hint">
+                  Esto puede tomar unos segundos...
+                </div>
+              </div>
             </div>
           </div>
         )}

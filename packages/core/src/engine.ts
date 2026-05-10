@@ -46,52 +46,14 @@ export {
 export { initStageMetrics, recordStageMetric } from './orchestrator/amplifier/AmplifierLoopMetrics.js';
 export * from './orchestrator/types.js';
 export * from './echo/index.js';
-export * from './voice/index.js';
 export { MemoryService } from './memory/MemoryService.js';
 export { MemoryExtractor } from './memory/MemoryExtractor.js';
-export {
-  RecallTool,
-} from './memory/RecallTool.js';
+export { RecallTool } from './memory/RecallTool.js';
 export type { Message, LLMProvider, Tool } from './providers/types.js';
 export { CircuitOpenError } from './providers/circuitBreaker.js';
 export {
   ToolRegistry,
   type ExecutableTool,
   type ToolResult,
-  WebSearchTool,
-  ExecuteCommandTool,
-  ReadFileTool,
   RememberTool,
-  WriteFileTool,
-  SendFileTool,
-  type SendFileFn,
 } from './tools/index.js';
-export {
-  FileHandler,
-  type ReceivedFile,
-  type FileHandlerOptions,
-  MarkItDownConverter,
-  type MarkItDownConverterOptions,
-  type ConversionResult,
-  type MarkItDownService,
-} from './files/index.js';
-export {
-  ReadEmailTool,
-  SearchEmailTool,
-  SendEmailTool,
-  ModifyEmailTool,
-  EmailUnreadCountTool,
-} from './tools/index.js';
-export type { VisionService, VisionResult } from './vision/VisionService.js';
-export {
-  EmailService,
-  IMAPClient,
-  type EmailMessage,
-  type EmailModifyInput,
-  type EmailSendInput,
-  type EmailAccountListRow,
-  type EmailQuery,
-  type EmailServiceResult,
-  type IMAPClientOptions,
-} from './email/index.js';
-export { OllamaVisionService } from './vision/OllamaVisionService.js';

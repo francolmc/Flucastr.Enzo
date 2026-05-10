@@ -53,6 +53,7 @@ export default function MCPPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [submitting, setSubmitting] = useState(false);
+  const [editingServerId, setEditingServerId] = useState<string | null>(null);
 
   useEffect(() => {
     loadServers();
@@ -95,23 +96,31 @@ export default function MCPPage() {
 
     setSubmitting(true);
     try {
-      const payload: any = {
-        name: formData.name,
-        description: formData.description || undefined,
-        transport: formData.transport,
-        enabled: true,
-      };
-
-      if (formData.transport === 'stdio') {
-        payload.command = formData.command;
-        if (formData.args.trim()) {
-          payload.args = formData.args.split(/\s+/).filter((a: string) => a.length > 0);
-        }
+      if (editingServerId) {
+        await apiClient.updateMCPServer(editingServerId, {
+          name: formData.name,
+          description: formData.description,
+        });
+        setEditingServerId(null);
       } else {
-        payload.url = formData.url;
-      }
+        const payload: any = {
+          name: formData.name,
+          description: formData.description || undefined,
+          transport: formData.transport,
+          enabled: true,
+        };
 
-      await apiClient.connectMCPServer(payload);
+        if (formData.transport === 'stdio') {
+          payload.command = formData.command;
+          if (formData.args.trim()) {
+            payload.args = formData.args.split(/\s+/).filter((a: string) => a.length > 0);
+          }
+        } else {
+          payload.url = formData.url;
+        }
+
+        await apiClient.connectMCPServer(payload);
+      }
       setFormData(initialFormData);
       setShowForm(false);
       await loadServers();
@@ -119,7 +128,7 @@ export default function MCPPage() {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       setError(errorMsg);
-      console.error('Error adding server:', err);
+      console.error('Error saving server:', err);
     } finally {
       setSubmitting(false);
     }
@@ -221,7 +230,7 @@ export default function MCPPage() {
 
       {showForm && (
         <div className="add-server-form surface-card">
-          <h3>Agregar nuevo servidor MCP</h3>
+          <h3>{editingServerId ? 'Editar servidor MCP' : 'Agregar nuevo servidor MCP'}</h3>
           <form onSubmit={handleAddServer}>
             <div className="form-group">
               <label>Nombre *</label>
@@ -234,12 +243,13 @@ export default function MCPPage() {
             </div>
 
             <div className="form-group">
-              <label>Descripción</label>
+              <label>Descripción *</label>
               <input
                 type="text"
                 value={formData.description}
                 onChange={e => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descripción del servidor (opcional)"
+                placeholder="Ej: archivos locales, investigación, base de datos"
+                required
               />
             </div>
 
@@ -307,7 +317,7 @@ export default function MCPPage() {
               className="btn-submit"
               disabled={submitting}
             >
-              {submitting ? 'Agregando...' : 'Agregar y conectar'}
+              {submitting ? (editingServerId ? 'Guardando...' : 'Agregando...') : (editingServerId ? 'Guardar cambios' : 'Agregar y conectar')}
             </button>
           </form>
         </div>
@@ -361,6 +371,24 @@ export default function MCPPage() {
                     title={server.enabled ? 'Deshabilitar' : 'Habilitar'}
                   >
                     {server.enabled ? '⏸ Deshabilitar' : '▶ Habilitar'}
+                  </button>
+                  <button
+                    className="btn-action btn-edit"
+                    onClick={() => {
+                      setEditingServerId(server.id);
+                      setFormData({
+                        name: server.name,
+                        description: server.description || '',
+                        transport: server.transport,
+                        command: server.command || '',
+                        args: Array.isArray(server.args) ? server.args.join(' ') : (server.args || ''),
+                        url: server.url || '',
+                      });
+                      setShowForm(true);
+                    }}
+                    title="Editar servidor"
+                  >
+                    ✏️ Editar
                   </button>
                   <button
                     className="btn-action btn-delete"

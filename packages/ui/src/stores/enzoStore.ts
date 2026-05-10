@@ -34,6 +34,20 @@ interface MessageStatus {
 /** localStorage — must match Telegram user id (`String(telegram numeric id)`) to see Telegram memories in the web UI. */
 const WEB_USER_ID_STORAGE_KEY = 'enzo_web_user_id';
 
+/** Maximum number of messages to keep in memory for performance */
+const MAX_MESSAGES_IN_MEMORY = 100;
+
+/** Optimize messages array by keeping only the most recent messages */
+function optimizeMessages(messages: UIMessage[]): UIMessage[] {
+  if (messages.length <= MAX_MESSAGES_IN_MEMORY) {
+    return messages;
+  }
+  // Keep the first message (for context) and the most recent ones
+  const firstMessage = messages[0];
+  const recentMessages = messages.slice(-(MAX_MESSAGES_IN_MEMORY - 1));
+  return [firstMessage, ...recentMessages];
+}
+
 function readStoredWebUserId(): string | null {
   if (typeof globalThis.window === 'undefined') {
     return null;
@@ -226,7 +240,7 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
       };
 
       set((state) => ({
-        messages: [...state.messages, assistantMessage],
+        messages: optimizeMessages([...state.messages, assistantMessage]),
         isThinking: false,
       }));
 
@@ -398,11 +412,8 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
 
   loadHistory: async (conversationId: string) => {
     try {
-      console.log('[Store] loadHistory called with conversationId:', conversationId);
       const messages = await apiClient.getHistory(conversationId);
-      console.log('[Store] loadHistory received messages:', messages.length);
-      set({ messages, conversationId });
-      console.log('[Store] loadHistory state updated with conversationId:', conversationId);
+      set({ messages: optimizeMessages(messages), conversationId });
     } catch (error) {
       console.error('Error loading history:', error);
       throw error;

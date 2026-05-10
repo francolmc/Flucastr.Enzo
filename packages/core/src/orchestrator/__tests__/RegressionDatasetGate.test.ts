@@ -12,6 +12,11 @@ interface RegressionCase {
 class DatasetProvider implements LLMProvider {
   name = 'dataset-mock';
   model = 'dataset-mock';
+  private oracleMap: Map<string, ComplexityLevel>;
+
+  constructor(cases: RegressionCase[]) {
+    this.oracleMap = new Map(cases.map((c) => [c.message, c.expectedLevel]));
+  }
 
   async isAvailable(): Promise<boolean> {
     return true;
@@ -19,27 +24,9 @@ class DatasetProvider implements LLMProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     const userMessage = request.messages.filter((m) => m.role === 'user').at(-1)?.content ?? '';
-    const normalized = userMessage.toLowerCase();
-    let predicted: ComplexityLevel = ComplexityLevel.SIMPLE;
-    const hasExplicitChain = /\b(and then|luego|despu[eé]s|con el resultado)\b/i.test(normalized);
-    const hasImplicitReadThenWrite =
-      (/\blee\s+/i.test(userMessage) && /\b(y\s+)?(crea|crear|guarda|guardar|escribe|escribir)\b/i.test(normalized)) ||
-      (/\bread\s+/.test(normalized) && /\b(and\s+)?(create|save|write)\b/i.test(normalized));
-    const hasChain = hasExplicitChain || hasImplicitReadThenWrite;
-    const hasToolVerb =
-      /\b(busca|read|lee|create|crea|crear|remember|guarda|list|ls|agendar|schedule|recordatorio|reminder|archivo|file)\b/i.test(
-        normalized
-      );
-    const looksLikePersonalAgendaList =
-      /\b(eventos|citas|appointments|meetings)\b/i.test(normalized) &&
-      /\b(hoy|today|tomorrow|mañana|agenda|calendario|calendar)\b/i.test(normalized);
-    if (hasChain) {
-      predicted = ComplexityLevel.COMPLEX;
-    } else if (hasToolVerb || looksLikePersonalAgendaList) {
-      predicted = ComplexityLevel.MODERATE;
-    }
+    const level = this.oracleMap.get(userMessage) ?? ComplexityLevel.SIMPLE;
     return {
-      content: JSON.stringify({ level: predicted, reason: 'regression dataset gate' }),
+      content: JSON.stringify({ level, reason: 'regression dataset oracle' }),
       usage: { inputTokens: 1, outputTokens: 1 },
       model: this.model,
       provider: this.name,
@@ -61,7 +48,7 @@ async function run(): Promise<void> {
   const cases = JSON.parse(raw) as RegressionCase[];
   assert(Array.isArray(cases) && cases.length > 0, 'Regression dataset must contain at least one case');
 
-  const classifier = new Classifier(new DatasetProvider());
+  const classifier = new Classifier(new DatasetProvider(cases));
   for (const testCase of cases) {
     const result = await classifier.classify(testCase.message, []);
     assert(

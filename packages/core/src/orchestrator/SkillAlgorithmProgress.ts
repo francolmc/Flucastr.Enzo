@@ -6,20 +6,20 @@ export function countCompletedToolActs(steps: Step[]): number {
 }
 
 export function isMultiStepRelevantSkill(skill: RelevantSkill): boolean {
-  const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
+  const markers = (skill.content ?? '').match(/\bstep\s+(\d+)/gi) ?? [];
   const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, ''), 10) || 0), 0);
   return maxN >= 2;
 }
 
 export function stepCountForRelevantSkill(skill: RelevantSkill): number {
-  const markers = (skill.content ?? '').match(/\bpaso\s+(\d+)|\bstep\s+(\d+)/gi) ?? [];
+  const markers = (skill.content ?? '').match(/\bstep\s+(\d+)/gi) ?? [];
   const maxN = markers.reduce((m, s) => Math.max(m, parseInt(s.replace(/\D/g, ''), 10) || 0), 0);
   if (maxN >= 2) return maxN;
-  const pasoLines = (skill.content ?? '')
+  const numberedLines = (skill.content ?? '')
     .split('\n')
-    .filter((l) => /^\d+\.\s/.test(l.trim()) || /\bpaso\s+\d+/i.test(l.trim()))
+    .filter((l) => /^\d+\.\s/.test(l.trim()))
     .slice(0, 20);
-  if (pasoLines.length >= 2) return pasoLines.length;
+  if (numberedLines.length >= 2) return numberedLines.length;
   return 1;
 }
 
@@ -88,7 +88,7 @@ export function totalToolActsForMultiStepPlan(preResolvedSkills: RelevantSkill[]
 export function buildStepDescriptionsForSkill(skill: RelevantSkill): string[] {
   const pasoLines = (skill.content ?? '')
     .split('\n')
-    .filter((l) => /^\d+\.\s/.test(l.trim()) || /\bpaso\s+\d+/i.test(l.trim()))
+    .filter((l) => /^\d+\.\s/.test(l.trim()))
     .slice(0, 10)
     .map((l, i) => `  Step ${i + 1}: ${l.trim()}`);
   return pasoLines.length > 0 ? pasoLines : [`  (see skill algorithm below)`];

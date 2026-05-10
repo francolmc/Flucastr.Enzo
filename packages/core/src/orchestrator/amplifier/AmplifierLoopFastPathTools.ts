@@ -73,7 +73,7 @@ export function attachCalendarDisplayClock(
   if (toolName !== 'calendar' || !tz) {
     return scoped;
   }
-  const loc = clock?.timeLocale?.trim() || 'es-CL';
+  const loc = clock?.timeLocale?.trim() || Intl.DateTimeFormat().resolvedOptions().locale;
   return { ...scoped, __enzoDisplayTimeZone: tz, __enzoDisplayLocale: loc };
 }
 
@@ -444,7 +444,7 @@ export function isLikelyStructuredShellListingOrLog(toolOutput: string): boolean
 export function shouldReturnRawToolOutput(toolName: string, userMessage: string, toolOutput: string): boolean {
   const lowerMessage = (userMessage || '').toLowerCase();
   const lowerOutput = (toolOutput || '').toLowerCase();
-  const rawRequested = /\b(raw|tal cual|sin resumir|exacto|stdout|output completo|ver salida)\b/i.test(lowerMessage);
+  const rawRequested = /\b(raw|stdout)\b/i.test(lowerMessage);
   if (rawRequested) return true;
   if (!toolOutput) return false;
   if (

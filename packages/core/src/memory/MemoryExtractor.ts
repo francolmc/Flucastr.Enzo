@@ -11,6 +11,39 @@ export interface ExtractedFact {
   confidence?: number;
 }
 
+function validateAndNormalizeFact(fact: { key: string; value: string }): { key: string; value: string } | null {
+  const validKeys = ['name', 'profession', 'employer', 'city', 'country', 'timezone', 'projects', 'preferences', 'routines', 'family', 'other'];
+  
+  // Normalize key
+  const key = fact.key.toLowerCase().trim();
+  if (!validKeys.includes(key)) {
+    // Remap known incorrect keys
+    const keyMap: Record<string, string> = {
+      'occupation': 'profession',
+      'job': 'profession',
+      'work': 'employer',
+      'company': 'employer',
+      'location': 'city',
+      'town': 'city',
+    };
+    const remapped = keyMap[key];
+    if (!remapped) return { key: 'other', value: `${fact.key}: ${fact.value}` };
+    return { key: remapped, value: fact.value };
+  }
+  
+  // Validate city is not a company (heuristic)
+  if (key === 'city') {
+    const companyIndicators = ['data', 'corp', 'inc', 'ltd', 'sa', 'spa', 'ntt', 'ibm', 'microsoft', 'google', 'inacap'];
+    const valueLower = fact.value.toLowerCase();
+    const looksLikeCompany = companyIndicators.some(indicator => valueLower.includes(indicator));
+    if (looksLikeCompany) {
+      return { key: 'employer', value: fact.value };
+    }
+  }
+  
+  return { key, value: fact.value };
+}
+
 export class MemoryExtractor {
   private provider: LLMProvider;
   private memoryService: MemoryService;
@@ -41,18 +74,22 @@ export class MemoryExtractor {
       console.log(`[MemoryExtractor] Saving ${facts.length} fact(s) for user ${userId}`);
 
       for (const fact of facts) {
-        const normalizedKey = normalizeMemoryKey(fact.key);
+        // Validate and normalize BEFORE normalizing key
+        const validated = validateAndNormalizeFact(fact);
+        if (!validated) continue;
+        
+        const normalizedKey = normalizeMemoryKey(validated.key);
         const confidence = typeof fact.confidence === 'number' ? fact.confidence : 0.7;
         if (confidence < this.getConfidenceThreshold()) {
           console.log(`[MemoryExtractor] Skipping low-confidence fact "${normalizedKey}" (${confidence.toFixed(2)})`);
           continue;
         }
-        await this.memoryService.remember(userId, normalizedKey, fact.value, {
+        await this.memoryService.remember(userId, normalizedKey, validated.value, {
           source: 'extractor',
           confidence,
         });
         console.log(
-          `[MemoryExtractor] Saved: ${normalizedKey} = ${fact.value}` +
+          `[MemoryExtractor] Saved: ${normalizedKey} = ${validated.value}` +
           (normalizedKey !== fact.key ? ` (normalized from "${fact.key}")` : '')
         );
       }
@@ -93,6 +130,8 @@ export class MemoryExtractor {
         lines.push(`The user lives in ${val}.`);
       } else if (key === 'profession') {
         lines.push(`The user's profession: ${val}.`);
+      } else if (key === 'employer') {
+        lines.push(`The user works for: ${val}.`);
       } else if (key === 'family') {
         lines.push(`User family info: ${val}.`);
       } else if (key === 'preferences') {
@@ -145,19 +184,30 @@ These facts are about the USER only — never apply them to the assistant's iden
     const systemPrompt = `Extract facts about the user from this conversation.
 Respond ONLY with JSON: {"facts": [{"key": "...", "value": "...", "confidence": 0.0-1.0}]}
 
-ALLOWED KEYS — return ONLY these exact strings as "key", never Spanish variants, synonyms, or any other string:
-name, city, profession, projects, preferences, routines, family, other
+Extract ONLY facts that fit these EXACT keys:
+- "name": the person's full name or first name
+- "profession": their job title or role (e.g. "developer", "teacher")  
+- "employer": the company or organization they work for (e.g. "NTT Data", "INACAP")
+- "city": the city where they live (e.g. "Copiapó", "Santiago") — NEVER a company name
+- "country": their country (e.g. "Chile")
+- "timezone": their timezone (e.g. "America/Santiago")
+- "projects": current projects they're working on
+- "preferences": their preferences or likes
+- "routines": daily routines or habits
+- "family": family information
+- "other": any other durable personal fact that doesn't fit above keys
 
-Rules:
-- Use only the allowed keys above (e.g. "profession" not "ocupacion", "city" not "ciudad")
-- If unsure which key fits, use "other"
-- For key "projects": put the project title on the very first line of "value", followed by details or stack on following lines (helps downstream display)
-- Include "confidence" per fact (how sure it is grounded in the user's words)
+VALIDATION RULES:
+- "city" must be a geographic location — NEVER a company, product, or service name
+- "employer" is for companies and organizations — NEVER a city or country
+- If unsure which key fits → use "other" with a descriptive value
+- If nothing worth remembering → {"facts": []}
 - Only extract concrete, durable facts
-- If nothing to extract, return {"facts": []}
 - Extract facts ONLY from what the USER said
 - Never extract assistant identity, assistant preferences, or assistant claims
-- Never extract temporary or task-specific information, file paths, or search queries`;
+- Never extract temporary or task-specific information, file paths, or search queries
+- For key "projects": put the project title on the very first line of "value", followed by details or stack on following lines (helps downstream display)
+- Include "confidence" per fact (how sure it is grounded in the user's words)`;
 
     const conversation = `User: ${userMessage}\nAssistant: ${assistantResponse}`;
 

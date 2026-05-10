@@ -2,6 +2,7 @@ import { Message, Tool, LLMProvider } from '../providers/types.js';
 import type { Subtask, DecompositionResult } from './Decomposer.js';
 import type { AssistantProfile, UserProfile } from '../config/ConfigService.js';
 import type { RelevantSkill } from './SkillResolver.js';
+import type { RelevantMCP } from './MCPResolver.js';
 import type { ConversationContext } from '../memory/ConversationContext.js';
 
 export type { ConversationContext } from '../memory/ConversationContext.js';
@@ -69,12 +70,6 @@ export interface StageMetricsSnapshot {
 
 export type StageMetrics = Record<'think' | 'act' | 'observe' | 'synthesize' | 'verify', StageMetricsSnapshot>;
 
-/** When classifier suggests `calendar`, disambiguates fast-path prompts (list vs schedule). */
-export type CalendarIntentHint = 'list' | 'schedule';
-
-/** Connected mailbox: unread counts vs listing/summarizing unread messages (tools on host). */
-export type MailboxIntentHint = 'unread_stats' | 'unread_summarize';
-
 export interface AmplifierInput {
   message: string;
   originalMessage?: string; // Original message before any translation or processing
@@ -92,14 +87,8 @@ export interface AmplifierInput {
    */
   availableAgents: AgentConfig[];
   classifiedLevel?: ComplexityLevel;
-  /** Mirrors {@link ClassificationResult.suggestedTool} from orchestrator classify. */
-  suggestedTool?: 'web_search' | 'calendar' | 'send_email';
-  /** Mirrors {@link ClassificationResult.prefersHostTools} (omit web_search bias for CLI/host data). */
+  /** Mirrors {@link ClassificationResult.prefersHostTools}. */
   prefersHostTools?: boolean;
-  /** Mirrors {@link ClassificationResult.calendarIntent}. */
-  calendarIntent?: CalendarIntentHint;
-  /** Mirrors {@link ClassificationResult.mailboxIntent} (OAuth/IMAP unread counts). */
-  mailboxIntent?: MailboxIntentHint;
   /** Mirrors {@link ClassificationResult.suppressSimpleModerateFastPath}. */
   suppressSimpleModerateFastPath?: boolean;
   /** User's preferred language (e.g., 'es', 'en'). Defaults to 'es'. */
@@ -136,6 +125,8 @@ export interface AmplifierInput {
   };
   /** When set (e.g. by AmplifierLoop), THINK skips re-resolving skills against `message`. */
   resolvedSkills?: RelevantSkill[];
+  /** When set (e.g. by AmplifierLoop), MCP resolver pre-selected relevant MCPs. */
+  resolvedMCPs?: RelevantMCP[];
   /** From classifier: skip fast path and bias THINK toward delegating to this catalog agent when set. */
   delegationHint?: DelegationHint;
   /** Image bytes for vision delegation (e.g. Telegram when local Ollama cannot see). */
@@ -154,6 +145,8 @@ export interface AmplifierResult {
   durationMs: number;
   stageMetrics?: StageMetrics;
   complexityUsed?: string;
+  /** Accumulated real token counts from all LLM calls inside the loop. */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 export interface InjectedSkillUsage {
@@ -239,11 +232,9 @@ export interface DelegationHint {
 export interface ClassificationResult {
   level: ComplexityLevel;
   reason: string;
-  /** Set when a heuristic or caller hints a primary tool (e.g. web_search for factual fast-path). */
-  suggestedTool?: 'web_search' | 'calendar' | 'send_email';
+  
   /**
-   * When true, routing treats the ask as answers from THIS host (CLIs / registered tools), not generic web lookup.
-   * Classifier MUST omit conflicting `suggestedTool: web_search` for this intent.
+   * When true, routing treats the ask as answers from THIS host (CLIs / registered tools / MCPs), not generic web lookup.
    */
   prefersHostTools?: boolean;
   /**
@@ -251,10 +242,6 @@ export interface ClassificationResult {
    * Set by classifier LLM JSON or lexical multi-tool branches; AmplifierLoop honors this instead of lexical-only gates.
    */
   suppressSimpleModerateFastPath?: boolean;
-  /** Meaningful when `suggestedTool` is `calendar` (omit when not listing vs scheduling persisted agenda). */
-  calendarIntent?: CalendarIntentHint;
-  /** Unread inbox counts for configured Gmail/Outlook/IMAP via host tools (`email_unread_count`). */
-  mailboxIntent?: MailboxIntentHint;
   /**
    * When set, {@link AmplifierLoop} skips SIMPLE/MODERATE fast path so THINK can delegate to a catalog agent.
    */
@@ -272,7 +259,7 @@ export interface OrchestratorInput {
   requestId?: string;
   conversationId: string;
   userId: string;
-  source?: 'web' | 'telegram' | 'unknown' | 'echo';
+  source?: 'web' | 'telegram' | 'cli' | 'api' | 'echo' | 'unknown';
   classifiedLevel?: ComplexityLevel;
   userLanguage?: string;
   agentId?: string;
@@ -283,52 +270,11 @@ export interface OrchestratorInput {
   imageContext?: { base64: string; mimeType: string };
 }
 
-export const AVAILABLE_TOOLS = [
-  {
-    name: 'web_search',
-    description: 'Search the internet for information',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'read_file',
-    description: 'Read a file from the filesystem',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File path to read' },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'execute_command',
-    description: 'Execute a shell command',
-    parameters: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'Shell command to execute' },
-      },
-      required: ['command'],
-    },
-  },
-  {
-    name: 'write_file',
-    description: 'Create or overwrite a file with the given content',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Absolute path where the file will be created' },
-        content: { type: 'string', description: 'File content to write' },
-      },
-      required: ['path', 'content'],
-    },
-  },
+/**
+ * Core memory tools - always available.
+ * Additional tools come from MCP servers (mcp_<serverId>_<toolName>).
+ */
+export const CORE_TOOLS = [
   {
     name: 'remember',
     description: 'Save important user information to memory for future conversations. Use proactively when user shares personal details, preferences, or important facts about themselves.',
@@ -344,7 +290,7 @@ export const AVAILABLE_TOOLS = [
   },
   {
     name: 'recall',
-    description: 'Search the user\'s saved memories using a natural-language query. Use when the user asks what they have pending, captured, or said before.',
+    description: "Search the user's saved memories using a natural-language query. Use when the user asks what they have pending, captured, or said before.",
     parameters: {
       type: 'object',
       properties: {
@@ -357,3 +303,8 @@ export const AVAILABLE_TOOLS = [
     },
   },
 ];
+
+export const AVAILABLE_TOOLS = CORE_TOOLS;
+
+// Re-export progress types from IterationProgressTracker for convenience
+export type { ProgressSignature, ContinueDecision } from './IterationProgressTracker.js';

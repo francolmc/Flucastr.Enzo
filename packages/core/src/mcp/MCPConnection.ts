@@ -86,7 +86,12 @@ export class MCPConnection {
           version: '1.0.0',
         },
         {
-          capabilities: {},
+          capabilities: {
+            // Enable task support for tools that require it
+            experimental: {
+              tasks: {},
+            },
+          },
         }
       );
 
@@ -101,12 +106,21 @@ export class MCPConnection {
       );
 
       if (toolsResponse && (toolsResponse as any).tools && Array.isArray((toolsResponse as any).tools)) {
-        this.tools = ((toolsResponse as any).tools).map((t: any) => ({
-          name: t.name,
-          description: t.description || '',
-          inputSchema: t.inputSchema || {},
-          serverId: this.config.id,
-        }));
+        this.tools = ((toolsResponse as any).tools).map((t: any) => {
+          const tool = {
+            name: t.name,
+            description: t.description || '',
+            inputSchema: t.inputSchema || {},
+            serverId: this.config.id,
+            taskSupport: t.taskSupport, // 'required' | 'optional' | undefined
+          };
+          
+          if (t.taskSupport) {
+            console.log(`[MCPConnection] Tool "${t.name}" has taskSupport: ${t.taskSupport}`);
+          }
+          
+          return tool;
+        });
 
         console.log(
           `[MCPConnection] Connected to "${this.config.name}". Found ${this.tools.length} tools`
@@ -148,7 +162,7 @@ export class MCPConnection {
     }
   }
 
-  async callTool(toolName: string, input: any): Promise<string> {
+  async callTool(toolName: string, input: any, taskContext?: { description: string }): Promise<string> {
     if (this.status !== 'connected' || !this.client) {
       throw new Error(
         `Cannot call tool "${toolName}": server "${this.config.name}" is not connected`
@@ -169,13 +183,49 @@ export class MCPConnection {
         }
       }
 
+      let taskId: string | undefined;
+
+      // If task context is provided, create a task first
+      if (taskContext) {
+        try {
+          console.log(`[MCPConnection] Creating task for "${toolName}": ${taskContext.description}`);
+          const taskResponse = await (this.client.request as any)(
+            {
+              method: 'tasks/create',
+              params: {
+                name: taskContext.description,
+                description: taskContext.description,
+              },
+            },
+            z.any()
+          );
+          
+          if (taskResponse && (taskResponse as any).taskId) {
+            taskId = (taskResponse as any).taskId;
+            console.log(`[MCPConnection] Created task with ID: ${taskId}`);
+          }
+        } catch (err) {
+          console.warn(`[MCPConnection] Failed to create task, proceeding without it:`, err);
+        }
+      }
+
+      // Build request params
+      const params: any = {
+        name: toolName,
+        arguments: input,
+      };
+
+      // Include taskId if available
+      if (taskId) {
+        params._meta = {
+          taskId,
+        };
+      }
+
       const response = await (this.client.request as any)(
         {
           method: 'tools/call',
-          params: {
-            name: toolName,
-            arguments: input,
-          },
+          params,
         },
         z.any()
       );

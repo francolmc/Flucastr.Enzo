@@ -1,30 +1,71 @@
 import { Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
-import type {
-  Orchestrator,
-  MemoryService,
-  ConfigService,
-  TranscriptionService,
-  TTSService,
-  FileHandler,
-  VisionService,
-  MarkItDownService,
-} from '@enzo/core';
+import type { Orchestrator, MemoryService, ConfigService, VisionService } from '@enzo/core';
+import type { EnzoApiClient } from './apiClient.js';
+
+export interface TranscriptionResult {
+  success: boolean;
+  text?: string;
+  language?: string;
+  durationSeconds?: number;
+  error?: string;
+}
+
+export interface TranscriptionService {
+  transcribe(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult>;
+}
+
+export interface TTSResult {
+  success: boolean;
+  audioBuffer?: Buffer;
+  mimeType?: string;
+  error?: string;
+}
+
+export interface TTSService {
+  synthesize(text: string, language: string): Promise<TTSResult>;
+}
+
+export interface ReceivedFile {
+  originalName: string;
+  localPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  extension: string;
+}
+
+export interface FileHandler {
+  save(buffer: Buffer, originalName: string, mimeType: string): Promise<ReceivedFile>;
+}
+
+export interface ConversionResult {
+  success: boolean;
+  markdown?: string;
+  title?: string;
+  pageCount?: number;
+  error?: string;
+}
+
+export interface MarkItDownService {
+  convert(filePath: string): Promise<ConversionResult>;
+  isSupported(extension: string): boolean;
+}
 
 export interface EnzoContext extends Context {
-  orchestrator: Orchestrator;
-  memoryService: MemoryService;
+  orchestrator?: Orchestrator | null;
+  memoryService?: MemoryService | null;
   configService?: ConfigService;
   transcriptionService?: TranscriptionService;
   ttsService?: TTSService;
   fileHandler?: FileHandler;
   visionService?: VisionService;
   markItDownService?: MarkItDownService;
+  apiClient?: EnzoApiClient;
 }
 
 export function createBot(
-  orchestrator: Orchestrator,
-  memoryService: MemoryService,
+  orchestrator: Orchestrator | null,
+  memoryService: MemoryService | null,
   options?: {
     configService?: ConfigService;
     transcriptionService?: TranscriptionService;
@@ -32,6 +73,7 @@ export function createBot(
     fileHandler?: FileHandler;
     visionService?: VisionService;
     markItDownService?: MarkItDownService;
+    apiClient?: EnzoApiClient;
   }
 ): Telegraf<EnzoContext> {
   const debugUpdates = (process.env.ENZO_DEBUG || '').toLowerCase() === 'true';
@@ -74,6 +116,7 @@ export function createBot(
     ctx.fileHandler = options?.fileHandler;
     ctx.visionService = options?.visionService;
     ctx.markItDownService = options?.markItDownService;
+    ctx.apiClient = options?.apiClient;
     return next();
   });
 

@@ -56,32 +56,15 @@ function resolveSharedFilePath(configValue: string | undefined, fallbackAbsolute
 }
 
 import {
-  OllamaProvider,
-  AnthropicProvider,
-  MemoryService,
-  Orchestrator,
-  SkillRegistry,
   ConfigService,
   EncryptionService,
   ensureLocalSecret,
-  WhisperTranscriptionService,
-  EdgeTTSService,
-  FileHandler,
-  OllamaVisionService,
-  MarkItDownConverter,
 } from '@enzo/core';
-import {
-  bindEchoDeclarativeOrchestrator,
-  createDefaultToolRegistry,
-  getEchoEngine,
-  getEchoNotificationGateway,
-  createNotificationGateway,
-  createAgentRouter,
-} from '@enzo/bootstrap';
 import { createBot } from './bot.js';
 import type { EnzoContext } from './bot.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMessageHandler } from './handlers/message.js';
+import { createTelegramApiClient } from './apiClient.js';
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -116,114 +99,21 @@ async function main() {
       console.log(`[Telegram] Allowed users: ${userIds.join(', ')}`);
     }
 
-    console.log('[Telegram] Initializing Enzo bot...');
+    console.log('[Telegram] Initializing Enzo bot (SDK mode)...');
 
-    const dbPath = resolveSharedFilePath(systemConfig.dbPath, path.join(homedir(), '.enzo', 'enzo.db'));
-    const skillsPath = resolveSharedDirPath(systemConfig.enzoSkillsPath, path.join(homedir(), '.enzo', 'skills'));
-    process.env.ENZO_SKILLS_PATH = skillsPath;
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    fs.mkdirSync(skillsPath, { recursive: true });
-    const memoryService = new MemoryService(dbPath);
-    console.log(`[Telegram] MemoryService initialized (${dbPath})`);
-    console.log(`[Telegram] Shared skills path: ${skillsPath}`);
-
-    const skillRegistry = new SkillRegistry(undefined, memoryService);
-    await skillRegistry.reload();
-    skillRegistry.startWatching();
-    console.log('[Telegram] SkillRegistry initialized and loaded');
-
-    const resolvedUserWorkspace = resolveSharedDirPath(systemConfig.enzoWorkspacePath, homedir());
-
-    const ollamaBaseUrl =
-      systemConfig.ollamaBaseUrl || 'http://localhost:11434';
-    const ollamaPrimaryModel = configService.getPrimaryModel() || 'qwen2.5:7b';
-    const ollamaProvider = new OllamaProvider(ollamaBaseUrl, ollamaPrimaryModel);
-    console.log(`[Telegram] OllamaProvider initialized (${ollamaPrimaryModel})`);
-
-    let anthropicProvider: AnthropicProvider | undefined;
-    const anthropicApiKey = configService.getProviderApiKey('anthropic');
-    if (anthropicApiKey) {
-      const anthropicModel = systemConfig.anthropicModel || 'claude-haiku-4-5';
-      anthropicProvider = new AnthropicProvider(
-        anthropicApiKey,
-        anthropicModel
-      );
-      console.log('[Telegram] AnthropicProvider initialized');
-    }
-
-    let bot: Telegraf<EnzoContext> | null = null;
-    const sendTelegramMessage = async (
-      chatId: string,
-      message: string,
-      disableNotification: boolean
-    ): Promise<boolean> => {
-      if (!bot) {
-        return false;
-      }
-      try {
-        await bot.telegram.sendMessage(chatId, message, {
-          disable_notification: disableNotification,
-        });
-        return true;
-      } catch (error) {
-        console.error('[Telegram] Failed to send push notification:', error);
-        return false;
-      }
-    };
-
-    const sendTelegramFile = async (
-      chatId: string,
-      buffer: Buffer,
-      filename: string
-    ): Promise<void> => {
-      if (!bot) {
-        throw new Error('[Telegram] Bot not ready for send_document');
-      }
-      await bot.telegram.sendDocument(chatId, { source: buffer, filename });
-    };
-
-    const fileHandler = new FileHandler({
-      workspacePath: resolvedUserWorkspace,
-      maxSizeMb: 50,
-    });
-    const markItDownService = new MarkItDownConverter();
-
-    const toolRegistry = createDefaultToolRegistry(
-      memoryService,
-      resolvedUserWorkspace,
-      configService,
-      { fileHandler, sendFileFn: sendTelegramFile }
-    );
-    const transcriptionService = new WhisperTranscriptionService(configService);
-    const ttsService = new EdgeTTSService({ configService });
-    const visionService = new OllamaVisionService(configService);
-    const agentNotificationGateway = createNotificationGateway(memoryService, sendTelegramMessage);
-    const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot, {
-      localVisionService: visionService,
-    });
-    const orchestrator = new Orchestrator(
-      ollamaProvider,
-      anthropicProvider,
-      memoryService,
-      { skillRegistry, configService, toolRegistry, agentRouter }
-    );
-    console.log('[Telegram] Orchestrator initialized');
-
+    // SDK Mode: Only ConfigService is needed locally for Telegram settings
+    // All other services (Memory, Orchestrator, etc.) are accessed via API
+    
     process.env.ENZO_RUNTIME_ROLE = process.env.ENZO_RUNTIME_ROLE?.trim() || 'telegram';
 
-    const echoEngine = getEchoEngine({ memoryService, configService, sendTelegramMessage });
-    const echoNg = getEchoNotificationGateway();
-    bindEchoDeclarativeOrchestrator({
-      orchestrator,
-      memoryService,
-      configService,
-      ...(echoNg ? { notificationGateway: echoNg } : {}),
-    });
-    echoEngine.start();
+    // Initialize API Client for SDK-based communication (PRIMARY MODE)
+    const apiClient = createTelegramApiClient();
+    console.log('[Telegram] API Client initialized (SDK mode)');
 
     let configPoller: NodeJS.Timeout | null = null;
     let isReloading = false;
     let currentSignature = '';
+    let bot: Telegraf<EnzoContext> | null = null;
 
     const buildSignature = (): string => {
       const token = configService.getSystemSecret('telegramBotTokenEncrypted') || '';
@@ -261,13 +151,9 @@ async function main() {
         bot = null;
       }
 
-      const nextBot = createBot(orchestrator, memoryService, {
+      const nextBot = createBot(null, null, {
         configService,
-        transcriptionService,
-        ttsService,
-        fileHandler,
-        visionService,
-        markItDownService,
+        apiClient,
       });
       registerCommands(nextBot);
       registerMessageHandler(nextBot);
@@ -316,8 +202,6 @@ async function main() {
 
     const shutdown = (signal: string) => {
       console.log(`[Telegram] ${signal} received, stopping bot...`);
-      skillRegistry.stopWatching();
-      echoEngine.stop();
       if (configPoller) {
         clearInterval(configPoller);
         configPoller = null;

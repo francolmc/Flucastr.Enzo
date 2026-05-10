@@ -16,7 +16,6 @@ import {
   EncryptionService,
   ensureLocalSecret,
   getMemoryMetricsSnapshot,
-  CalendarService,
 } from "@enzo/core";
 import {
   createDefaultToolRegistry,
@@ -34,10 +33,20 @@ import { createConfigRouter } from "./routes/config.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { createMCPRouter } from "./routes/mcp.js";
 import { createEchoRouter } from "./routes/echo.js";
-import { createCalendarRouter } from "./routes/calendar.js";
-import { createEmailRouter } from "./routes/email.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { createVoiceRouter } from "./routes/voice.js";
+import { createFilesRouter } from "./routes/files.js";
+import { createCommandsRouter } from "./routes/commands.js";
+import { createDecisionsRouter } from "./routes/decisions.js";
+import { createLessonsRouter } from "./routes/lessons.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { 
+  getCommandRegistry, 
+  chatCommands, 
+  memoryCommands, 
+  agentCommands, 
+  systemCommands 
+} from "@enzo/core";
 
 process.env.ENZO_RUNTIME_ROLE ||= "api";
 
@@ -146,12 +155,11 @@ const anthropicProvider = anthropicApiKey
   : undefined;
 
 const memoryService = new MemoryService(dbPath);
-const calendarService = new CalendarService(memoryService.getDbPath());
 const agentNotificationGateway = createNotificationGateway(memoryService);
 const agentRouter = createAgentRouter(configService, memoryService, agentNotificationGateway, workspaceRoot);
 
 const skillRegistry = new SkillRegistry(undefined, memoryService);
-const toolRegistry = createDefaultToolRegistry(memoryService, workspaceRoot, configService);
+const toolRegistry = createDefaultToolRegistry(memoryService);
 const orchestrator = new Orchestrator(
   ollamaProvider,
   anthropicProvider,
@@ -159,6 +167,17 @@ const orchestrator = new Orchestrator(
   { skillRegistry, configService, toolRegistry, agentRouter }
 );
 const mcpRegistry = orchestrator.getMCPRegistry();
+
+// Initialize command registry with built-in commands
+const commandRegistry = getCommandRegistry();
+chatCommands.forEach(cmd => commandRegistry.register(cmd));
+memoryCommands.forEach(cmd => commandRegistry.register(cmd));
+agentCommands.forEach(cmd => commandRegistry.register(cmd));
+systemCommands.forEach(cmd => commandRegistry.register(cmd));
+// Set services for command handlers
+commandRegistry.setServices({ memoryService });
+console.log(`[API] Command registry initialized with ${commandRegistry.size} commands`);
+
 const echoEngine = getEchoEngine({ memoryService, configService });
 const echoNotificationGateway = getEchoNotificationGateway();
 bindEchoDeclarativeOrchestrator({
@@ -249,12 +268,15 @@ app.use(createMemoryRouter(memoryService));
 app.use(createProjectsRouter(memoryService));
 app.use(createAgentsRouter(memoryService));
 app.use(createStatsRouter(memoryService));
-app.use(createConfigRouter(configService, encryptionService));
+app.use(createConfigRouter(configService, encryptionService, orchestrator));
 app.use(createSkillsRouter({ skillRegistry, memoryService, skillsDir: skillsPath }));
 app.use(createMCPRouter(mcpRegistry));
 app.use(createEchoRouter(echoEngine, echoNotificationGateway));
-app.use(createCalendarRouter(calendarService));
-app.use(createEmailRouter(configService));
+app.use(createVoiceRouter(orchestrator, memoryService));
+app.use(createFilesRouter(memoryService));
+app.use(createCommandsRouter(commandRegistry));
+app.use(createDecisionsRouter());
+app.use(createLessonsRouter(orchestrator));
 
 app.use(errorHandler);
 

@@ -2,11 +2,6 @@ export { Orchestrator } from './Orchestrator.js';
 export {
   Classifier,
   type ClassifyOptions,
-  messageLooksLikeCalendarListQuery,
-  messageLooksLikePersistedAgendaScheduleRequest,
-  messageLooksLikeShellCommandExecutionRequest,
-  resolveCalendarListFastPathIntent,
-  resolveCalendarScheduleFastPathIntent,
 } from './Classifier.js';
 export { ModelSelector } from './ModelSelector.js';
 export { Decomposer } from './Decomposer.js';
@@ -52,4 +47,12 @@ export {
 export { appendMcpToolsToToolList, resolveSkillsForOrchestrator } from './OrchestratorCapabilities.js';
 export { initStageMetrics, recordStageMetric } from './amplifier/AmplifierLoopMetrics.js';
 export { impliesMultiToolWorkflow } from './taskRoutingHints.js';
+export {
+  IterationProgressTracker,
+  type ProgressSignature,
+  type ContinueDecision,
+  quickHash,
+  calculateNoveltyScore,
+  determineOutcomeType,
+} from './IterationProgressTracker.js';
 export * from './types.js';

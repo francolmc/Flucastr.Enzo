@@ -31,7 +31,6 @@ const requestQueue: Array<() => void> = [];
 async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
   // If already processing, wait in queue
   if (isProcessing) {
-    console.log('[Chat] Request queued, waiting for current request to finish...');
     await new Promise<void>((resolve) => requestQueue.push(resolve));
   }
 
@@ -108,6 +107,45 @@ export function createChatRouter(
 ): Router {
   const router = Router();
 
+  // POST /api/chat/classify - Classify message complexity
+  router.post('/api/chat/classify', async (req: Request, res: Response) => {
+    try {
+      const { message, conversationId, userId, source } = req.body;
+      
+      if (!message || !userId) {
+        res.status(400).json({
+          error: 'BadRequest',
+          message: 'message and userId are required',
+          statusCode: 400,
+        });
+        return;
+      }
+
+      const classification = await orchestrator.classifyDetailed(
+        message,
+        userId,
+        conversationId,
+        source || 'api'
+      );
+
+      res.json({
+        level: classification.level,
+        reason: classification.reason,
+        prefersHostTools: classification.prefersHostTools,
+        suppressSimpleModerateFastPath: classification.suppressSimpleModerateFastPath,
+        delegationHint: classification.delegationHint,
+        classifierBranch: classification.classifierBranch,
+      });
+    } catch (error) {
+      console.error('[POST /api/chat/classify] error:', error);
+      res.status(500).json({
+        error: 'ClassificationError',
+        message: error instanceof Error ? error.message : 'Failed to classify message',
+        statusCode: 500,
+      });
+    }
+  });
+
   router.post('/api/chat', validateChatRequest, async (req: Request, res: Response) => {
     try {
       const { message, conversationId, userId, agentId } = req.body;
@@ -145,7 +183,7 @@ export function createChatRouter(
         modelUsed: response.modelUsed,
         injectedSkills: response.injectedSkills,
         durationMs: response.durationMs,
-        estimatedCostUsd: response.usage?.estimatedCostUsd ?? 0,
+        usage: response.usage,
         requestId: response.requestId || requestId,
       });
     } catch (error) {

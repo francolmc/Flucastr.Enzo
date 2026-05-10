@@ -1,36 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EncryptionService } from '../security/EncryptionService.js';
-import { VOICE_RESPONSE_TRIGGERS } from '../voice/VoiceTrigger.js';
-import {
-  type EmailAccountConfig,
-  type EmailConfig,
-  emailOAuthRefreshEncryptedKey,
-  emailPasswordEncryptedKey,
-} from './emailConfig.js';
-import {
-  mergeEmailAccountPatch,
-  parseEmailAccountInput,
-  tryParseEmailAccountInput,
-} from './emailParsing.js';
-
-export type { EmailAccountConfig, EmailConfig } from './emailConfig.js';
-export { normalizeMicrosoftTenantId } from './emailConfig.js';
-
-export interface EmailOAuthPersistedStatus {
-  google: {
-    persistedClientId: boolean;
-    persistedHasClientSecret: boolean;
-    envClientId: boolean;
-    envClientSecret: boolean;
-  };
-  microsoft: {
-    persistedClientId: boolean;
-    persistedHasClientSecret: boolean;
-    envClientId: boolean;
-    envClientSecret: boolean;
-  };
-}
+import { UserPreferences, validatePreferences, DEFAULT_PREFERENCES } from './UserPreferences.js';
 
 export interface ProviderConfig {
   name: string;
@@ -41,13 +12,14 @@ export interface ProviderConfig {
 
 export interface ModelsConfig {
   primaryModel: string;
+  primaryProvider?: string;
   fallbackModels: string[];
+  fallbackProvider?: string;
+  fallbackModel?: string;
   providers: Record<string, ProviderConfig>;
   system: StoredSystemConfig;
   assistantProfile: AssistantProfile;
   userProfile: UserProfile;
-  email: EmailConfig;
-  dailyRoutine?: DailyRoutineConfig;
 }
 
 export interface AssistantProfile {
@@ -59,6 +31,7 @@ export interface AssistantProfile {
 
 export interface UserProfile {
   displayName?: string;
+  profession?: string;
   importantInfo?: string;
   preferences?: string;
   locale?: string;
@@ -93,21 +66,12 @@ export interface StoredSystemConfig {
   enzoSkillsFallbackAllWhenNoneEnabled: boolean;
   /** Prefer native tool-calling in the think phase. Synced to `ENZO_NATIVE_TOOL_CALLING`. */
   enzoNativeToolCalling: boolean;
+  /** Include full MCP schema in tool prompts for better validation. Synced to `ENZO_MCP_INCLUDE_FULL_SCHEMA`. */
+  enzoMcpIncludeFullSchema: boolean;
+  /** Show MCP selection reasoning in responses. Synced to `ENZO_MCP_SHOW_REASONING`. */
+  enzoMcpShowReasoning: boolean;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
-  /** Standalone Whisper ASR (e.g. onerahmet/openai-whisper-asr-webservice). */
-  whisperUrl: string;
-  /** Language code passed to the ASR service (e.g. es, en). */
-  whisperLanguage: string;
-  ttsVoiceEs: string;
-  ttsVoiceEn: string;
-  /** Substrings that request a TTS response (must stay non-empty; empty saves reset to defaults). */
-  voiceTriggers: string[];
-  /** Google OAuth client id for Gmail API (persisted; env `ENZO_GOOGLE_CLIENT_ID` overrides at runtime). */
-  googleOAuthClientId?: string;
-  googleOAuthClientSecretEncrypted?: string;
-  microsoftOAuthClientId?: string;
-  microsoftOAuthClientSecretEncrypted?: string;
 }
 
 export interface SystemConfigView {
@@ -122,6 +86,8 @@ export interface SystemConfigView {
   enzoSkillsFallbackRelevanceThreshold: number;
   mcpAutoConnect: boolean;
   enzoNativeToolCalling: boolean;
+  enzoMcpIncludeFullSchema: boolean;
+  enzoMcpShowReasoning: boolean;
   defaultUserLanguage: string;
   tz: string;
   telegramAllowedUsers: string;
@@ -130,11 +96,6 @@ export interface SystemConfigView {
   hasTelegramBotToken: boolean;
   hasTavilyApiKey: boolean;
   secretStoragePath: string;
-  whisperUrl: string;
-  whisperLanguage: string;
-  ttsVoiceEs: string;
-  ttsVoiceEn: string;
-  voiceTriggers: string[];
 }
 
 export interface SystemConfigUpdate {
@@ -159,33 +120,8 @@ export interface SystemConfigUpdate {
   enzoVerifyBeforeSynthesis?: boolean;
   enzoSkillsFallbackAllWhenNoneEnabled?: boolean;
   enzoNativeToolCalling?: boolean;
-  whisperUrl?: string;
-  whisperLanguage?: string;
-  ttsVoiceEs?: string;
-  ttsVoiceEn?: string;
-  voiceTriggers?: string[];
-}
-
-/** Configuration for a single daily routine notification */
-export interface DailyRoutineNotification {
-  time: string; // HH:MM format (24h)
-  enabled: boolean;
-}
-
-/** Daily routine configuration for morning, midday, afternoon, and evening notifications */
-export interface DailyRoutineConfig {
-  morningBriefing: DailyRoutineNotification;
-  middayCheckin: DailyRoutineNotification;
-  afternoonPrep: DailyRoutineNotification;
-  eveningRecap: DailyRoutineNotification;
-}
-
-/** Update payload for daily routine configuration */
-export interface DailyRoutineConfigUpdate {
-  morningBriefing?: Partial<DailyRoutineNotification>;
-  middayCheckin?: Partial<DailyRoutineNotification>;
-  afternoonPrep?: Partial<DailyRoutineNotification>;
-  eveningRecap?: Partial<DailyRoutineNotification>;
+  enzoMcpIncludeFullSchema?: boolean;
+  enzoMcpShowReasoning?: boolean;
 }
 
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
@@ -219,16 +155,6 @@ function normalizeFallbackAllWhenNone(value: unknown, defaultValue: boolean): bo
   if (value === true || value === false) return value;
   if (typeof value === 'string') return value.toLowerCase() !== 'false';
   return defaultValue;
-}
-
-function normalizeVoiceTriggersList(value: unknown, fallback: readonly string[]): string[] {
-  if (!Array.isArray(value)) {
-    return [...fallback];
-  }
-  const out = value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((s) => s.length > 0);
-  return out.length > 0 ? out : [...fallback];
 }
 
 function getDefaultConfig(): ModelsConfig {
@@ -268,8 +194,8 @@ function getDefaultConfig(): ModelsConfig {
       enzoDebug: (process.env.ENZO_DEBUG || 'false').toLowerCase() === 'true',
       enzoSkillsFallbackRelevanceThreshold: Number(process.env.ENZO_SKILLS_FALLBACK_RELEVANCE_THRESHOLD ?? 0.12),
       mcpAutoConnect: (process.env.MCP_AUTO_CONNECT || 'false').toLowerCase() === 'true',
-      defaultUserLanguage: process.env.DEFAULT_USER_LANGUAGE || 'es',
-      tz: process.env.TZ || 'America/Santiago',
+      defaultUserLanguage: process.env.DEFAULT_USER_LANGUAGE || Intl.DateTimeFormat().resolvedOptions().locale.split('-')[0] || 'en',
+      tz: process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone,
       telegramAllowedUsers: process.env.TELEGRAM_ALLOWED_USERS || '',
       telegramAgentOwnerUserId: process.env.TELEGRAM_AGENT_OWNER_USER_ID || '',
       telegramAgentAutoroute: (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true',
@@ -277,11 +203,8 @@ function getDefaultConfig(): ModelsConfig {
       enzoVerifyBeforeSynthesis: booleanFromEnvKey('ENZO_VERIFY_BEFORE_SYNTHESIS', false),
       enzoSkillsFallbackAllWhenNoneEnabled: booleanFromEnvDefaultTrue('ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED'),
       enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
-      whisperUrl: process.env.WHISPER_URL || 'http://localhost:9000',
-      whisperLanguage: process.env.WHISPER_LANGUAGE || 'es',
-      ttsVoiceEs: 'es-CL-CatalinaNeural',
-      ttsVoiceEn: 'en-US-AriaNeural',
-      voiceTriggers: [...VOICE_RESPONSE_TRIGGERS],
+      enzoMcpIncludeFullSchema: booleanFromEnvDefaultTrue('ENZO_MCP_INCLUDE_FULL_SCHEMA'),
+      enzoMcpShowReasoning: booleanFromEnvKey('ENZO_MCP_SHOW_REASONING', false),
     },
     assistantProfile: {
       name: 'Enzo',
@@ -290,30 +213,7 @@ function getDefaultConfig(): ModelsConfig {
       styleGuidelines: '',
     },
     userProfile: {},
-    email: { accounts: [] },
-    dailyRoutine: {
-      morningBriefing: { time: '08:00', enabled: true },
-      middayCheckin: { time: '13:00', enabled: true },
-      afternoonPrep: { time: '18:00', enabled: true },
-      eveningRecap: { time: '22:00', enabled: true },
-    },
   };
-}
-
-function normalizeEmailConfig(loaded: unknown, defaults: EmailConfig): EmailConfig {
-  if (!loaded || typeof loaded !== 'object' || !('accounts' in loaded)) {
-    return { ...defaults };
-  }
-  const acc = (loaded as { accounts?: unknown }).accounts;
-  if (!Array.isArray(acc)) {
-    return { ...defaults };
-  }
-  const accounts: EmailAccountConfig[] = [];
-  for (const raw of acc) {
-    const row = tryParseEmailAccountInput(raw);
-    if (row) accounts.push(row);
-  }
-  return { accounts };
 }
 
 /**
@@ -325,6 +225,7 @@ export class ConfigService {
   private config: ModelsConfig;
   private configPath: string;
   private encryptionService: EncryptionService;
+  private userPreferencesMap: Map<string, UserPreferences> = new Map();
 
   constructor(encryptionService: EncryptionService, configPath?: string) {
     this.encryptionService = encryptionService;
@@ -379,20 +280,14 @@ export class ConfigService {
       system.enzoNativeToolCalling,
       defaults.system.enzoNativeToolCalling
     );
-
-    system.voiceTriggers = normalizeVoiceTriggersList(system.voiceTriggers, VOICE_RESPONSE_TRIGGERS);
-    if (!system.whisperUrl || typeof system.whisperUrl !== 'string') {
-      system.whisperUrl = defaults.system.whisperUrl;
-    }
-    if (!system.whisperLanguage || typeof system.whisperLanguage !== 'string') {
-      system.whisperLanguage = defaults.system.whisperLanguage;
-    }
-    if (!system.ttsVoiceEs || typeof system.ttsVoiceEs !== 'string') {
-      system.ttsVoiceEs = defaults.system.ttsVoiceEs;
-    }
-    if (!system.ttsVoiceEn || typeof system.ttsVoiceEn !== 'string') {
-      system.ttsVoiceEn = defaults.system.ttsVoiceEn;
-    }
+    system.enzoMcpIncludeFullSchema = normalizeStoredBoolean(
+      system.enzoMcpIncludeFullSchema,
+      defaults.system.enzoMcpIncludeFullSchema
+    );
+    system.enzoMcpShowReasoning = normalizeStoredBoolean(
+      system.enzoMcpShowReasoning,
+      defaults.system.enzoMcpShowReasoning
+    );
 
     if (loaded?.providers) {
       for (const [key, provider] of Object.entries(loaded.providers)) {
@@ -417,9 +312,12 @@ export class ConfigService {
 
     return {
       primaryModel: loaded?.primaryModel || defaults.primaryModel,
+      primaryProvider: typeof loaded?.primaryProvider === 'string' ? loaded.primaryProvider : undefined,
       fallbackModels: Array.isArray(loaded?.fallbackModels)
         ? [...loaded.fallbackModels]
         : defaults.fallbackModels,
+      fallbackProvider: typeof loaded?.fallbackProvider === 'string' ? loaded.fallbackProvider : undefined,
+      fallbackModel: typeof loaded?.fallbackModel === 'string' ? loaded.fallbackModel : undefined,
       providers,
       system,
       assistantProfile: {
@@ -430,7 +328,6 @@ export class ConfigService {
         ...defaults.userProfile,
         ...(loaded?.userProfile || {}),
       },
-      email: normalizeEmailConfig(loaded?.email, defaults.email),
     };
   }
 
@@ -569,8 +466,8 @@ export class ConfigService {
       ? 'true'
       : 'false';
     process.env.ENZO_NATIVE_TOOL_CALLING = system.enzoNativeToolCalling ? 'true' : 'false';
-    process.env.WHISPER_URL = system.whisperUrl;
-    process.env.WHISPER_LANGUAGE = system.whisperLanguage;
+    process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA = system.enzoMcpIncludeFullSchema ? 'true' : 'false';
+    process.env.ENZO_MCP_SHOW_REASONING = system.enzoMcpShowReasoning ? 'true' : 'false';
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -589,10 +486,37 @@ export class ConfigService {
     return this.config.primaryModel;
   }
 
+  getPrimaryProvider(): string {
+    this.syncConfigFromDisk();
+    const explicit = this.config.primaryProvider?.trim();
+    if (explicit) return explicit;
+    const model = this.config.primaryModel || '';
+    if (model.toLowerCase().includes('claude')) return 'anthropic';
+    if (model.toLowerCase().includes('gemini')) return 'gemini';
+    if (model.toLowerCase().startsWith('gpt') || model.toLowerCase().includes('openai')) return 'openai';
+    return 'ollama';
+  }
+
+  getFallbackProvider(): string | undefined {
+    this.syncConfigFromDisk();
+    return this.config.fallbackProvider?.trim() || undefined;
+  }
+
+  getFallbackModel(): string | undefined {
+    this.syncConfigFromDisk();
+    return this.config.fallbackModel?.trim() || undefined;
+  }
+
   setPrimaryModel(model: string): void {
     this.config.primaryModel = model;
     this.saveConfig();
     console.log('[ConfigService] Primary model set to:', model);
+  }
+
+  setPrimaryProvider(provider: string): void {
+    this.config.primaryProvider = provider;
+    this.saveConfig();
+    console.log('[ConfigService] Primary provider set to:', provider);
   }
 
   getFallbackModels(): string[] {
@@ -722,278 +646,11 @@ export class ConfigService {
     console.log('[ConfigService] User profile updated');
   }
 
-  getEmailConfig(): EmailConfig {
-    this.syncConfigFromDisk();
-    const raw = this.config.email?.accounts;
-    const accounts = Array.isArray(raw) ? raw : [];
-    return {
-      accounts: accounts.map((a) => ({
-        ...a,
-        ...(a.imap ? { imap: { ...a.imap } } : {}),
-      })),
-    };
-  }
-
-  /** OAuth client IDs guardados en disco (solo para edición desde la UI local). */
-  peekPersistedGoogleClientId(): string | null {
-    this.syncConfigFromDisk();
-    const v = (this.config.system.googleOAuthClientId || '').trim();
-    return v.length > 0 ? v : null;
-  }
-
-  peekPersistedMicrosoftClientId(): string | null {
-    this.syncConfigFromDisk();
-    const v = (this.config.system.microsoftOAuthClientId || '').trim();
-    return v.length > 0 ? v : null;
-  }
-
-  getGoogleOAuthCredentials(): { clientId: string | null; clientSecret: string | null } {
-    this.syncConfigFromDisk();
-    const envId = process.env.ENZO_GOOGLE_CLIENT_ID?.trim();
-    const envSecret = process.env.ENZO_GOOGLE_CLIENT_SECRET?.trim();
-    let clientSecret: string | null = envSecret && envSecret.length > 0 ? envSecret : null;
-    const enc = this.config.system.googleOAuthClientSecretEncrypted;
-    if (!clientSecret && enc) {
-      try {
-        clientSecret = this.encryptionService.decrypt(enc);
-      } catch {
-        clientSecret = null;
-      }
-    }
-    const idFromConfig = this.config.system.googleOAuthClientId?.trim();
-    const clientId =
-      (envId && envId.length > 0 ? envId : idFromConfig && idFromConfig.length > 0 ? idFromConfig : null) ||
-      null;
-    return { clientId, clientSecret };
-  }
-
-  getMicrosoftOAuthCredentials(): { clientId: string | null; clientSecret: string | null } {
-    this.syncConfigFromDisk();
-    const envId = process.env.ENZO_MICROSOFT_CLIENT_ID?.trim();
-    const envSecret = process.env.ENZO_MICROSOFT_CLIENT_SECRET?.trim();
-    let clientSecret: string | null = envSecret && envSecret.length > 0 ? envSecret : null;
-    const enc = this.config.system.microsoftOAuthClientSecretEncrypted;
-    if (!clientSecret && enc) {
-      try {
-        clientSecret = this.encryptionService.decrypt(enc);
-      } catch {
-        clientSecret = null;
-      }
-    }
-    const idFromConfig = this.config.system.microsoftOAuthClientId?.trim();
-    const clientId =
-      (envId && envId.length > 0 ? envId : idFromConfig && idFromConfig.length > 0 ? idFromConfig : null) ||
-      null;
-    return { clientId, clientSecret };
-  }
-
-  getEmailOAuthRefreshToken(accountId: string): string | null {
-    this.syncConfigFromDisk();
-    const key = emailOAuthRefreshEncryptedKey(accountId);
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    const encryptedValue = sys[key];
-    if (!encryptedValue) {
-      return null;
-    }
-    try {
-      return this.encryptionService.decrypt(encryptedValue);
-    } catch (error) {
-      console.error(`[ConfigService] Failed to decrypt OAuth refresh for "${accountId}":`, error);
-      return null;
-    }
-  }
-
-  setEmailOAuthRefreshToken(accountId: string, refreshToken: string): void {
-    this.syncConfigFromDisk();
-    const encrypted = this.encryptionService.encrypt(refreshToken);
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    sys[emailOAuthRefreshEncryptedKey(accountId)] = encrypted;
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  clearEmailOAuthRefreshToken(accountId: string): void {
-    this.syncConfigFromDisk();
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    delete sys[emailOAuthRefreshEncryptedKey(accountId)];
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  hasEmailOAuthRefresh(accountId: string): boolean {
-    this.syncConfigFromDisk();
-    const key = emailOAuthRefreshEncryptedKey(accountId);
-    const encrypted = (this.config.system as unknown as Record<string, string | undefined>)[key];
-    return typeof encrypted === 'string' && encrypted.length > 0;
-  }
-
-  getEmailOAuthPersistedStatus(): EmailOAuthPersistedStatus {
-    this.syncConfigFromDisk();
-    return {
-      google: {
-        persistedClientId: !!(this.config.system.googleOAuthClientId || '').trim(),
-        persistedHasClientSecret: !!this.config.system.googleOAuthClientSecretEncrypted,
-        envClientId: !!process.env.ENZO_GOOGLE_CLIENT_ID?.trim(),
-        envClientSecret: !!process.env.ENZO_GOOGLE_CLIENT_SECRET?.trim(),
-      },
-      microsoft: {
-        persistedClientId: !!(this.config.system.microsoftOAuthClientId || '').trim(),
-        persistedHasClientSecret: !!this.config.system.microsoftOAuthClientSecretEncrypted,
-        envClientId: !!process.env.ENZO_MICROSOFT_CLIENT_ID?.trim(),
-        envClientSecret: !!process.env.ENZO_MICROSOFT_CLIENT_SECRET?.trim(),
-      },
-    };
-  }
-
-  setPersistedGoogleOAuthApp(input: { clientId?: string; clientSecret?: string }): void {
-    this.syncConfigFromDisk();
-    if (input.clientId !== undefined) {
-      const v = typeof input.clientId === 'string' ? input.clientId.trim() : '';
-      if (v === '') {
-        delete this.config.system.googleOAuthClientId;
-      } else {
-        this.config.system.googleOAuthClientId = v;
-      }
-    }
-    if (input.clientSecret !== undefined) {
-      const raw = typeof input.clientSecret === 'string' ? input.clientSecret : '';
-      const v = raw.trim();
-      if (v === '') {
-        delete this.config.system.googleOAuthClientSecretEncrypted;
-      } else {
-        this.config.system.googleOAuthClientSecretEncrypted = this.encryptionService.encrypt(v);
-      }
-    }
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  setPersistedMicrosoftOAuthApp(input: { clientId?: string; clientSecret?: string }): void {
-    this.syncConfigFromDisk();
-    if (input.clientId !== undefined) {
-      const v = typeof input.clientId === 'string' ? input.clientId.trim() : '';
-      if (v === '') {
-        delete this.config.system.microsoftOAuthClientId;
-      } else {
-        this.config.system.microsoftOAuthClientId = v;
-      }
-    }
-    if (input.clientSecret !== undefined) {
-      const raw = typeof input.clientSecret === 'string' ? input.clientSecret : '';
-      const v = raw.trim();
-      if (v === '') {
-        delete this.config.system.microsoftOAuthClientSecretEncrypted;
-      } else {
-        this.config.system.microsoftOAuthClientSecretEncrypted = this.encryptionService.encrypt(v);
-      }
-    }
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  addEmailAccount(payload: unknown): EmailAccountConfig {
-    this.syncConfigFromDisk();
-    const acc = parseEmailAccountInput(payload);
-    const exists = this.config.email.accounts.some((a) => a.id === acc.id);
-    if (exists) {
-      throw new Error(`Ya existe una cuenta con id "${acc.id}"`);
-    }
-    this.config.email.accounts.push(acc);
-    this.saveConfig();
-    this.applySystemEnvironment();
-    return acc;
-  }
-
-  updateEmailAccount(accountId: string, patch: Record<string, unknown>): EmailAccountConfig {
-    this.syncConfigFromDisk();
-    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
-    if (idx < 0) {
-      throw new Error(`Unknown email account: ${accountId}`);
-    }
-    const next = mergeEmailAccountPatch(this.config.email.accounts[idx], patch);
-    if (next.id !== accountId) {
-      throw new Error('No está soportado cambiar el id; borrá y creá una cuenta nueva.');
-    }
-    this.config.email.accounts[idx] = next;
-    this.saveConfig();
-    this.applySystemEnvironment();
-    return next;
-  }
-
-  removeEmailAccount(accountId: string): void {
-    this.syncConfigFromDisk();
-    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
-    if (idx < 0) {
-      throw new Error(`Unknown email account: ${accountId}`);
-    }
-    this.config.email.accounts.splice(idx, 1);
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    delete sys[emailPasswordEncryptedKey(accountId)];
-    delete sys[emailOAuthRefreshEncryptedKey(accountId)];
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  clearEmailPassword(accountId: string): void {
-    this.syncConfigFromDisk();
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    delete sys[emailPasswordEncryptedKey(accountId)];
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  getEmailPassword(accountId: string): string | null {
-    this.syncConfigFromDisk();
-    const key = emailPasswordEncryptedKey(accountId);
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    const encryptedValue = sys[key];
-    if (!encryptedValue) {
-      return null;
-    }
-    try {
-      return this.encryptionService.decrypt(encryptedValue);
-    } catch (error) {
-      console.error(`[ConfigService] Failed to decrypt email password for "${accountId}":`, error);
-      return null;
-    }
-  }
-
-  setEmailPassword(accountId: string, password: string): void {
-    this.syncConfigFromDisk();
-    const encrypted = this.encryptionService.encrypt(password);
-    const sys = this.config.system as unknown as Record<string, string | undefined>;
-    sys[emailPasswordEncryptedKey(accountId)] = encrypted;
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  setEmailAccountEnabled(accountId: string, enabled: boolean): void {
-    this.syncConfigFromDisk();
-    const idx = this.config.email.accounts.findIndex((a) => a.id === accountId);
-    if (idx < 0) {
-      throw new Error(`Unknown email account: ${accountId}`);
-    }
-    this.config.email.accounts[idx] = {
-      ...this.config.email.accounts[idx],
-      enabled,
-    };
-    this.saveConfig();
-    this.applySystemEnvironment();
-  }
-
-  hasEmailPassword(accountId: string): boolean {
-    this.syncConfigFromDisk();
-    const key = emailPasswordEncryptedKey(accountId);
-    const encrypted = (this.config.system as unknown as Record<string, string | undefined>)[key];
-    return typeof encrypted === 'string' && encrypted.length > 0;
-  }
-
   // Get full config (without sensitive data)
 
   getSystemConfig(): SystemConfigView {
     this.syncConfigFromDisk();
     const system = this.config.system;
-    const voiceTriggersSafe = normalizeVoiceTriggersList(system.voiceTriggers, VOICE_RESPONSE_TRIGGERS);
     return {
       ollamaBaseUrl: system.ollamaBaseUrl,
       anthropicModel: system.anthropicModel,
@@ -1006,6 +663,8 @@ export class ConfigService {
       enzoSkillsFallbackRelevanceThreshold: system.enzoSkillsFallbackRelevanceThreshold,
       mcpAutoConnect: system.mcpAutoConnect,
       enzoNativeToolCalling: !!system.enzoNativeToolCalling,
+      enzoMcpIncludeFullSchema: !!system.enzoMcpIncludeFullSchema,
+      enzoMcpShowReasoning: !!system.enzoMcpShowReasoning,
       defaultUserLanguage: system.defaultUserLanguage,
       tz: system.tz,
       telegramAllowedUsers: system.telegramAllowedUsers,
@@ -1014,22 +673,7 @@ export class ConfigService {
       hasTelegramBotToken: !!system.telegramBotTokenEncrypted,
       hasTavilyApiKey: !!system.tavilyApiKeyEncrypted,
       secretStoragePath: `${process.env.HOME || process.env.USERPROFILE || '~'}/.enzo/secret.key`,
-      whisperUrl: system.whisperUrl,
-      whisperLanguage: system.whisperLanguage,
-      ttsVoiceEs: system.ttsVoiceEs,
-      ttsVoiceEn: system.ttsVoiceEn,
-      voiceTriggers: voiceTriggersSafe,
     };
-  }
-
-  getWhisperUrl(): string {
-    this.syncConfigFromDisk();
-    return this.config.system.whisperUrl || 'http://localhost:9000';
-  }
-
-  getWhisperLanguage(): string {
-    this.syncConfigFromDisk();
-    return this.config.system.whisperLanguage || 'es';
   }
 
   setSystemConfig(update: SystemConfigUpdate): void {
@@ -1084,26 +728,13 @@ export class ConfigService {
       ...(update.enzoNativeToolCalling !== undefined
         ? { enzoNativeToolCalling: update.enzoNativeToolCalling }
         : {}),
-      ...(update.whisperUrl !== undefined && typeof update.whisperUrl === 'string'
-        ? { whisperUrl: update.whisperUrl.trim() || current.whisperUrl }
+      ...(update.enzoMcpIncludeFullSchema !== undefined
+        ? { enzoMcpIncludeFullSchema: update.enzoMcpIncludeFullSchema }
         : {}),
-      ...(update.whisperLanguage !== undefined && typeof update.whisperLanguage === 'string'
-        ? { whisperLanguage: update.whisperLanguage.trim() || current.whisperLanguage }
-        : {}),
-      ...(update.ttsVoiceEs !== undefined && typeof update.ttsVoiceEs === 'string'
-        ? { ttsVoiceEs: update.ttsVoiceEs.trim() || current.ttsVoiceEs }
-        : {}),
-      ...(update.ttsVoiceEn !== undefined && typeof update.ttsVoiceEn === 'string'
-        ? { ttsVoiceEn: update.ttsVoiceEn.trim() || current.ttsVoiceEn }
+      ...(update.enzoMcpShowReasoning !== undefined
+        ? { enzoMcpShowReasoning: update.enzoMcpShowReasoning }
         : {}),
     };
-
-    if (update.voiceTriggers !== undefined) {
-      this.config.system.voiceTriggers = normalizeVoiceTriggersList(
-        update.voiceTriggers,
-        VOICE_RESPONSE_TRIGGERS
-      );
-    }
 
     if (typeof update.telegramBotToken === 'string' && update.telegramBotToken.trim().length > 0) {
       this.config.system.telegramBotTokenEncrypted = this.encryptionService.encrypt(update.telegramBotToken.trim());
@@ -1114,61 +745,6 @@ export class ConfigService {
 
     this.saveConfig();
     this.applySystemEnvironment();
-  }
-
-  // Daily Routine Configuration
-
-  getDailyRoutineConfig(): DailyRoutineConfig {
-    this.syncConfigFromDisk();
-    const defaults = getDefaultConfig().dailyRoutine!;
-    const stored = this.config.dailyRoutine;
-    if (!stored) {
-      return defaults;
-    }
-    return {
-      morningBriefing: {
-        time: stored.morningBriefing?.time || defaults.morningBriefing.time,
-        enabled: stored.morningBriefing?.enabled ?? defaults.morningBriefing.enabled,
-      },
-      middayCheckin: {
-        time: stored.middayCheckin?.time || defaults.middayCheckin.time,
-        enabled: stored.middayCheckin?.enabled ?? defaults.middayCheckin.enabled,
-      },
-      afternoonPrep: {
-        time: stored.afternoonPrep?.time || defaults.afternoonPrep.time,
-        enabled: stored.afternoonPrep?.enabled ?? defaults.afternoonPrep.enabled,
-      },
-      eveningRecap: {
-        time: stored.eveningRecap?.time || defaults.eveningRecap.time,
-        enabled: stored.eveningRecap?.enabled ?? defaults.eveningRecap.enabled,
-      },
-    };
-  }
-
-  setDailyRoutineConfig(update: DailyRoutineConfigUpdate): void {
-    this.syncConfigFromDisk();
-    const current = this.config.dailyRoutine || getDefaultConfig().dailyRoutine!;
-
-    this.config.dailyRoutine = {
-      morningBriefing: {
-        time: update.morningBriefing?.time ?? current.morningBriefing.time,
-        enabled: update.morningBriefing?.enabled ?? current.morningBriefing.enabled,
-      },
-      middayCheckin: {
-        time: update.middayCheckin?.time ?? current.middayCheckin.time,
-        enabled: update.middayCheckin?.enabled ?? current.middayCheckin.enabled,
-      },
-      afternoonPrep: {
-        time: update.afternoonPrep?.time ?? current.afternoonPrep.time,
-        enabled: update.afternoonPrep?.enabled ?? current.afternoonPrep.enabled,
-      },
-      eveningRecap: {
-        time: update.eveningRecap?.time ?? current.eveningRecap.time,
-        enabled: update.eveningRecap?.enabled ?? current.eveningRecap.enabled,
-      },
-    };
-
-    this.saveConfig();
   }
 
   getSystemSecret(field: 'telegramBotTokenEncrypted' | 'tavilyApiKeyEncrypted'): string | null {
@@ -1208,16 +784,68 @@ export class ConfigService {
     delete copy.system.telegramBotTokenEncrypted;
     delete copy.system.tavilyApiKeyEncrypted;
 
-    delete copy.system.googleOAuthClientSecretEncrypted;
-    delete copy.system.microsoftOAuthClientSecretEncrypted;
+    return copy;
+  }
 
-    const sysCopy = copy.system as unknown as Record<string, unknown>;
-    for (const k of Object.keys(sysCopy)) {
-      if (/^emailPassword_.+Encrypted$/u.test(k) || /^emailOAuthRefresh_.+Encrypted$/u.test(k)) {
-        delete sysCopy[k];
-      }
+  getUserPreferences(userId: string): UserPreferences | undefined {
+    return this.userPreferencesMap.get(userId);
+  }
+
+  async saveUserPreferences(userId: string, prefs: UserPreferences): Promise<void> {
+    if (!validatePreferences(prefs)) {
+      console.warn('[ConfigService] Invalid preferences, not saving:', prefs);
+      return;
     }
 
-    return copy;
+    this.userPreferencesMap.set(userId, prefs);
+
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (!fs.existsSync(userPrefsDir)) {
+        fs.mkdirSync(userPrefsDir, { recursive: true });
+      }
+      fs.writeFileSync(userPrefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
+      console.log(`[ConfigService] Saved preferences for user ${userId}`);
+    } catch (error) {
+      console.error(`[ConfigService] Failed to save user preferences for ${userId}:`, error);
+    }
+  }
+
+  loadUserPreferences(userId: string): UserPreferences | undefined {
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (fs.existsSync(userPrefsPath)) {
+        const content = fs.readFileSync(userPrefsPath, 'utf-8');
+        const prefs = JSON.parse(content);
+        if (validatePreferences(prefs)) {
+          this.userPreferencesMap.set(userId, prefs);
+          return prefs;
+        }
+      }
+    } catch (error) {
+      console.warn(`[ConfigService] Failed to load user preferences for ${userId}:`, error);
+    }
+
+    return undefined;
+  }
+
+  clearUserPreferences(userId: string): void {
+    this.userPreferencesMap.delete(userId);
+
+    const userPrefsDir = path.join(path.dirname(this.configPath), 'user_preferences');
+    const userPrefsPath = path.join(userPrefsDir, `${userId}.json`);
+
+    try {
+      if (fs.existsSync(userPrefsPath)) {
+        fs.unlinkSync(userPrefsPath);
+        console.log(`[ConfigService] Cleared preferences for user ${userId}`);
+      }
+    } catch (error) {
+      console.warn(`[ConfigService] Failed to clear user preferences for ${userId}:`, error);
+    }
   }
 }

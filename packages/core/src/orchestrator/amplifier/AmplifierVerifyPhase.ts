@@ -8,6 +8,8 @@ import { summarizeActSteps } from './SubtaskExecutionTrace.js';
 export type VerifyPhaseDeps = {
   baseProvider: LLMProvider;
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  /** Mutable accumulator — caller passes by reference to collect real token counts. */
+  usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
 
 /** Substring appended to context when gaps are detected — synthesized phase uses this marker. */
@@ -53,7 +55,7 @@ export async function runVerifyBeforeSynthesizeIfEnabled(
     return { context };
   }
 
-  const { baseProvider, withTimeout } = deps;
+  const { baseProvider, withTimeout, usageAccumulator } = deps;
   const startTime = Date.now();
 
   let planVersusFactsBlock = '';
@@ -118,6 +120,10 @@ Rules:
       'verify-before-synthesize'
     );
     modelsUsed.add(baseProvider.model);
+    if (usageAccumulator) {
+      usageAccumulator.inputTokens += response.usage?.inputTokens ?? 0;
+      usageAccumulator.outputTokens += response.usage?.outputTokens ?? 0;
+    }
     const parsed = parseFirstJsonObject<VerifyJson>(response.content ?? '', { tryRepair: true });
     if (parsed?.value && typeof parsed.value.satisfied === 'boolean') {
       satisfied = parsed.value.satisfied;

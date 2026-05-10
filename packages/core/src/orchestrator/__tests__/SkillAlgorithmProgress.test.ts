@@ -58,7 +58,7 @@ export async function runSkillAlgorithmProgressTests(): Promise<void> {
   const weatherLike = rs({
     id: 'weather',
     name: 'weather',
-    content: 'Proporciona información meteorológica.\nPaso 1: Geocodificar.\nPaso 2: Consultar forecast.',
+    content: 'Provides weather information.\nStep 1: Geocode location.\nStep 2: Query forecast.',
   });
   assert.equal(isMultiStepRelevantSkill(weatherLike), true);
   assert.equal(stepCountForRelevantSkill(weatherLike), 2);
@@ -75,7 +75,7 @@ export async function runSkillAlgorithmProgressTests(): Promise<void> {
 
   const b = rs({
     id: 'b',
-    content: 'Paso 1: x.\nPaso 2: y.',
+    content: 'Step 1: x.\nStep 2: y.',
     relevanceScore: 0.4,
   });
   assert.equal(isMultiStepRelevantSkill(b), true);
@@ -84,12 +84,12 @@ export async function runSkillAlgorithmProgressTests(): Promise<void> {
   const segA = rs({
     id: 'a',
     relevanceScore: 0.95,
-    content: 'Paso 1: first.\nPaso 2: second.',
+    content: 'Step 1: first.\nStep 2: second.',
   });
   const segB = rs({
     id: 'b',
     relevanceScore: 0.5,
-    content: 'Paso 1: a.\nPaso 2: b.',
+    content: 'Step 1: a.\nStep 2: b.',
   });
   const plan = buildMultiStepAlgorithmPlan([segB, segA]);
   assert.equal(plan[0]?.skill.id, 'a');

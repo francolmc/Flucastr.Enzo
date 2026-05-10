@@ -9,7 +9,7 @@ export function createAgentsRouter(memoryService: MemoryService): Router {
     try {
       const { userId } = req.params;
 
-      const agents = await (memoryService as any).getAgents(userId);
+      const agents = await memoryService.getAgents(userId);
 
       res.json({
         agents,
@@ -63,7 +63,7 @@ export function createAgentsRouter(memoryService: MemoryService): Router {
         updatedAt: now,
       };
 
-      await (memoryService as any).saveAgent(agent);
+      await memoryService.saveAgent(agent);
 
       res.status(201).json(agent);
     } catch (error) {
@@ -81,7 +81,7 @@ export function createAgentsRouter(memoryService: MemoryService): Router {
       const { id } = req.params;
       const data = req.body;
 
-      const updated = await (memoryService as any).updateAgent(id, data) as AgentRecord | null;
+      const updated = await memoryService.updateAgent(id, data);
 
       if (!updated) {
         res.status(404).json({
@@ -107,7 +107,7 @@ export function createAgentsRouter(memoryService: MemoryService): Router {
     try {
       const { id } = req.params;
 
-      await (memoryService as any).deleteAgent(id);
+      await memoryService.deleteAgent(id);
 
       res.json({
         success: true,

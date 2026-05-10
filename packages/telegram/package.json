@@ -12,6 +12,7 @@
   "dependencies": {
     "@enzo/bootstrap": "workspace:*",
     "@enzo/core": "workspace:*",
+    "@enzo/sdk": "workspace:*",
     "dotenv": "^16.3.1",
     "telegraf": "^4.14.1"
   },

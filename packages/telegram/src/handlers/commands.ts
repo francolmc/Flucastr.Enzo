@@ -8,6 +8,7 @@ import {
   getCurrentConversationId,
   startNewConversation,
 } from './conversationState.js';
+import type { Command } from '@enzo/sdk';
 
 let updateInProgress = false;
 
@@ -20,46 +21,44 @@ function stripAgentCommandPrefix(rawText: string): string {
 }
 
 async function getAgentsForTelegramUser(ctx: EnzoContext, userId: string) {
-  const ownAgents = await ctx.memoryService.getAgents(userId);
-  if (ownAgents.length > 0) {
-    return ownAgents;
-  }
-
-  const ownerUserId = process.env.TELEGRAM_AGENT_OWNER_USER_ID?.trim();
-  if (ownerUserId && ownerUserId !== userId) {
-    const ownerAgents = await ctx.memoryService.getAgents(ownerUserId);
-    if (ownerAgents.length > 0) {
-      return ownerAgents;
+  // SDK Mode: Use API to list agents
+  if (ctx.apiClient) {
+    try {
+      const agents = await ctx.apiClient.commands.execute('agent.list', [], userId);
+      return agents.data?.agents || [];
+    } catch (error) {
+      console.warn('[Telegram] Failed to list agents via API:', error);
+      return [];
     }
   }
-
-  return ctx.memoryService.getAllAgents();
+  return [];
 }
 
 async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promise<void> {
   const userId = String(ctx.from?.id || '');
-  const conversationId = getConversationId(userId);
   const rawArg = stripAgentCommandPrefix(messageText || '');
   const typingSession = startTyping(ctx);
 
-  try {
-    const agents = await getAgentsForTelegramUser(ctx, userId);
-    if (agents.length === 0) {
-      await ctx.reply('No hay agentes disponibles. Crea uno en la Web UI primero.');
-      return;
-    }
+  if (!ctx.apiClient) {
+    await ctx.reply('❌ Error: API client not configured.');
+    typingSession.stop();
+    return;
+  }
 
+  try {
     if (!rawArg) {
-      const activeAgentId = await ctx.memoryService.getConversationActiveAgent(conversationId);
-      const activeAgent = activeAgentId
-        ? agents.find((agent) => agent.id === activeAgentId)
-        : undefined;
-      const agentsList = agents.map((agent) => `- ${agent.name} (${agent.provider}/${agent.model})`).join('\n');
-      const activeLine = activeAgent
-        ? `Preset conversacional activo: *${activeAgent.name}*`
-        : 'Sin preset conversacional (modelo principal de la instancia).';
+      // List available agents
+      const result = await ctx.apiClient.commands.execute('agent.list', [], userId);
+      const agents = result.data?.agents || [];
+      
+      if (agents.length === 0) {
+        await ctx.reply('No hay agentes disponibles. Crea uno en la Web UI primero.');
+        return;
+      }
+      
+      const agentsList = agents.map((agent: any) => `- ${agent.name} (${agent.provider}/${agent.model})`).join('\n');
       await ctx.reply(
-        `${activeLine}\n\nPresets disponibles (proveedor/modelo para esta conversación):\n${agentsList}\n\nUsa \`/agent <name>\` para activar o \`/agent off\` para volver al modelo principal.`,
+        `Presets disponibles:\n${agentsList}\n\nUsa \`/agent <name>\` para activar.`,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -67,29 +66,21 @@ async function executeAgentCommand(ctx: EnzoContext, messageText: string): Promi
 
     const normalizedArg = rawArg.toLowerCase();
     if (normalizedArg === 'off' || normalizedArg === 'none' || normalizedArg === 'default') {
-      await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
-      await ctx.reply('Preset conversacional desactivado. Esta conversación vuelve a usar el modelo principal de la instancia.');
+      await ctx.apiClient.commands.execute('agent.set', ['off'], userId);
+      await ctx.reply('Preset conversacional desactivado.');
       return;
     }
 
-    const selectedAgent = agents.find((agent) => {
-      const candidateName = agent.name.toLowerCase();
-      return candidateName === normalizedArg || candidateName.includes(normalizedArg);
-    });
-
-    if (!selectedAgent) {
-      await ctx.reply(`No encontré un preset llamado "${rawArg}". Usa \`/agent\` para ver la lista.`);
-      return;
+    // Set active agent
+    const result = await ctx.apiClient.commands.execute('agent.set', [rawArg], userId);
+    if (result.success) {
+      await ctx.reply(`✅ ${result.message || 'Agente configurado'}`);
+    } else {
+      await ctx.reply(`❌ ${result.message || 'No se pudo configurar el agente'}`);
     }
-
-    await ctx.memoryService.setConversationActiveAgent(conversationId, userId, selectedAgent.id);
-    await ctx.reply(
-      `Preset conversacional *${selectedAgent.name}* activo en esta conversación.\nModelo: \`${selectedAgent.provider}/${selectedAgent.model}\``,
-      { parse_mode: 'Markdown' }
-    );
   } catch (error) {
     console.error('[Telegram] Error processing /agent command:', error);
-    await ctx.reply('Error al configurar el agente.');
+    await ctx.reply('❌ Error al configurar el agente.');
   } finally {
     typingSession.stop();
   }
@@ -194,12 +185,27 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
 
   bot.command('new', async (ctx) => {
     const userId = String(ctx.from?.id || '');
-    const conversationId = startNewConversation(userId);
-    await ctx.memoryService.setConversationActiveAgent(conversationId, userId, undefined);
-
-    await ctx.reply('Nueva conversación iniciada. ¿En qué te ayudo?', {
-      parse_mode: 'Markdown',
-    });
+    
+    if (!ctx.apiClient) {
+      await ctx.reply('❌ Error: API client not configured. Please contact administrator.');
+      return;
+    }
+    
+    try {
+      const result = await ctx.apiClient.commands.execute('chat.new', [], userId);
+      if (result.success) {
+        // Sync local state
+        const conversationId = startNewConversation(userId);
+        await ctx.reply(result.message || 'Nueva conversación iniciada. ¿En qué te ayudo?', {
+          parse_mode: 'Markdown',
+        });
+      } else {
+        await ctx.reply('❌ Error: ' + result.message);
+      }
+    } catch (error) {
+      console.error('[Telegram] /new command failed:', error);
+      await ctx.reply('❌ Error al iniciar conversación. Inténtalo de nuevo.');
+    }
   });
 
   bot.command('clear', async (ctx) => {
@@ -207,18 +213,25 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
     const conversationId = getCurrentConversationId(userId);
     const typingSession = startTyping(ctx);
 
-    try {
-      await ctx.memoryService.resetConversationContext(conversationId, userId);
-      clearCurrentConversation(userId);
+    if (!ctx.apiClient) {
+      await ctx.reply('❌ Error: API client not configured.');
+      typingSession.stop();
+      return;
+    }
 
-      await ctx.reply('✅ Historial de conversación limpiado. Empecemos de nuevo.', {
-        parse_mode: 'Markdown',
-      });
+    try {
+      const result = await ctx.apiClient.commands.execute('chat.clear', [], userId);
+      if (result.success) {
+        clearCurrentConversation(userId);
+        await ctx.reply(result.message || '✅ Historial de conversación limpiado. Empecemos de nuevo.', {
+          parse_mode: 'Markdown',
+        });
+      } else {
+        await ctx.reply('❌ Error: ' + result.message);
+      }
     } catch (error) {
-      console.error('[Telegram] Error clearing history:', error);
-      await ctx.reply('Error al limpiar el historial.', {
-        parse_mode: 'Markdown',
-      });
+      console.error('[Telegram] /clear command failed:', error);
+      await ctx.reply('❌ Error al limpiar el historial. Inténtalo de nuevo.');
     } finally {
       typingSession.stop();
     }
@@ -227,14 +240,18 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
   bot.command('memory', async (ctx) => {
     const userId = String(ctx.from?.id || '');
     const typingSession = startTyping(ctx);
+    
+    if (!ctx.apiClient) {
+      await ctx.reply('❌ Error: API client not configured.');
+      typingSession.stop();
+      return;
+    }
+    
     try {
       console.log(`[Telegram] /memory command - userId: ${userId}`);
-      const memories = await (ctx.memoryService as any).recall(userId);
       
-      console.log(`[Telegram] /memory - Retrieved ${memories?.length || 0} memories for userId ${userId}`);
-      if (memories && memories.length > 0) {
-        console.log(`[Telegram] /memory - Memories:`, memories);
-      }
+      const memories = await ctx.apiClient.memory.recall(userId);
+      console.log(`[Telegram] /memory via API - Retrieved ${memories?.length || 0} memories`);
       
       if (!memories || memories.length === 0) {
         await ctx.reply('No tienes memorias guardadas aún.', {
@@ -244,7 +261,7 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
       }
 
       const memoriesList = memories
-        .map((m: any, i: number) => `${i + 1}. *${m.key}*: ${m.value}`)
+        .map((m, i) => `${i + 1}. *${m.key}*: ${m.value}`)
         .join('\n');
 
       // Split if too long
@@ -261,10 +278,8 @@ export function registerCommands(bot: Telegraf<EnzoContext>): void {
         });
       }
     } catch (error) {
-      console.error('[Telegram] Error fetching memories:', error);
-      await ctx.reply('Error al recuperar memorias.', {
-        parse_mode: 'Markdown',
-      });
+      console.error('[Telegram] /memory command failed:', error);
+      await ctx.reply('❌ Error al recuperar memorias. Inténtalo de nuevo.');
     } finally {
       typingSession.stop();
     }
