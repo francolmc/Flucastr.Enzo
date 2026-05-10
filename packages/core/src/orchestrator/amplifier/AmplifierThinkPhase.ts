@@ -114,6 +114,7 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
       totalSteps: totalStepsAllSkills,
       hasWebSearch,
       webSearchToolName,
+      homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco',
     }),
   ]
     .filter(Boolean)

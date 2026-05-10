@@ -350,6 +350,7 @@ export function buildThinkContractPrompt(params: {
   totalSteps?: number;
   hasWebSearch?: boolean;
   webSearchToolName?: string;
+  homeDir?: string;
 }): string {
   const contextBlock = params.context?.trim()
     ? `COMPLETED STEPS (read-only, do not repeat these actions):\n${params.context.trim()}\n\nThe above steps are DONE. Only act on the CURRENT user request below.\n\n`
@@ -387,5 +388,6 @@ ${params.webSearchToolName
 - Always use the full mcp_<id>_<toolname> format
 - ONE JSON object only — no text before or after, no markdown fences
 - If you have enough information to answer → {"action":"none"}
-- If PREVIOUS STEPS already contain a successful tool result → emit {"action":"none"} immediately to trigger synthesis. Do NOT ask follow-up questions.${iterationLine}`;
+- If PREVIOUS STEPS already contain a successful tool result → emit {"action":"none"} immediately to trigger synthesis. Do NOT ask follow-up questions.
+${params.homeDir ? `- User home directory is exactly "${params.homeDir}" — copy this path verbatim, never change case\n` : ''}${iterationLine}`;
 }

@@ -355,7 +355,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     memorySection,
     toolsPrompt,
     relevantSkillsSection,
-    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName }),
+    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco' }),
   ]
     .filter(Boolean)
     .join('\n\n');
