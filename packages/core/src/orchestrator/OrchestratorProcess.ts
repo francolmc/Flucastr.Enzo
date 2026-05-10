@@ -68,7 +68,9 @@ export type OrchestratorProcessBindings = {
       mcpsUsed: string[];
       decompositionSteps?: string[];
       toolsUsed?: string[];
-    }
+    },
+    conversationId?: string,
+    requestId?: string
   ): Promise<void>;
 };
 
@@ -287,7 +289,7 @@ export async function executeOrchestratorProcess(
           skillsUsed: amplifierResult.injectedSkills.map(s => s.name),
           mcpsUsed: [],
           toolsUsed: toolsUsed,
-        });
+        }, input.conversationId, requestId);
       }
     } catch (lessonErr) {
       console.warn('[Orchestrator] Failed to record lesson:', lessonErr);

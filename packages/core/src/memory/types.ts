@@ -13,7 +13,7 @@ export interface Memory {
   confidence?: number;
 }
 
-export type MemoryLessonSource = 'tool_failure' | 'user_correction';
+export type MemoryLessonSource = 'tool_failure' | 'user_correction' | 'orchestrator';
 
 /** Durable correction pattern after failures (memory_lessons). */
 export interface MemoryLesson {
