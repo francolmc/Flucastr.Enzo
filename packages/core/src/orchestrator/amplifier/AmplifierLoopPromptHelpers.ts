@@ -352,7 +352,7 @@ export function buildThinkContractPrompt(params: {
   webSearchToolName?: string;
 }): string {
   const contextBlock = params.context?.trim()
-    ? `PREVIOUS STEPS:\n${params.context.trim()}\n\nIf the above steps already completed the task → respond with {"action":"none"} now.\n\n`
+    ? `COMPLETED STEPS (read-only, do not repeat these actions):\n${params.context.trim()}\n\nThe above steps are DONE. Only act on the CURRENT user request below.\n\n`
     : '';
 
   const algorithmNote = params.isAlgorithmMode && params.totalSteps
