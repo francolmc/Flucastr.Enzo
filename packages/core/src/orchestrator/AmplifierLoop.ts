@@ -260,6 +260,14 @@ export class AmplifierLoop {
     input: any,
     errorDetail: string
   ): Promise<{ toolName: string; toolInput: any } | null> {
+    if (
+      (toolName.includes('list_directory') || toolName.includes('directory_tree')) &&
+      errorDetail.includes('$.path is required')
+    ) {
+      const homeDir = process.env.HOME ?? '/Users/franco';
+      return { toolName, toolInput: { path: homeDir } };
+    }
+
     const correctionPrompt = `You produced an invalid tool call.
 Return ONLY one valid JSON object in this format:
 {"action":"tool","tool":"${toolName}","input":{...}}
