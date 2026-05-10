@@ -365,6 +365,8 @@ export function buildThinkContractPrompt(params: {
 
   return `${contextBlock}${algorithmNote}YOUR RESPONSE MUST BE EXACTLY ONE OF THESE JSON FORMATS:
 
+OUTPUT FORMAT: Raw JSON only. No backticks. No markdown. No prose.
+
 1. Use a tool:
 {"action":"tool","tool":"EXACT_TOOL_NAME_FROM_LIST","input":{...}}
 
@@ -375,6 +377,7 @@ export function buildThinkContractPrompt(params: {
 {"action":"none"}
 
 RULES:
+- CRITICAL: Output RAW JSON only - no \`\`\`json, no \`\`\`, no markdown, no backticks of any kind
 ${params.webSearchToolName
   ? `- For ANY factual question about the world, people, events, products, or anything you don't know for certain → MUST use "${params.webSearchToolName}" tool. NEVER answer from memory when this tool is available.\n`
   : params.hasWebSearch
