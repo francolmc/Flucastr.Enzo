@@ -31,6 +31,12 @@ export function buildAssistantIdentityPrompt(input: AmplifierInput): string {
     lines.push(`Additional style guidelines: ${identity.styleGuidelines}`);
   }
 
+  lines.push(
+    `You have access to tools and MCP servers that allow you to perform real actions: ` +
+    `read files, list directories, search the web, and more. ` +
+    `NEVER say you cannot access files or the internet — use the available tools instead.`
+  );
+
   return lines.join('\n');
 }
 
