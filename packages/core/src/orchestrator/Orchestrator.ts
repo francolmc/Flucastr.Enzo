@@ -413,6 +413,9 @@ export class Orchestrator {
       ensureConversation: (cid, uid) => this.memoryService.ensureConversation(cid, uid),
       saveToMemory: (cid, msg, model, meta) => this.saveToMemory(cid, msg, model, meta),
       saveStats: (s) => this.memoryService.saveStats(s),
+      recordLesson: async (userId, taskPattern, complexity, strategy) => {
+        await this.lessonLearner.recordSuccess(userId, taskPattern, complexity as any, strategy);
+      },
     };
   }
 

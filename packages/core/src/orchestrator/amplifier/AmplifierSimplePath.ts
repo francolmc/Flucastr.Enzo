@@ -205,30 +205,15 @@ CLI / SHELL OUTPUT (mandatory):
 `
       : '';
 
-  const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
-${params.relevantSkillsSection}
-${params.requiredTemplateSection}
-You executed a tool and got this result:
+  const synthesisPrompt = `You executed the tool "${params.execName}" and got this real result:
 
-TOOL: ${params.execName}
-RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${evidenceForSynth}
 
-${calendarSynthRules}${mailSynthRules}${cliSynthRules}
-Write a response to the user based on this real result.
-Do NOT invent or add information not present in the result.
-If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
-Do NOT explain the internal process or mention tools.
-If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
-Template rules have higher priority than "natural phrasing".
-Do not change labels/order/emoji/sections from the chosen template.
-When a required field is missing in the tool result, keep the format and use "N/D" for that field.
-
-${
-  params.input.userLanguage && params.input.userLanguage !== 'es'
-    ? `CRITICAL: Write your response in ${params.input.userLanguage.toUpperCase()}. NOT in Spanish.`
-    : 'Write your response in Spanish (es).'
-}`;
+Write a brief, natural response to the user based ONLY on this result.
+- Use the actual data above — never invent or add information
+- If it's a file/directory listing, show it in a code block
+- Keep it concise — one sentence intro + the data
+- Respond in ${params.input.userLanguage?.startsWith('es') ?? true ? 'Spanish' : params.input.userLanguage ?? 'Spanish'}`;
 
   const synthStart = Date.now();
   try {
