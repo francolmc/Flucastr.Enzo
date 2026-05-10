@@ -1,4 +1,3 @@
-import os from 'os';
 import type { Message, LLMProvider } from '../../providers/types.js';
 import {
   ComplexityLevel,
@@ -15,9 +14,7 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
-  buildContextAnchorPrompt,
   buildMemoryPromptSection,
-  buildRuntimeThreeLayersContractPrompt,
   buildToolsPrompt,
   buildRelevantSkillsSection,
   capRelevantSkillsForPrompt,
@@ -85,14 +82,6 @@ export type SimpleModeratePathContext = {
   /** Mutable accumulator — caller passes by reference to collect real token counts. */
   usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
-
-function resolveHomeDir(input: AmplifierInput): string {
-  return input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir();
-}
-
-function resolveOsLabel(input: AmplifierInput): string {
-  return input.runtimeHints?.osLabel ?? humanOsLabel();
-}
 
 function applyCompletionToolCallsToText(
   messageContent: string,
@@ -323,9 +312,6 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const exactAllowlist = mergedToolDefs.map((t) => t.name).join(', ');
 
   const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
-
-  const homeDir = resolveHomeDir(input);
-  const osLabel = resolveOsLabel(input);
 
   const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
   const skillFastPathLockActive =
