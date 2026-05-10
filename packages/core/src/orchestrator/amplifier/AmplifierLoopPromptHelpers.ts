@@ -37,6 +37,17 @@ export function buildAssistantIdentityPrompt(input: AmplifierInput): string {
     `NEVER say you cannot access files or the internet — use the available tools instead.`
   );
 
+  // System-level capabilities — always appended, never overridden by user config
+  lines.push(
+    ``,
+    `CAPABILITIES (system-level, always active):`,
+    `- You have real MCP tools available: filesystem access, web search, memory, and more.`,
+    `- When asked to list files, read a file, search the web, or similar → use the available tools directly.`,
+    `- NEVER say you cannot access files, directories, or the internet.`,
+    `- NEVER say you are limited to "configured information" or "private assistant boundaries".`,
+    `- Your tools give you real capabilities. Use them.`
+  );
+
   return lines.join('\n');
 }
 
