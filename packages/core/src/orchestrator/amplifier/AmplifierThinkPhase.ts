@@ -75,39 +75,24 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
 
   const isAlgorithmMode = multiStepSkills.length > 0;
 
-  let algorithmNote = '';
-  if (isAlgorithmMode) {
-    const completedToolActs = countCompletedToolActs(previousSteps);
-    const cursor = resolveAlgorithmCursor(completedToolActs, algorithmPlan);
-    const skill = cursor?.currentSkill ?? multiStepSkills[0]!;
-    const stepsCompleted = completedToolActs;
-    const totalSteps = cursor?.totalStepsAllSkills ?? buildStepDescriptionsForSkill(skill).length;
-    const stepDescriptions = buildStepDescriptionsForSkill(skill);
-    const localNext = cursor?.stepWithinSkill ?? Math.min(stepsCompleted + 1, stepDescriptions.length);
+  const completedToolActs = countCompletedToolActs(previousSteps);
+  const totalStepsAllSkills = isAlgorithmMode
+    ? (resolveAlgorithmCursor(completedToolActs, algorithmPlan)?.totalStepsAllSkills ?? buildStepDescriptionsForSkill(multiStepSkills[0]!).length)
+    : undefined;
 
-    // Show CURRENT step only (not full list) — optimized for 7b models
-    const currentStepInstruction = stepDescriptions[localNext - 1] ?? stepDescriptions[0] ?? 'proceed with next action';
-
-    algorithmNote = `ALGORITHM: "${skill.name}" — executing step ${localNext}/${stepDescriptions.length}
-Current step: ${currentStepInstruction}
-Progress: ${stepsCompleted}/${totalSteps} total steps completed
-You MUST use {"action":"tool",...} — {"action":"none"} not allowed until step ${totalSteps}`;
-  }
-
-  const webSearchTool = mergedTools.find(t => {
+  const webSearchTool = mergedTools.find((t) => {
     const name = t.name.toLowerCase();
     const desc = (t.description ?? '').toLowerCase();
     return (
       (name.includes('web') && name.includes('search')) ||
       name.includes('web-search') ||
-      (name.endsWith('_search') && (
-        desc.includes('web') ||
-        desc.includes('internet') ||
-        desc.includes('duckduckgo') ||
-        desc.includes('brave') ||
-        desc.includes('search the web') ||
-        desc.includes('buscar en internet')
-      ))
+      (name.endsWith('_search') &&
+        (desc.includes('web') ||
+          desc.includes('internet') ||
+          desc.includes('duckduckgo') ||
+          desc.includes('brave') ||
+          desc.includes('search the web') ||
+          desc.includes('buscar en internet')))
     );
   });
   const hasWebSearch = webSearchTool != null;
@@ -115,26 +100,21 @@ You MUST use {"action":"tool",...} — {"action":"none"} not allowed until step 
 
   const memorySection = buildMemoryPromptSection(input);
 
-  // Assemble system prompt — order matters for 7b model attention
   const systemPrompt = [
     buildAssistantIdentityPrompt(input),
     memorySection,
     toolsPrompt,
     skillsToInjectForThink.length > 0 ? buildRelevantSkillsSection(skillsToInjectForThink) : '',
     buildThinkContractPrompt({
-      context: isAlgorithmMode ? algorithmNote : context,
+      context,
       iteration,
       maxIterations,
       isAlgorithmMode,
+      stepsCompleted: isAlgorithmMode ? completedToolActs : undefined,
+      totalSteps: totalStepsAllSkills,
       hasWebSearch,
       webSearchToolName,
-      ...(isAlgorithmMode && {
-        stepsCompleted: countCompletedToolActs(previousSteps),
-        totalSteps: resolveAlgorithmCursor(
-          countCompletedToolActs(previousSteps),
-          algorithmPlan
-        )?.totalStepsAllSkills ?? buildStepDescriptionsForSkill(multiStepSkills[0]!).length,
-      }),
+      homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco',
     }),
   ]
     .filter(Boolean)

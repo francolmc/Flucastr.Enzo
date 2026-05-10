@@ -1,4 +1,3 @@
-import os from 'os';
 import type { Message, LLMProvider } from '../../providers/types.js';
 import {
   ComplexityLevel,
@@ -15,9 +14,7 @@ import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { recordStageMetric } from './AmplifierLoopMetrics.js';
 import {
   buildAssistantIdentityPrompt,
-  buildContextAnchorPrompt,
   buildMemoryPromptSection,
-  buildRuntimeThreeLayersContractPrompt,
   buildToolsPrompt,
   buildRelevantSkillsSection,
   capRelevantSkillsForPrompt,
@@ -85,14 +82,6 @@ export type SimpleModeratePathContext = {
   /** Mutable accumulator — caller passes by reference to collect real token counts. */
   usageAccumulator?: { inputTokens: number; outputTokens: number };
 };
-
-function resolveHomeDir(input: AmplifierInput): string {
-  return input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir();
-}
-
-function resolveOsLabel(input: AmplifierInput): string {
-  return input.runtimeHints?.osLabel ?? humanOsLabel();
-}
 
 function applyCompletionToolCallsToText(
   messageContent: string,
@@ -205,30 +194,15 @@ CLI / SHELL OUTPUT (mandatory):
 `
       : '';
 
-  const synthesisPrompt = `${buildAssistantIdentityPrompt(params.input)}
-${params.relevantSkillsSection}
-${params.requiredTemplateSection}
-You executed a tool and got this result:
+  const synthesisPrompt = `You executed the tool "${params.execName}" and got this real result:
 
-TOOL: ${params.execName}
-RESULTADO REAL DE EJECUCIÓN (no inventar, no agregar información):
 ${evidenceForSynth}
 
-${calendarSynthRules}${mailSynthRules}${cliSynthRules}
-Write a response to the user based on this real result.
-Do NOT invent or add information not present in the result.
-If the result looks like command output with multiple lines (listings, tables, logs), put the COMPLETE tool output in a single markdown fenced code block first, then at most one short sentence if needed. Never invent paths, merge lines into categories, or label something as a file or directory unless that distinction appears in the output.
-Do NOT explain the internal process or mention tools.
-If REQUIRED OUTPUT TEMPLATES are present, you MUST follow one template exactly.
-Template rules have higher priority than "natural phrasing".
-Do not change labels/order/emoji/sections from the chosen template.
-When a required field is missing in the tool result, keep the format and use "N/D" for that field.
-
-${
-  params.input.userLanguage && params.input.userLanguage !== 'es'
-    ? `CRITICAL: Write your response in ${params.input.userLanguage.toUpperCase()}. NOT in Spanish.`
-    : 'Write your response in Spanish (es).'
-}`;
+Write a brief, natural response to the user based ONLY on this result.
+- Use the actual data above — never invent or add information
+- If it's a file/directory listing, show it in a code block
+- Keep it concise — one sentence intro + the data
+- Respond in ${params.input.userLanguage?.startsWith('es') ?? true ? 'Spanish' : params.input.userLanguage ?? 'Spanish'}`;
 
   const synthStart = Date.now();
   try {
@@ -339,9 +313,6 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
 
   const persistToPathRequested = messageIndicatesPersistedWriteToAbsolutePath(input.message);
 
-  const homeDir = resolveHomeDir(input);
-  const osLabel = resolveOsLabel(input);
-
   const declarativeExecutable = resolveTopSkillDeclarativeExecutable(preResolvedSkills, executableTools);
   const skillFastPathLockActive =
     isModerate &&
@@ -384,7 +355,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
     memorySection,
     toolsPrompt,
     relevantSkillsSection,
-    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName }),
+    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco' }),
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -449,32 +420,19 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   })();
 
   if (isModerate && (!normalizedContent.startsWith('{') || !rawLooksLikeToolCall)) {
-    const strictPrompt = persistToPathRequested
-      ? `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON. The user asked to CREATE or SAVE a file at an absolute path on this machine — you MUST use write_file.
+    const strictPrompt = `You must respond with ONLY a JSON tool call. No prose, no markdown, no backticks.
 
-Output ONLY one JSON object (no prose, no markdown fences):
-{"action":"tool","tool":"write_file","input":{"path":"<verbatim absolute path from the user's message>","content":"<complete file body>"}}
+Available tools (use EXACT names):
+${exactAllowlist}
 
-Use the exact path from the user's message. Do not invent tool names.`
-      : moderateRetryRequiresToolJsonOnly
-        ? `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON. This turn mandated a LOCKED canonical tool invocation (calendar, mailbox, prefersHostTools/host CLI, SKILL_FASTPATH, or persisted file body).
+${webSearchToolName ? `For web searches use: "${webSearchToolName}"` : ''}
 
-Emit ONLY **one** JSON object (no prose, no markdown fences):
-{"action":"tool","tool":"<name>","input":{...}}
-where **<name>** MUST be copied exactly from: ${exactAllowlist}.${declarativeExecutable && skillFastPathLockActive ? ` Prefer "${declarativeExecutable.tool}".${declarativeExecutable.commandHint ? ` Align execute_command payloads with intent such as ${JSON.stringify(declarativeExecutable.commandHint)}.` : ''}` : ''}
+Format:
+{"action":"tool","tool":"EXACT_TOOL_NAME","input":{...}}
 
-Do not substitute web_search for host-visible data blocks. Never invent tool names or describe actions you cannot execute via JSON here.`
-        : `${buildAssistantIdentityPrompt(input)}
-The prior reply was not valid tool JSON for a request that may need tools.
+User request: ${input.message}
 
-Return EXACTLY ONE of:
-A) One JSON object only (no prose): {"action":"tool","tool":"<name>","input":{...}}
-   where <name> is copied exactly from: ${exactAllowlist}
-B) If the user's message needs no tool-backed action: one short plain-text reply — no JSON, no markdown.
-
-Never invent tool names.`;
+Pick the correct tool and respond with JSON only.`;
     try {
       const retry = await withTimeout(
         baseProvider.complete({

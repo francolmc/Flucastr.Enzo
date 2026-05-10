@@ -58,6 +58,20 @@ export type OrchestratorProcessBindings = {
     droppedRecords: MessageRecord[];
     previousSummary?: string;
   }): void;
+  recordLesson(
+    userId: string,
+    taskPattern: string,
+    complexity: string,
+    strategy: {
+      classification: string;
+      skillsUsed: string[];
+      mcpsUsed: string[];
+      decompositionSteps?: string[];
+      toolsUsed?: string[];
+    },
+    conversationId?: string,
+    requestId?: string
+  ): Promise<void>;
 };
 
 export async function executeOrchestratorProcess(
@@ -259,6 +273,28 @@ export async function executeOrchestratorProcess(
 
   await b.saveToMemory(input.conversationId, { role: 'user', content: input.message });
   await b.saveToMemory(input.conversationId, { role: 'assistant', content: assistantContent }, modelUsed, assistantMeta);
+
+  void (async () => {
+    try {
+      const toolsUsed = amplifierResult.toolsUsed ?? [];
+      const wasSuccessful = toolsUsed.length > 0 &&
+        !assistantContent.toLowerCase().includes('no puedo') &&
+        !assistantContent.toLowerCase().includes('cannot') &&
+        !assistantContent.toLowerCase().includes('no tengo acceso');
+
+      if (wasSuccessful && toolsUsed.length > 0) {
+        const taskPattern = input.message.trim().substring(0, 120).toLowerCase();
+        await b.recordLesson(input.userId, taskPattern, complexityUsed, {
+          classification: complexityUsed,
+          skillsUsed: amplifierResult.injectedSkills.map(s => s.name),
+          mcpsUsed: [],
+          toolsUsed: toolsUsed,
+        }, input.conversationId, requestId);
+      }
+    } catch (lessonErr) {
+      console.warn('[Orchestrator] Failed to record lesson:', lessonErr);
+    }
+  })();
 
   if (conv.droppedTurns > 0) {
     const prevRoll = await b.getConversationSummary(input.conversationId);

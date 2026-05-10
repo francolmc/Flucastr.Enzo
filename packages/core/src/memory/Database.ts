@@ -4,6 +4,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { migrateMemoryKeysIfNeeded } from './migrations/normalizeMemoryKeys.js';
 
 function migrateLegacyMemoriesIntoMemoryEntries(db: DatabaseSync): void {
+  if (process.env.ENZO_MEMORY_BACKFILL !== 'true') {
+    return;
+  }
   const countRow = db.prepare('SELECT COUNT(*) as n FROM memory_entries').get() as { n: number };
   if (countRow.n > 0) {
     return;

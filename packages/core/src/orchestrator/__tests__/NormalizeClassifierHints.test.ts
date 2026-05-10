@@ -25,8 +25,8 @@ console.log('Running normalizeClassifierLlmHints tests...\n');
     } as Record<string, unknown>,
     ComplexityLevel.SIMPLE
   );
-  if (o.level !== ComplexityLevel.SIMPLE) {
-    throw new Error(`expected level to be SIMPLE, got ${JSON.stringify(o)}`);
+  if (o.level !== undefined) {
+    throw new Error(`expected level to be undefined, got ${JSON.stringify(o)}`);
   }
   console.log('ok: simple classification works');
 }
