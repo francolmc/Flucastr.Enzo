@@ -414,11 +414,14 @@ export class Orchestrator {
       saveToMemory: (cid, msg, model, meta) => this.saveToMemory(cid, msg, model, meta),
       saveStats: (s) => this.memoryService.saveStats(s),
       recordLesson: async (userId, taskPattern, complexity, strategy, conversationId?, requestId?) => {
+        const toolsUsed = strategy.toolsUsed ?? [];
         await this.memoryService.saveMemoryLesson({
           userId,
           situation: taskPattern,
-          avoid: (strategy.toolsUsed ?? []).join(', '),
-          prefer: strategy.classification,
+          avoid: 'answering from memory without using tools',
+          prefer: toolsUsed.length > 0
+            ? `use these tools: ${toolsUsed.join(', ')} (complexity: ${strategy.classification})`
+            : `complexity: ${strategy.classification}`,
           source: 'orchestrator',
           confidence: 0.9,
           conversationId: conversationId ?? undefined,
