@@ -32,7 +32,7 @@ export function normalizeClassifierLlmHints(
   if (prefersHostTools) {
     out.prefersHostTools = true;
   }
-  if (parsed['suppressSimpleModerateFastPath'] === true || level === ComplexityLevel.COMPLEX) {
+  if (parsed['suppressSimpleModerateFastPath'] === true && level === ComplexityLevel.COMPLEX) {
     out.suppressSimpleModerateFastPath = true;
   }
   return out;
@@ -196,7 +196,7 @@ Core shape (always required):
 {"level":"SIMPLE","reason":"..."}
 Optional keys (omit when irrelevant):
 - "prefersHostTools": true — answer must come from THIS machine's **registered MCP tools**: file operations, shell commands, or other tools available via MCP servers. Omit for pure public lookups or casual conversation.
-- "suppressSimpleModerateFastPath": true — REQUIRED when LEVEL is COMPLEX or when TWO OR MORE DISTINCT tool-backed steps are inseparable without an intermediate observation (implicit chains: web+write, read+write, analyze+report to file, reorganize folders with mkdir+mv). ALSO set **true** if you classify as MODERATE but the wording still hides a sequential multi-tool dependency (prefer raising to COMPLEX in that case).
+- "suppressSimpleModerateFastPath": true — ONLY when LEVEL is COMPLEX, or when there are explicitly TWO OR MORE chained tool steps where step N requires output from step N-1. NEVER set this for single filesystem operations, single web searches, or single memory saves — even if prefersHostTools is true.
 
 LEVELS — apply in order, first match wins:
 
