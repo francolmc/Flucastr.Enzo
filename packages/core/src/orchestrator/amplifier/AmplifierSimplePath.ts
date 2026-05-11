@@ -351,6 +351,9 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
 
   const memorySection = buildMemoryPromptSection(input);
   const systemPrompt = [
+    `[REASONING MODE] You are thinking, not responding to the user.
+Your output is internal reasoning — emit ONLY JSON tool calls.
+Never write conversational text or explanations.`,
     buildAssistantIdentityPrompt(input),
     memorySection,
     toolsPrompt,

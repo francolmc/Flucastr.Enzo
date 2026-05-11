@@ -101,6 +101,10 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
   const memorySection = buildMemoryPromptSection(input);
 
   const systemPrompt = [
+    `[REASONING MODE] You are thinking, not responding to the user.
+Your output is internal reasoning — it will NEVER be shown directly to the user.
+The user only sees the final synthesized response after all reasoning is complete.
+Emit ONLY JSON. Never write conversational text.`,
     buildAssistantIdentityPrompt(input),
     memorySection,
     toolsPrompt,

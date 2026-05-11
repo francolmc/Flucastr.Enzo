@@ -364,30 +364,29 @@ export function buildThinkContractPrompt(params: {
     ? `\nIteration: ${params.iteration}${params.maxIterations ? `/${params.maxIterations}` : ''}`
     : '';
 
-  return `${contextBlock}${algorithmNote}YOUR RESPONSE MUST BE EXACTLY ONE OF THESE JSON FORMATS:
+  return `${contextBlock}${algorithmNote}[INTERNAL REASONING — not visible to user]
+You are in reasoning mode. This is NOT a response to the user.
+Decide the next action and emit ONLY one of these JSON formats:
 
-OUTPUT FORMAT: Raw JSON only. No backticks. No markdown. No prose.
-
-1. Use a tool:
+1. Execute a tool:
 {"action":"tool","tool":"EXACT_TOOL_NAME_FROM_LIST","input":{...}}
 
 2. Delegate to an agent:
 {"action":"delegate","agent":"agent_id","task":"what to do","reason":"why"}
 
-3. Done — no action needed:
+3. Reasoning complete — ready to synthesize response:
 {"action":"none"}
 
 RULES:
-- CRITICAL: Output RAW JSON only - no \`\`\`json, no \`\`\`, no markdown, no backticks of any kind
-${params.webSearchToolName
-  ? `- For ANY factual question about the world, people, events, products, or anything you don't know for certain → MUST use "${params.webSearchToolName}" tool. NEVER answer from memory when this tool is available.\n`
-  : params.hasWebSearch
-    ? `- For ANY factual question → MUST use the web search tool available. NEVER answer from memory.\n`
-    : ''}- Copy the tool name CHARACTER BY CHARACTER from AVAILABLE TOOLS above
+- CRITICAL: Output RAW JSON only — no \`\`\`json, no \`\`\`, no markdown, no backticks of any kind
+- Copy the tool name CHARACTER BY CHARACTER from AVAILABLE TOOLS above
 - Never use generic names: web_search, execute_command, list_directory, read_file, write_file
 - Always use the full mcp_<id>_<toolname> format
 - ONE JSON object only — no text before or after, no markdown fences
-- If you have enough information to answer → {"action":"none"}
-- If PREVIOUS STEPS already contain a successful tool result → emit {"action":"none"} immediately to trigger synthesis. Do NOT ask follow-up questions.
-${params.homeDir ? `- User home directory is exactly "${params.homeDir}" — copy this path verbatim, never change case\n` : ''}${iterationLine}`;
+- If PREVIOUS STEPS already completed the task → {"action":"none"} to synthesize
+${params.webSearchToolName
+  ? `- For ANY factual question → MUST use "${params.webSearchToolName}" (never answer from memory)\n`
+  : params.hasWebSearch
+    ? `- For ANY factual question → MUST use the web search tool\n`
+    : ''}${params.homeDir ? `- User home directory is exactly "${params.homeDir}" — copy verbatim, never change case\n` : ''}${iterationLine}`;
 }
