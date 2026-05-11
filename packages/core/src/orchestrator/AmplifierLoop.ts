@@ -372,7 +372,7 @@ No prose, no explanation, just the JSON input object.`;
     const preResolvedSkills = this.skillRegistry
       ? await this.skillResolver.resolveRelevantSkills(input.message, this.skillRegistry, skillResolveOpts)
       : [];
-    if (preResolvedSkills.length > 0) {
+    if (process.env.ENZO_DEBUG === 'true' && preResolvedSkills.length > 0) {
       this.log.info(
         `[AmplifierLoop] Relevant skills pre-resolved: ${preResolvedSkills
           .map((skill) => `${skill.name}(${Math.round(skill.relevanceScore * 100)}%)`)
@@ -413,7 +413,7 @@ No prose, no explanation, just the JSON input object.`;
         amplifierImpliesMultiToolLexicalFallbackEnabled() &&
         impliesMultiToolWorkflow(input.message));
 
-    if (skipFastPathForMultiTool) {
+    if (process.env.ENZO_DEBUG === 'true' && skipFastPathForMultiTool) {
       console.log(
         JSON.stringify({
           event: 'EnzoRouting',
@@ -438,15 +438,17 @@ No prose, no explanation, just the JSON input object.`;
       this.log.info(
         '[AmplifierLoop] Reclassified SIMPLE → MODERATE (persist-to-disk lexical hint; write_file expected)'
       );
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'write_file_lexical_hint',
-          priorLevel: input.classifiedLevel,
-        })
-      );
+      if (process.env.ENZO_DEBUG === 'true') {
+        console.log(
+          JSON.stringify({
+            event: 'EnzoRouting',
+            phase: 'amplifier_before_fast_path',
+            reclassifiedTo: 'MODERATE',
+            reason: 'write_file_lexical_hint',
+            priorLevel: input.classifiedLevel,
+          })
+        );
+      }
     }
 
     if (fastPathLevel === ComplexityLevel.SIMPLE && skillSingleStepBypassMultiTool) {
@@ -454,21 +456,20 @@ No prose, no explanation, just the JSON input object.`;
       this.log.info(
         '[AmplifierLoop] Reclassified SIMPLE → MODERATE (YAML declarative single-tool skill)'
       );
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'declarative_skill_single_tool_step',
-          priorLevel: input.classifiedLevel,
-        })
-      );
+      if (process.env.ENZO_DEBUG === 'true') {
+        console.log(
+          JSON.stringify({
+            event: 'EnzoRouting',
+            phase: 'amplifier_before_fast_path',
+            reclassifiedTo: 'MODERATE',
+            reason: 'declarative_skill_single_tool_step',
+            priorLevel: input.classifiedLevel,
+          })
+        );
+      }
     }
 
-    if (calendarListBypassesMultiStepBlock && hasMultiStepSkillRequirement) {
-      this.log.info(
-        '[AmplifierLoop] Calendar list query: staying on SIMPLE/MODERATE fast path (calendar list locked prompt) despite multi-step skill plan'
-      );
+    if (process.env.ENZO_DEBUG === 'true' && calendarListBypassesMultiStepBlock && hasMultiStepSkillRequirement) {
       console.log(
         JSON.stringify({
           event: 'EnzoRouting',
@@ -478,10 +479,7 @@ No prose, no explanation, just the JSON input object.`;
       );
     }
 
-    if (skillSingleStepBypassMultiTool && hasMultiStepSkillRequirement) {
-      this.log.info(
-        '[AmplifierLoop] Declarative single-tool skill: staying on SIMPLE/MODERATE fast path despite multi-step text in other skills'
-      );
+    if (process.env.ENZO_DEBUG === 'true' && skillSingleStepBypassMultiTool && hasMultiStepSkillRequirement) {
       console.log(
         JSON.stringify({
           event: 'EnzoRouting',
@@ -1045,14 +1043,16 @@ Emit JSON tool call only. This is internal execution, not a user response.`;
           reason: reasonHint,
           input: { task },
         };
-        console.log(
-          JSON.stringify({
-            event: 'EnzoRouting',
-            phase: 'amplifier_coerce_image_delegate',
-            agentId: agentTarget,
-            triggeredBy: 'think_none_or_non_json_with_image_payload',
-          })
-        );
+        if (process.env.ENZO_DEBUG === 'true') {
+          console.log(
+            JSON.stringify({
+              event: 'EnzoRouting',
+              phase: 'amplifier_coerce_image_delegate',
+              agentId: agentTarget,
+              triggeredBy: 'think_none_or_non_json_with_image_payload',
+            })
+          );
+        }
         this.log.info(
           `[AmplifierLoop] Iteration ${iteration} - Coerced THINK → delegate("${agentTarget}") — local model emitted no usable delegate JSON despite imageContext`
         );

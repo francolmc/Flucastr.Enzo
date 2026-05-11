@@ -503,11 +503,6 @@ Use only when relevant to the current request; never invent new failures from th
 
   // Estadísticas
   async saveStats(stats: UsageStat): Promise<void> {
-    console.log('[MemoryService] saveStats called with:', {
-      id: stats.id,
-      userId: stats.userId,
-      complexityLevel: stats.complexityLevel,
-    });
     await this.runAsync(
       `INSERT INTO usage_stats (
         id, requestId, conversationId, userId, source, provider, model, inputTokens, outputTokens,
@@ -537,7 +532,6 @@ Use only when relevant to the current request; never invent new failures from th
         stats.createdAt
       ]
     );
-    console.log('[MemoryService] saveStats completed');
   }
 
   async getStats(

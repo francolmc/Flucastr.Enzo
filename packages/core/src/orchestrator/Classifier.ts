@@ -19,7 +19,9 @@ import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJso
 import { decisionLogger, type DecisionPhase } from '../logging/DecisionLogger.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
-  console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+  if (process.env.ENZO_DEBUG === 'true') {
+    console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+  }
 }
 
 /** Exported for tests. Normalizes optional classifier JSON fields. */
@@ -317,7 +319,6 @@ ONLY JSON. NOTHING ELSE.`;
       temperature: 0.3,
       maxTokens: 256,
     });
-    console.log('[Classifier] Raw response:', response.content);
 
     const allJsonMatches = extractJsonObjects(response.content);
     if (allJsonMatches.length > 1) {
@@ -346,7 +347,6 @@ No markdown, no prose.`;
       temperature: 0,
       maxTokens: 128,
     });
-    console.log('[Classifier] Retry raw response:', retryResponse.content);
 
     const retryParsed = parseFirstJsonObject<{
       level: ComplexityLevel;

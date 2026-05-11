@@ -328,17 +328,7 @@ export class MCPRegistry {
    */
   getMCPToolsForOrchestrator(): any[] {
     const tools: any[] = [];
-    const allServers = this.getAllServers();
     const connectedServers = this.getConnectedServers();
-
-    console.log(`[MCPRegistry] getMCPToolsForOrchestrator: ${allServers.length} total servers, ${connectedServers.length} connected`);
-    
-    if (allServers.length > 0 && connectedServers.length === 0) {
-      console.log('[MCPRegistry] Servers exist but none are connected. Server states:');
-      allServers.forEach(s => {
-        console.log(`  - ${s.serverConfig.name} (${s.serverConfig.id}): status=${s.connectionStatus}, enabled=${s.serverConfig.enabled}`);
-      });
-    }
 
     for (const connection of connectedServers) {
       for (const mcpTool of connection.toolList) {

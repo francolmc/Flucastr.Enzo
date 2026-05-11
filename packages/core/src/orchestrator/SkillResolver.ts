@@ -115,6 +115,7 @@ export class SkillResolver {
           reasoning: `Selected ${llmSelected.length} skills via LLM`,
         });
       }
+      console.log(`[SkillResolver] Selected: ${llmSelected.map(s => s.id).join(', ')}`);
       return llmSelected
     }
 
@@ -139,7 +140,7 @@ export class SkillResolver {
         reasoning: `Selected ${fallbackResult.length} skills via heuristic`,
       });
     }
-
+    console.log(`[SkillResolver] Selected: ${fallbackResult.map(s => s.id).join(', ') || 'none'}`);
     return fallbackResult
   }
 
