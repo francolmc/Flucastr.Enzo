@@ -97,10 +97,8 @@ export async function executeOrchestratorProcess(
     userProfile,
   });
 
-  if (memoryBlock) {
-    console.log(`[Orchestrator] Injecting memory block for user ${input.userId}: ${memoryBlock.slice(0, 200).replace(/\n/g, ' ')}`);
-  } else {
-    console.log(`[Orchestrator] No memory block for user ${input.userId} (DB may be empty for this user)`);
+  if (rankedMemoryFacts.length > 0) {
+    console.log(`[Orchestrator] Memory: ${rankedMemoryFacts.length} facts for user ${input.userId}`);
   }
 
   console.log(
@@ -141,24 +139,24 @@ export async function executeOrchestratorProcess(
   });
   const classifyDurationMs = Date.now() - classifyStart;
   console.log(`[Orchestrator] Message classified as: ${classification.level}`);
-  console.log(
-    JSON.stringify({
-      event: 'EnzoRouting',
-      phase: 'orchestrator_after_classify',
-      classifierBranch: classification.classifierBranch ?? 'unset',
-      level: classification.level,
-      hasImagePayload,
-      telegramPreclassifiedOverriddenForImage: !usePreclassified && input.classifiedLevel != null && hasImagePayload,
-      delegationHint: classification.delegationHint?.agentId ?? null,
-    })
-  );
+  if (process.env.ENZO_DEBUG === 'true') {
+    console.log(
+      JSON.stringify({
+        event: 'EnzoRouting',
+        phase: 'orchestrator_after_classify',
+        classifierBranch: classification.classifierBranch ?? 'unset',
+        level: classification.level,
+        hasImagePayload,
+        telegramPreclassifiedOverriddenForImage: !usePreclassified && input.classifiedLevel != null && hasImagePayload,
+        delegationHint: classification.delegationHint?.agentId ?? null,
+      })
+    );
+  }
 
   const tools: Tool[] = b.getToolRegistry().getToolDefinitions();
   const mcpTools = b.getMcpRegistry().getMCPToolsForOrchestrator();
   if (mcpTools.length > 0) {
-    console.log(
-      `[Orchestrator] Adding ${mcpTools.length} MCP tool(s) to available tools: ${mcpTools.map((tool) => tool.name).join(', ')}`
-    );
+    console.log(`[Orchestrator] MCP tools available: ${mcpTools.length}`);
   }
   appendMcpToolsToToolList(tools, mcpTools);
 

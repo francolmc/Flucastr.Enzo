@@ -317,7 +317,6 @@ ONLY JSON. NOTHING ELSE.`;
       temperature: 0.3,
       maxTokens: 256,
     });
-    console.log('[Classifier] Raw response:', response.content);
 
     const allJsonMatches = extractJsonObjects(response.content);
     if (allJsonMatches.length > 1) {
@@ -346,7 +345,6 @@ No markdown, no prose.`;
       temperature: 0,
       maxTokens: 128,
     });
-    console.log('[Classifier] Retry raw response:', retryResponse.content);
 
     const retryParsed = parseFirstJsonObject<{
       level: ComplexityLevel;
