@@ -719,20 +719,17 @@ if (
         // REACT LOOP: Para subtareas sin dependencia o sin tool definida
         // Construir el mensaje para esta subtarea específica
         let subtaskMessage: string;
-
         if (subtask.dependsOn !== null && accumulatedContext) {
-          // Esta subtarea depende de una anterior — incluir resultado previo explícitamente
-          subtaskMessage = `TASK: ${subtask.description}
+          subtaskMessage = `[INTERNAL STEP ${subtask.id}] ${subtask.description}
 
-IMPORTANT: Use the following information from the previous step as the content:
----
+CONTEXT FROM PREVIOUS STEP (use this as input, do not search again):
 ${accumulatedContext}
----
 
-Your job is ONLY to execute this task using the information above.
-Do NOT search for more information. Use what is provided.`;
+Emit JSON tool call only. This is internal execution, not a user response.`;
         } else {
-          subtaskMessage = subtask.description;
+          subtaskMessage = `[INTERNAL STEP ${subtask.id}] ${subtask.description}
+
+Emit JSON tool call only. This is internal execution, not a user response.`;
         }
 
         const baseSubtaskUserMessage = subtaskMessage;
