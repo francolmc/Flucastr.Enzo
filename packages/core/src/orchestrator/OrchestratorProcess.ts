@@ -101,9 +101,11 @@ export async function executeOrchestratorProcess(
     console.log(`[Orchestrator] Memory: ${rankedMemoryFacts.length} facts for user ${input.userId}`);
   }
 
-  console.log(
-    `[Continuity] flow=${conv.flowKind} conf=${conv.flowConfidence.toFixed(2)} dropped=${conv.droppedTurns} summary=${conv.summaryUsed ? 'yes' : 'no'} tokEst=${conv.estimatedTokensRecent + conv.estimatedTokensContinuity}`
-  );
+  if (process.env.ENZO_DEBUG === 'true') {
+    console.log(
+      `[Continuity] flow=${conv.flowKind} conf=${conv.flowConfidence.toFixed(2)} dropped=${conv.droppedTurns} summary=${conv.summaryUsed ? 'yes' : 'no'} tokEst=${conv.estimatedTokensRecent + conv.estimatedTokensContinuity}`
+    );
+  }
 
   const classifierMessages: Message[] = [
     ...conv.continuitySystemBlocks.map((c) => ({ role: 'system' as const, content: c })),

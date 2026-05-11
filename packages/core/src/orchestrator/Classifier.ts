@@ -19,7 +19,9 @@ import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJso
 import { decisionLogger, type DecisionPhase } from '../logging/DecisionLogger.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
-  console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+  if (process.env.ENZO_DEBUG === 'true') {
+    console.log(JSON.stringify({ event: 'EnzoRouting', classifierBranch: branch, level }));
+  }
 }
 
 /** Exported for tests. Normalizes optional classifier JSON fields. */

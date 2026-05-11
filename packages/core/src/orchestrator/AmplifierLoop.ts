@@ -439,16 +439,16 @@ No prose, no explanation, just the JSON input object.`;
         '[AmplifierLoop] Reclassified SIMPLE → MODERATE (persist-to-disk lexical hint; write_file expected)'
       );
       if (process.env.ENZO_DEBUG === 'true') {
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'write_file_lexical_hint',
-          priorLevel: input.classifiedLevel,
-        })
-      );
-    }
+        console.log(
+          JSON.stringify({
+            event: 'EnzoRouting',
+            phase: 'amplifier_before_fast_path',
+            reclassifiedTo: 'MODERATE',
+            reason: 'write_file_lexical_hint',
+            priorLevel: input.classifiedLevel,
+          })
+        );
+      }
     }
 
     if (fastPathLevel === ComplexityLevel.SIMPLE && skillSingleStepBypassMultiTool) {
@@ -457,16 +457,16 @@ No prose, no explanation, just the JSON input object.`;
         '[AmplifierLoop] Reclassified SIMPLE → MODERATE (YAML declarative single-tool skill)'
       );
       if (process.env.ENZO_DEBUG === 'true') {
-      console.log(
-        JSON.stringify({
-          event: 'EnzoRouting',
-          phase: 'amplifier_before_fast_path',
-          reclassifiedTo: 'MODERATE',
-          reason: 'declarative_skill_single_tool_step',
-          priorLevel: input.classifiedLevel,
-        })
-      );
-    }
+        console.log(
+          JSON.stringify({
+            event: 'EnzoRouting',
+            phase: 'amplifier_before_fast_path',
+            reclassifiedTo: 'MODERATE',
+            reason: 'declarative_skill_single_tool_step',
+            priorLevel: input.classifiedLevel,
+          })
+        );
+      }
     }
 
     if (process.env.ENZO_DEBUG === 'true' && calendarListBypassesMultiStepBlock && hasMultiStepSkillRequirement) {
