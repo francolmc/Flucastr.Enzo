@@ -147,9 +147,13 @@ const handleUpdateClick = () => {
 
 <div className="version-actions">
             <button
+              id="verify-btn"
               className="secondary"
-              onClick={() => {
-                alert('clicked!');
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Button clicked!');
+                alert('Button clicked!');
                 void checkForUpdates();
               }}
             >
