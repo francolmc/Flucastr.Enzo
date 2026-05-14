@@ -715,7 +715,9 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
 
   checkForUpdates: async () => {
     try {
+      console.log('[checkForUpdates] calling apiClient.getVersion()...');
       const versionInfo = await apiClient.getVersion();
+      console.log('[checkForUpdates] got versionInfo:', versionInfo);
       set({ versionInfo });
     } catch (error) {
       console.error('Error checking for updates:', error);
