@@ -13,6 +13,7 @@ API_KEY=""
 INSTALL_SERVICE=false
 QUIET_MODE=false
 CHECK_ONLY=false
+CHECK_UPDATES=false
 UPDATE_ONLY=false
 
 ENZO_DIR="${HOME}/.enzo"
@@ -26,6 +27,7 @@ Uso: install.sh [OPCIONES]
 
 Opciones:
   --check              Solo verificar requisitos, no instalar
+  --check-updates      Verificar si hay actualizaciones disponibles
   --dir <ruta>         Directorio de instalacion (default: ~/enzo)
   --model <modelo>     Modelo a usar (default: qwen2.5:7b)
   --provider <prov>    Provider: ollama o anthropic
@@ -38,6 +40,7 @@ Opciones:
 Ejemplos:
   install.sh                    # Instalacion completa
   install.sh --check            # Solo verificar requisitos
+  install.sh --check-updates    # Verificar actualizaciones
   install.sh --model llama3.2   # Con modelo especifico
   install.sh --update           # Actualizar instalacion
 EOF
@@ -47,6 +50,7 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --check) CHECK_ONLY=true; shift ;;
+            --check-updates) CHECK_UPDATES=true; shift ;;
             --dir) INSTALL_DIR="$2"; shift 2 ;;
             --model) MODEL="$2"; shift 2 ;;
             --provider) PROVIDER="$2"; shift 2 ;;
@@ -326,6 +330,24 @@ main() {
     log "🚀 Instalando Enzo..."; log ""
 
     detect_os
+
+    if [[ "${CHECK_UPDATES}" == "true" ]]; then
+        log "Verificando actualizaciones..."; log ""
+        INSTALL_DIR="${HOME}/enzo"
+        if [[ ! -d "${INSTALL_DIR}" ]]; then log "✗ No se encontro instalacion en ${INSTALL_DIR}"; exit 1; fi
+        cd "${INSTALL_DIR}"
+        local current; current=$(git describe --tags 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        log "  Version actual: ${current}"
+        git fetch origin main 2>/dev/null || true
+        local commits_behind; commits_behind=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
+        if [[ "${commits_behind}" == "0" ]]; then
+            log ""; log "✅ Enzo esta actualizado."
+        else
+            log ""; log "✓ Hay ${commits_behind} actualizacion(es) disponible(s)."
+            log "  Ejecuta: bash install.sh --update"
+        fi
+        exit 0
+    fi
 
     if [[ "${CHECK_ONLY}" == "true" ]]; then
         log "Modo verificacion - solo checando dependencias"; log ""
