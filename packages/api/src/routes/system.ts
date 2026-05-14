@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { spawn } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
+import { scheduleEnzoSupervisorRestart } from '@enzo/core';
 
 interface VersionInfo {
   current: string;
@@ -166,12 +167,14 @@ export function createSystemRouter(): Router {
 
       await runCommand('pnpm', ['install', '--frozen-lockfile']);
 
-      broadcastProgress(clients, { step: 3, total: 4, message: 'Compilando...', status: 'done' });
-      broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'running' });
+      broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'done' });
 
       await runCommand('pnpm', ['build']);
 
-      broadcastProgress(clients, { step: 4, total: 4, message: 'Reiniciando servidor...', status: 'done' });
+      broadcastProgress(clients, { step: 4, total: 4, message: 'Reiniciando servidor...', status: 'running' });
+
+      const restart = scheduleEnzoSupervisorRestart({ cwd: process.cwd() });
+      broadcastProgress(clients, { step: 4, total: 4, message: restart.userMessage, status: 'done' });
 
       res.json({ success: true, message: 'Update completed successfully', needsReload: true });
     } catch (error) {
