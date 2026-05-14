@@ -94,7 +94,14 @@ check_dependencies() {
         log "✗ Node.js no encontrado."
         missing_deps=true
     else
-        log "✓ Node.js detectado (v$(node_version))"
+        local node_ver; node_ver=$(node_version)
+        local major; major=$(echo "${node_ver}" | cut -d. -f1)
+        if [[ "${major}" -lt 22 ]]; then
+            log "✗ Node.js 22+ requerido (tu version: v${node_ver})"
+            missing_deps=true
+        else
+            log "✓ Node.js detectado (v${node_ver})"
+        fi
     fi
 
     if ! has_command pnpm; then
@@ -108,9 +115,9 @@ check_dependencies() {
 
     if [[ "${missing_deps}" == "true" ]]; then
         log ""
-        log "Para instalar Node.js:"
+        log "Para instalar Node.js 22:"
         log "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash"
-        log "  nvm install 20 && nvm use 20"
+        log "  nvm install 22 && nvm use 22"
         log ""
         log "Luego reinicia este script."
         return 1
@@ -143,25 +150,49 @@ ollama_model_exists() {
     has_command ollama && ollama list 2>/dev/null | grep -q "^${model}\s"
 }
 
-install_ollama() {
-    if ! has_command ollama; then
-        log ""; log "○ Ollama no encontrado. Instalando..."
-        if [[ "$(uname -s)" == "Darwin" ]] && has_command brew; then
-            brew install ollama 2>/dev/null || true
-        elif [[ "$(uname -s)" == "Linux" ]]; then
-            curl -fsSL https://ollama.ai/install.sh | sh
-        fi
-        if has_command ollama; then
-            if [[ "$(uname -s)" == "Darwin" ]] && ! pgrep -x ollama > /dev/null 2>&1; then
-                log "  Iniciando Ollama..."; ollama serve > /dev/null 2>&1 & sleep 2
-            elif [[ "$(uname -s)" == "Linux" ]]; then
-                log "  Iniciando Ollama..."; ollama serve > /dev/null 2>&1 & sleep 2
-            fi
-            log "✓ Ollama instalado"
-        fi
-    else
+ollama_check_and_install() {
+    if has_command ollama; then
         log "✓ Ollama ya instalado"
+        return 0
     fi
+
+    log ""
+    log "○ Ollama no encontrado."
+    log ""
+    log "Ollama puede estar en otro equipo o servidor."
+    log ""
+    printf "Ingresa la URL de Ollama remoto (ej: http://192.168.1.100:11434)"
+    printf "\nO presiona Enter para instalar Ollama localmente: "
+    read -r OLLAMA_URL
+
+    if [[ -n "${OLLAMA_URL}" ]]; then
+        log ""
+        log "  Configurando Ollama remoto: ${OLLAMA_URL}"
+        export OLLAMA_BASE_URL="${OLLAMA_URL}"
+        return 0
+    fi
+
+    log ""
+    log "  Instalando Ollama..."
+
+    if [[ "$(uname -s)" == "Darwin" ]] && has_command brew; then
+        brew install ollama 2>/dev/null || true
+    elif [[ "$(uname -s)" == "Linux" ]]; then
+        curl -fsSL https://ollama.ai/install.sh | sh
+    fi
+
+    if has_command ollama; then
+        if [[ "$(uname -s)" == "Darwin" ]] && ! pgrep -x ollama > /dev/null 2>&1; then
+            log "  Iniciando Ollama..."; ollama serve > /dev/null 2>&1 & sleep 2
+        elif [[ "$(uname -s)" == "Linux" ]]; then
+            log "  Iniciando Ollama..."; ollama serve > /dev/null 2>&1 & sleep 2
+        fi
+        log "✓ Ollama instalado"
+    else
+        log "✗ Error: No se pudo instalar Ollama"
+        return 1
+    fi
+}
 
     if ! ollama_model_exists "${MODEL}"; then
         log ""; log "○ Modelo ${MODEL} no encontrado. Descargando..."
@@ -313,7 +344,7 @@ main() {
     check_dependencies || exit 1
     clone_repo
     install_dependencies
-    [[ "${PROVIDER}" != "anthropic" ]] || [[ -z "${API_KEY}" ]] && install_ollama
+    [[ "${PROVIDER}" != "anthropic" ]] || [[ -z "${API_KEY}" ]] && ollama_check_and_install
     configure_enzo
     verify_installation
 
