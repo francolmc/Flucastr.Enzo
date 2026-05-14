@@ -44,18 +44,15 @@ function SettingsPage() {
   }, [updateInProgress, subscribeToUpdateProgress]);
 
 const handleUpdateClick = () => {
-    console.log('handleUpdateClick called');
     setShowConfirm(true);
   };
 
   console.log('SettingsPage render, updateInProgress:', updateInProgress, 'versionInfo:', versionInfo ? 'exists' : 'null');
 
-  const handleConfirmUpdate = async () => {
+const handleConfirmUpdate = async () => {
     setShowConfirm(false);
     await triggerUpdate();
   };
-
-  void handleUpdateClick; // suppress unused warning
 
   const handleCancelUpdate = () => {
     setShowConfirm(false);
@@ -149,13 +146,7 @@ const handleUpdateClick = () => {
             <button
               id="verify-btn"
               className="secondary"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('Button clicked!');
-                alert('Button clicked!');
-                void checkForUpdates();
-              }}
+              onClick={() => void checkForUpdates()}
             >
               Verificar actualizaciones
             </button>

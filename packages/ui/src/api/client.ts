@@ -850,7 +850,6 @@ class ApiClient {
     branch: string;
     isUpToDate: boolean;
   }> {
-    console.log('[ApiClient.getVersion] making request to /system/version');
     return this.request('/system/version', undefined, API_QUICK_READ_TIMEOUT_MS);
   }
 
