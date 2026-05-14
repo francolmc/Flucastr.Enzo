@@ -196,7 +196,6 @@ ollama_check_and_install() {
         log "✗ Error: No se pudo instalar Ollama"
         return 1
     fi
-}
 
     if ! ollama_model_exists "${MODEL}"; then
         log ""; log "○ Modelo ${MODEL} no encontrado. Descargando..."
