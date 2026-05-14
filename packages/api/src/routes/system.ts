@@ -43,9 +43,7 @@ export function createSystemRouter(): Router {
         shell: true,
       });
       let stdout = '';
-      let stderr = '';
       child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-      child.stderr.on('data', (chunk) => { stderr += String(chunk); });
       child.on('error', () => resolve({ version: getCurrentVersion(), date: '' }));
       child.on('close', () => {
         const match = stdout.match(/refs\/tags\/v?(\d+\.\d+\.\d+)/);
@@ -93,16 +91,13 @@ export function createSystemRouter(): Router {
   }
 
   function setupWebSocket(server: http.Server) {
-    if (wss) return wss;
+    if (wss) return;
     wss = new WebSocketServer({ server, path: '/ws/update' });
     const clients = new Set<WebSocket>();
-
     wss.on('connection', (ws) => {
       clients.add(ws);
       ws.on('close', () => clients.delete(ws));
     });
-
-    return wss;
   }
 
   router.get('/api/system/version', async (req: Request, res: Response) => {
@@ -131,19 +126,13 @@ export function createSystemRouter(): Router {
   });
 
   router.post('/api/system/update', async (req: Request, res: Response) => {
-    console.log('[POST /api/system/update] Starting update...');
-    console.log('[POST /api/system/update] req.app:', req.app);
-    console.log('[POST /api/system/update] req.app.server:', req.app.get('server'));
-    const server = req.app.get('server');
+    const server = (req.app as any).server;
     if (!server) {
-      console.error('[POST /api/system/update] Server reference not available');
       res.status(500).json({ error: 'ServerError', message: 'Server reference not available' });
       return;
     }
 
-    if (!wss) {
-      setupWebSocket(server);
-    }
+    setupWebSocket(server);
 
     const clients = new Set<WebSocket>();
     if (wss) {
@@ -171,7 +160,8 @@ export function createSystemRouter(): Router {
 
       await runCommand('pnpm', ['install', '--frozen-lockfile']);
 
-      broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'done' });
+      broadcastProgress(clients, { step: 3, total: 4, message: 'Compilando...', status: 'done' });
+      broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'running' });
 
       await runCommand('pnpm', ['build']);
 
