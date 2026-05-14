@@ -140,15 +140,16 @@ function SettingsPage() {
             </div>
           )}
 
-          <div className="version-actions">
-            {!updateInProgress && versionInfo && !versionInfo.isUpToDate && (
-              <button
-                className="update-btn"
-                onClick={handleUpdateClick}
-              >
-                Actualizar ahora
-              </button>
-            )}
+<div className="version-actions">
+            <button
+              className="secondary"
+              onClick={() => {
+                alert('clicked!');
+                void checkForUpdates();
+              }}
+            >
+              Verificar actualizaciones
+            </button>
             {!updateInProgress && (
               <button
                 className="secondary"
