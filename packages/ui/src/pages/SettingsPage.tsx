@@ -43,13 +43,11 @@ function SettingsPage() {
     return unsubscribe;
   }, [updateInProgress, subscribeToUpdateProgress]);
 
-const handleUpdateClick = () => {
+  const handleUpdateClick = () => {
     setShowConfirm(true);
   };
 
-  console.log('SettingsPage render, updateInProgress:', updateInProgress, 'versionInfo:', versionInfo ? 'exists' : 'null');
-
-const handleConfirmUpdate = async () => {
+  const handleConfirmUpdate = async () => {
     setShowConfirm(false);
     await triggerUpdate();
   };
@@ -142,14 +140,15 @@ const handleConfirmUpdate = async () => {
             </div>
           )}
 
-<div className="version-actions">
-            <button
-              id="verify-btn"
-              className="secondary"
-              onClick={() => void checkForUpdates()}
-            >
-              Verificar actualizaciones
-            </button>
+          <div className="version-actions">
+            {!updateInProgress && versionInfo && !versionInfo.isUpToDate && (
+              <button
+                className="update-btn"
+                onClick={handleUpdateClick}
+              >
+                Actualizar ahora
+              </button>
+            )}
             {!updateInProgress && (
               <button
                 className="secondary"
