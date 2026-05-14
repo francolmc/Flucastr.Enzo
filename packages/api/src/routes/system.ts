@@ -132,6 +132,8 @@ export function createSystemRouter(): Router {
 
   router.post('/api/system/update', async (req: Request, res: Response) => {
     console.log('[POST /api/system/update] Starting update...');
+    console.log('[POST /api/system/update] req.app:', req.app);
+    console.log('[POST /api/system/update] req.app.server:', req.app.get('server'));
     const server = req.app.get('server');
     if (!server) {
       console.error('[POST /api/system/update] Server reference not available');
