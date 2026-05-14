@@ -142,12 +142,12 @@ function SettingsPage() {
           )}
 
           <div className="version-actions">
-            {!updateInProgress && versionInfo && !versionInfo.isUpToDate && (
+            {!updateInProgress && versionInfo && (
               <button
                 className="update-btn"
                 onClick={handleUpdateClick}
               >
-                Actualizar ahora
+                Actualizar ahora (TEST)
               </button>
             )}
             {!updateInProgress && (
