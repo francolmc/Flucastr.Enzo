@@ -131,8 +131,10 @@ export function createSystemRouter(): Router {
   });
 
   router.post('/api/system/update', async (req: Request, res: Response) => {
+    console.log('[POST /api/system/update] Starting update...');
     const server = req.app.get('server');
     if (!server) {
+      console.error('[POST /api/system/update] Server reference not available');
       res.status(500).json({ error: 'ServerError', message: 'Server reference not available' });
       return;
     }

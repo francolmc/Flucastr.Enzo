@@ -49,6 +49,7 @@ function SettingsPage() {
 
   const handleConfirmUpdate = async () => {
     setShowConfirm(false);
+    console.log('[SettingsPage] handleConfirmUpdate called, calling triggerUpdate...');
     await triggerUpdate();
   };
 

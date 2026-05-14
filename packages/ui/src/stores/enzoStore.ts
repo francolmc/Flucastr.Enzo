@@ -725,14 +725,16 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   triggerUpdate: async () => {
     set({ updateInProgress: true, updateProgress: { step: 0, total: 4, message: 'Iniciando...', status: 'running' } });
     try {
+      console.log('[triggerUpdate] Calling apiClient.updateEnzo()...');
       const result = await apiClient.updateEnzo();
+      console.log('[triggerUpdate] Result:', result);
       if (result.needsReload) {
         setTimeout(() => {
           window.location.reload();
         }, 2000);
       }
     } catch (error) {
-      console.error('Error triggering update:', error);
+      console.error('[triggerUpdate] Error:', error);
       set({ updateInProgress: false, updateProgress: null });
     }
   },
