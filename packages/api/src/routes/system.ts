@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { spawn } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 import { scheduleEnzoSupervisorRestart } from '@enzo/core';
 
 interface VersionInfo {
@@ -142,8 +144,7 @@ export function createSystemRouter(): Router {
     try {
       broadcastProgress(clients, { step: 1, total: 4, message: 'Guardando configuracion...', status: 'running' });
 
-      const configPath = require('path').join(process.env.HOME || '', '.enzo', 'config.json');
-      const fs = require('fs');
+      const configPath = path.join(process.env.HOME || '', '.enzo', 'config.json');
       let configBackup = '';
       if (fs.existsSync(configPath)) {
         configBackup = fs.readFileSync(configPath, 'utf8');
@@ -174,8 +175,7 @@ export function createSystemRouter(): Router {
     } catch (error) {
       broadcastProgress(clients, { step: 0, total: 4, message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`, status: 'error' });
 
-      const configPath = require('path').join(process.env.HOME || '', '.enzo', 'config.json');
-      const fs = require('fs');
+      const configPath = path.join(process.env.HOME || '', '.enzo', 'config.json');
       if (fs.existsSync(configPath + '.backup')) {
         fs.copyFileSync(configPath + '.backup', configPath);
         fs.unlinkSync(configPath + '.backup');
