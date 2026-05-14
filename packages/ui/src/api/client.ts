@@ -854,7 +854,6 @@ class ApiClient {
   }
 
   async updateEnzo(): Promise<{ success: boolean; needsReload: boolean }> {
-    console.log('[ApiClient] updateEnzo called, POST /api/system/update');
     return this.request('/system/update', { method: 'POST' });
   }
 }

@@ -49,7 +49,6 @@ function SettingsPage() {
 
   const handleConfirmUpdate = async () => {
     setShowConfirm(false);
-    console.log('[SettingsPage] handleConfirmUpdate called, calling triggerUpdate...');
     await triggerUpdate();
   };
 
@@ -142,12 +141,12 @@ function SettingsPage() {
           )}
 
           <div className="version-actions">
-            {!updateInProgress && versionInfo && (
+            {!updateInProgress && versionInfo && !versionInfo.isUpToDate && (
               <button
                 className="update-btn"
                 onClick={handleUpdateClick}
               >
-                Actualizar ahora (TEST)
+                Actualizar ahora
               </button>
             )}
             {!updateInProgress && (
