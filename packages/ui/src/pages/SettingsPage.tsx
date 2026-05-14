@@ -43,14 +43,19 @@ function SettingsPage() {
     return unsubscribe;
   }, [updateInProgress, subscribeToUpdateProgress]);
 
-  const handleUpdateClick = () => {
+const handleUpdateClick = () => {
+    console.log('handleUpdateClick called');
     setShowConfirm(true);
   };
+
+  console.log('SettingsPage render, updateInProgress:', updateInProgress, 'versionInfo:', versionInfo ? 'exists' : 'null');
 
   const handleConfirmUpdate = async () => {
     setShowConfirm(false);
     await triggerUpdate();
   };
+
+  void handleUpdateClick; // suppress unused warning
 
   const handleCancelUpdate = () => {
     setShowConfirm(false);
