@@ -39,6 +39,7 @@ import { createFilesRouter } from "./routes/files.js";
 import { createCommandsRouter } from "./routes/commands.js";
 import { createDecisionsRouter } from "./routes/decisions.js";
 import { createLessonsRouter } from "./routes/lessons.js";
+import { createSystemRouter } from "./routes/system.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { 
   getCommandRegistry, 
@@ -277,12 +278,16 @@ app.use(createFilesRouter(memoryService));
 app.use(createCommandsRouter(commandRegistry));
 app.use(createDecisionsRouter());
 app.use(createLessonsRouter(orchestrator));
+app.use(createSystemRouter());
 
 app.use(errorHandler);
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`🚀 Enzo API corriendo en http://${HOST}:${PORT}`);
 });
+
+// Store server reference for WebSocket upgrade
+(app as any).server = server;
 
 const shutdown = (signal: string): void => {
   console.log(`[API] ${signal} received, stopping services...`);

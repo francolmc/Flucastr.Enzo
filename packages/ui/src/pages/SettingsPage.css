@@ -1,0 +1,197 @@
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  background-color: var(--bg-primary);
+}
+
+.version-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.version-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.version-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.version-label {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  min-width: 120px;
+}
+
+.version-value {
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: monospace;
+}
+
+.version-status {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.version-status.success {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: var(--success, #10b981);
+}
+
+.version-status.warning {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: var(--warning, #f59e0b);
+}
+
+.version-update-available {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.version-commit-count {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.version-link {
+  color: var(--accent, #6366f1);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+.version-link:hover {
+  text-decoration: underline;
+}
+
+.version-loading {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.update-progress {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.update-progress-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.update-progress-bar {
+  height: 6px;
+  background-color: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background-color: var(--accent, #6366f1);
+  transition: width 0.3s ease;
+}
+
+.update-progress-fill.done {
+  background-color: var(--success, #10b981);
+}
+
+.update-progress-fill.error {
+  background-color: var(--error, #ef4444);
+}
+
+.update-progress-message {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.version-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.update-btn {
+  background-color: var(--accent, #6366f1);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.update-btn:hover {
+  opacity: 0.9;
+}
+
+.update-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  max-width: 400px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.modal-content h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.modal-content p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.modal-content code {
+  background-color: var(--bg-tertiary);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.modal-warning {
+  color: var(--warning, #f59e0b) !important;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.modal-actions button {
+  flex: 1;
+}

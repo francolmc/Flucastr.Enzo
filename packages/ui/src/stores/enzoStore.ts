@@ -121,6 +121,23 @@ interface EnzoStore {
   // Stats
   stats: StatsData | null;
 
+  // Version & Update
+  versionInfo: {
+    current: string;
+    available: string;
+    commitsBehind: number;
+    lastCommitDate: string;
+    branch: string;
+    isUpToDate: boolean;
+  } | null;
+  updateInProgress: boolean;
+  updateProgress: {
+    step: number;
+    total: number;
+    message: string;
+    status: 'running' | 'done' | 'error';
+  } | null;
+
   // Actions
   sendMessage: (message: string) => Promise<void>;
   sendMessageStream: (message: string) => Promise<void>;
@@ -179,6 +196,9 @@ interface EnzoStore {
   setSelectedAgentId: (agentId: string | null) => void;
   /** Align web UI with Telegram: use the same numeric string Telegram uses (`/memory` logs it). Persisted locally. */
   setUserId: (id: string) => void;
+  checkForUpdates: () => Promise<void>;
+  triggerUpdate: () => Promise<void>;
+  subscribeToUpdateProgress: (onProgress: (progress: any) => void) => () => void;
 }
 
 export const useEnzoStore = create<EnzoStore>((set, get) => ({
@@ -199,6 +219,9 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   modelsConfig: null,
   stats: null,
   dailyRoutineConfig: null,
+  versionInfo: null,
+  updateInProgress: false,
+  updateProgress: null,
 
   // Actions
   sendMessage: async (message: string) => {
@@ -688,5 +711,61 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   getMessageStatus: (messageId: string) => {
     const { messageStatuses } = get();
     return messageStatuses.get(messageId);
+  },
+
+  checkForUpdates: async () => {
+    try {
+      const versionInfo = await apiClient.getVersion();
+      set({ versionInfo });
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+    }
+  },
+
+  triggerUpdate: async () => {
+    set({ updateInProgress: true, updateProgress: { step: 0, total: 4, message: 'Iniciando...', status: 'running' } });
+    try {
+      const result = await apiClient.updateEnzo();
+      if (result.needsReload) {
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Error triggering update:', error);
+      set({ updateInProgress: false, updateProgress: null });
+    }
+  },
+
+  subscribeToUpdateProgress: (onProgress: (progress: any) => void) => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const ws = new WebSocket(`${protocol}//${host}/ws/update`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'update-progress') {
+          const { step, total, message, status } = data;
+          set({ updateProgress: { step, total, message, status } });
+          onProgress(data);
+          if (status === 'done' || status === 'error') {
+            set({ updateInProgress: false });
+          }
+        }
+      } catch {}
+    };
+
+    ws.onerror = () => {
+      set({ updateInProgress: false });
+    };
+
+    ws.onclose = () => {
+      set({ updateInProgress: false });
+    };
+
+    return () => {
+      ws.close();
+    };
   },
 }));

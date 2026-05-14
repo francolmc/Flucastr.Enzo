@@ -841,6 +841,21 @@ class ApiClient {
     }
     return allTools.filter((tool: any) => tool.serverId === serverId);
   }
+
+  async getVersion(): Promise<{
+    current: string;
+    available: string;
+    commitsBehind: number;
+    lastCommitDate: string;
+    branch: string;
+    isUpToDate: boolean;
+  }> {
+    return this.request('/system/version', undefined, API_QUICK_READ_TIMEOUT_MS);
+  }
+
+  async updateEnzo(): Promise<{ success: boolean; needsReload: boolean }> {
+    return this.request('/system/update', { method: 'POST' });
+  }
 }
 
 export const apiClient = new ApiClient();

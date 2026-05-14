@@ -11,6 +11,7 @@ import ProjectsPage from './pages/ProjectsPage';
 import EchoPage from './pages/EchoPage';
 import CalendarPage from './pages/CalendarPage';
 import EmailPage from './pages/EmailPage';
+import SettingsPage from './pages/SettingsPage';
 import { formatRelativeTime } from './utils/timeFormat';
 import './App.css';
 
@@ -25,7 +26,8 @@ export type Page =
   | 'skills'
   | 'mcp'
   | 'config'
-  | 'email';
+  | 'email'
+  | 'settings';
 
 const NAV_ITEMS: Array<{
   id: Page;
@@ -44,6 +46,7 @@ const NAV_ITEMS: Array<{
   { id: 'stats', label: 'Insights', description: 'Métricas y señales', icon: '📈' },
   { id: 'mcp', label: 'MCP', description: 'Conectores y tools', icon: '🔌' },
   { id: 'config', label: 'Config', description: 'Modelos y presets conversacionales', icon: '⚙️' },
+  { id: 'settings', label: 'Ajustes', description: 'Version y actualizaciones', icon: '🔧' },
 ];
 
 function App() {
@@ -199,6 +202,7 @@ function App() {
           {currentPage === 'email' && <EmailPage />}
           {currentPage === 'mcp' && <MCPPage />}
           {currentPage === 'config' && <ConfigPage />}
+          {currentPage === 'settings' && <SettingsPage />}
         </div>
       </main>
     </div>
