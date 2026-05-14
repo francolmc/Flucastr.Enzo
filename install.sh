@@ -344,6 +344,11 @@ main() {
     check_dependencies || exit 1
     clone_repo
     install_dependencies
+
+    log_step 4 6 "Compilando paquetes..."
+    cd "${INSTALL_DIR}" && pnpm build
+    log "✓ Paquetes compilados"
+
     [[ "${PROVIDER}" != "anthropic" ]] || [[ -z "${API_KEY}" ]] && ollama_check_and_install
     configure_enzo
     verify_installation
