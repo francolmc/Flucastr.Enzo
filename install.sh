@@ -358,7 +358,7 @@ main() {
         INSTALL_DIR="${HOME}/enzo"
         if [[ ! -d "${INSTALL_DIR}" ]]; then log "✗ No se encontro instalacion en ${INSTALL_DIR}"; exit 1; fi
         cd "${INSTALL_DIR}"; git pull --ff-only origin main 2>/dev/null || git pull origin main
-        pnpm install --frozen-lockfile; pnpm build
+        pnpm install; pnpm build
         log ""; log "✅ Enzo actualizado."; log ""; log "Para iniciar: cd ${INSTALL_DIR} && pnpm dev"; exit 0
     fi
 

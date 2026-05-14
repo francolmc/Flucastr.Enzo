@@ -173,7 +173,9 @@ export function createSystemRouter(): Router {
 
       res.json({ success: true, message: 'Update completed successfully', needsReload: true });
     } catch (error) {
-      broadcastProgress(clients, { step: 0, total: 4, message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`, status: 'error' });
+      try {
+        broadcastProgress(clients, { step: 0, total: 4, message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`, status: 'error' });
+      } catch {}
 
       const configPath = path.join(process.env.HOME || '', '.enzo', 'config.json');
       if (fs.existsSync(configPath + '.backup')) {
