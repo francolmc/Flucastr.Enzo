@@ -200,16 +200,26 @@ install_dependencies() {
     log_step 3 6 "Instalando dependencias..."
     cd "${INSTALL_DIR}"
 
-    if [[ -f package.json ]] && ! grep -q 'onlyBuiltDependencies' package.json; then
-        log "  Configurando pnpm..."
+    export PNPM_ENABLE_PRE_POST_SCRIPTS=true
+
+    cat >> .npmrc <<'NPMRC'
+enable-pre-post-scripts=true
+onlyBuiltDependencies[]=esbuild
+NPMRC
+
+    if ! grep -q 'onlyBuiltDependencies' package.json 2>/dev/null; then
+        log "  Configurando package.json..."
         node -e "
-const fs=require('fs'); const d=JSON.parse(fs.readFileSync('package.json','utf8'));
-d.pnpm={onlyBuiltDependencies:['esbuild']};
+const fs=require('fs');
+let d=JSON.parse(fs.readFileSync('package.json','utf8'));
+if(typeof d.pnpm === 'string') d.pnpm={onlyBuiltDependencies:['esbuild']};
+else if(!d.pnpm) d.pnpm={onlyBuiltDependencies:['esbuild']};
 fs.writeFileSync('package.json',JSON.stringify(d,null,2)+'\n');
 " 2>/dev/null || true
     fi
 
     pnpm install 2>&1
+    pnpm approve-builds --all 2>&1 || true
     log "✓ Dependencias instaladas"
 }
 
