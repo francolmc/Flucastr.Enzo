@@ -195,3 +195,46 @@
 .modal-actions button {
   flex: 1;
 }
+
+button.secondary {
+  background-color: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+button.secondary:hover {
+  background-color: var(--bg-secondary) !important;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 0.5px solid var(--border);
+  padding-bottom: 0;
+}
+
+.tab {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  border-radius: 0;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}

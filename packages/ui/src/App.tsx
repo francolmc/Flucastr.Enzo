@@ -1,77 +1,102 @@
 import { useState, useEffect } from 'react';
 import { useEnzoStore } from './stores/enzoStore';
+import { apiClient } from './api/client';
 import ChatPage from './pages/ChatPage';
 import StatsPage from './pages/StatsPage';
-import ConfigPage from './pages/ConfigPage';
 import SkillsPage from './pages/SkillsPage';
 import MCPPage from './pages/MCPPage';
 import DashboardPage from './pages/DashboardPage';
 import MemoryPage from './pages/MemoryPage';
-import ProjectsPage from './pages/ProjectsPage';
 import EchoPage from './pages/EchoPage';
-import CalendarPage from './pages/CalendarPage';
-import EmailPage from './pages/EmailPage';
 import SettingsPage from './pages/SettingsPage';
 import { formatRelativeTime } from './utils/timeFormat';
 import './App.css';
 
 export type Page =
-  | 'dashboard'
-  | 'memory'
-  | 'calendar'
-  | 'projects'
-  | 'echo'
   | 'chat'
-  | 'stats'
-  | 'skills'
+  | 'dashboard'
   | 'mcp'
-  | 'config'
-  | 'email'
+  | 'skills'
+  | 'echo'
+  | 'memory'
+  | 'stats'
   | 'settings';
 
-const NAV_ITEMS: Array<{
+interface NavItem {
   id: Page;
   label: string;
-  description: string;
-  icon?: string;
-}> = [
-  { id: 'dashboard', label: 'Dashboard', description: 'Resumen del sistema', icon: '📊' },
-  { id: 'memory', label: 'Memoria', description: 'Contexto persistente', icon: '🧠' },
-  { id: 'projects', label: 'Proyectos', description: 'Vista por proyecto', icon: '🚀' },
-  { id: 'calendar', label: 'Agenda', description: 'Eventos y horarios', icon: '📅' },
-  { id: 'echo', label: 'Echo', description: 'Tareas programadas', icon: '🔄' },
-  { id: 'chat', label: 'Chat', description: 'Conversaciones y contexto', icon: '💬' },
-  { id: 'skills', label: 'Skills', description: 'Capacidades del asistente', icon: '⚡' },
-  { id: 'email', label: 'Correo', description: 'IMAP Outlook / Gmail', icon: '📧' },
-  { id: 'stats', label: 'Insights', description: 'Métricas y señales', icon: '📈' },
-  { id: 'mcp', label: 'MCP', description: 'Conectores y tools', icon: '🔌' },
-  { id: 'config', label: 'Config', description: 'Modelos y presets conversacionales', icon: '⚙️' },
-  { id: 'settings', label: 'Ajustes', description: 'Version y actualizaciones', icon: '🔧' },
+  icon: string;
+}
+
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { id: 'chat', label: 'Chat', icon: 'fa-regular fa-comments' },
+      { id: 'dashboard', label: 'Dashboard', icon: 'fa-solid fa-grip' },
+    ]
+  },
+  {
+    label: 'Capacidades',
+    items: [
+      { id: 'mcp', label: 'MCPs', icon: 'fa-solid fa-plug' },
+      { id: 'skills', label: 'Skills', icon: 'fa-solid fa-bolt' },
+      { id: 'echo', label: 'Echo', icon: 'fa-regular fa-clock' },
+    ]
+  },
+  {
+    label: 'Personal',
+    items: [
+      { id: 'memory', label: 'Memoria', icon: 'fa-solid fa-brain' },
+      { id: 'stats', label: 'Estadísticas', icon: 'fa-solid fa-chart-simple' },
+    ]
+  },
+  {
+    label: 'Sistema',
+    items: [
+      { id: 'settings', label: 'Configuración', icon: 'fa-solid fa-gear' },
+    ]
+  },
 ];
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const [currentPage, setCurrentPage] = useState<Page>('chat');
   const {
     conversations,
     conversationId,
     loadConversations,
     loadConfig,
     loadAgents,
-    newConversation,
+    loadModelsConfig,
     loadHistory,
     deleteConversation,
+    modelsConfig,
   } = useEnzoStore();
 
+  const [connectedMcpCount, setConnectedMcpCount] = useState<number>(0);
+
   useEffect(() => {
-    void Promise.allSettled([loadConversations(), loadConfig(), loadAgents()]).then((results) => {
+    void Promise.allSettled([loadConversations(), loadConfig(), loadAgents(), loadModelsConfig()]).then((results) => {
       results.forEach((r, i) => {
         if (r.status === 'rejected') {
-          const label = ['loadConversations', 'loadConfig', 'loadAgents'][i] ?? 'bootstrap';
+          const label = ['loadConversations', 'loadConfig', 'loadAgents', 'loadModelsConfig'][i] ?? 'bootstrap';
           console.error(`[App] ${label} rejected:`, r.reason);
         }
       });
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadConversations, loadConfig, loadAgents, loadModelsConfig]);
+
+  useEffect(() => {
+    apiClient.getMCPServers().then((servers) => {
+      const connected = servers.filter((s: any) => s.status === 'connected').length;
+      setConnectedMcpCount(connected);
+    }).catch(() => {
+      setConnectedMcpCount(0);
+    });
   }, []);
 
   const handleSelectConversation = async (id: string) => {
@@ -93,45 +118,50 @@ function App() {
     }
   };
 
-  const activePage = NAV_ITEMS.find((item) => item.id === currentPage);
+  const activePage = NAV_GROUPS.flatMap(g => g.items).find(item => item.id === currentPage);
+  const modelName = modelsConfig?.primaryModel || '—';
+  const conversationBadge = conversations.length > 0 ? conversations.length : null;
 
   return (
     <div className="app-container">
       <aside className="sidebar">
-        <div className="sidebar-header">
-          <h1 className="logo">ENZO</h1>
-          <p className="logo-subtitle">Control center para asistentes amplificados</p>
+        <div className="sidebar-logo">
+          <h1>ENZO</h1>
+          <p>Asistente personal</p>
         </div>
 
-        <nav className="nav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
-              onClick={() => setCurrentPage(item.id)}
-            >
-              <span className="nav-item-title">
-                {item.icon ? <span className="nav-icon">{item.icon}</span> : null}
-                {item.label}
-              </span>
-              <span className="nav-item-subtitle">{item.description}</span>
-            </button>
+        <nav className="sidebar-nav">
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={gi} className="nav-group">
+              {group.label && <div className="nav-group-label">{group.label}</div>}
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
+                  onClick={() => setCurrentPage(item.id)}
+                >
+                  <i className={`${item.icon}`} />
+                  {item.label}
+                  {item.id === 'chat' && conversationBadge !== null && (
+                    <span className="nav-badge">{conversationBadge}</span>
+                  )}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
 
         {currentPage === 'chat' && (
-          <div className="conversations-list">
-            <h3>Conversaciones recientes</h3>
+          <div className="conversations-section">
+            <h3>Conversaciones</h3>
             <div className="conversations-scroll">
               {conversations.length === 0 ? (
-                <p className="empty-state">Sin conversaciones</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>Sin conversaciones</p>
               ) : (
                 conversations.map((conv) => (
                   <div
                     key={conv.id}
-                    className={`conversation-item-wrapper ${
-                      conversationId === conv.id ? 'active' : ''
-                    }`}
+                    className={`conversation-item-wrapper ${conversationId === conv.id ? 'active' : ''}`}
                   >
                     <button
                       className="conversation-item"
@@ -158,50 +188,32 @@ function App() {
         )}
 
         <div className="sidebar-footer">
-          {currentPage === 'chat' && (
-            <button className="new-conversation-btn" onClick={newConversation}>
-              Nueva conversación
-            </button>
-          )}
+          <span className="status-dot" />
+          <span className="status-text">{modelName} · {connectedMcpCount} MCPs</span>
         </div>
       </aside>
 
-      <main
-        className={
-          currentPage === 'chat'
-            ? 'main-content main-content--chat'
-            : 'main-content main-content--scroll'
-        }
-      >
+      <main className={currentPage === 'chat' ? 'main-content main-content--chat' : 'main-content'}>
         <header className="main-header">
           <div>
-            <p className="main-header-kicker">Workspace Enzo</p>
             <h2>{activePage?.label}</h2>
-            <p>{activePage?.description}</p>
           </div>
           <div className="main-header-meta">
             {currentPage === 'chat' && (
               <span className="badge">{conversations.length} conversaciones</span>
             )}
-            <span className="badge">Operativo</span>
           </div>
         </header>
-        <div
-          className={currentPage === 'chat' ? 'main-body main-body-no-scroll' : 'main-body main-body-grow'}
-        >
+        <div className={currentPage === 'chat' ? 'main-body main-body--chat' : 'main-body'}>
           {currentPage === 'dashboard' && (
-            <DashboardPage onNavigate={(p) => setCurrentPage(p)} />
+            <DashboardPage onNavigate={(p) => setCurrentPage(p as Page)} />
           )}
           {currentPage === 'memory' && <MemoryPage />}
-          {currentPage === 'projects' && <ProjectsPage />}
-          {currentPage === 'calendar' && <CalendarPage />}
           {currentPage === 'echo' && <EchoPage />}
           {currentPage === 'chat' && <ChatPage />}
           {currentPage === 'stats' && <StatsPage />}
           {currentPage === 'skills' && <SkillsPage />}
-          {currentPage === 'email' && <EmailPage />}
           {currentPage === 'mcp' && <MCPPage />}
-          {currentPage === 'config' && <ConfigPage />}
           {currentPage === 'settings' && <SettingsPage />}
         </div>
       </main>
