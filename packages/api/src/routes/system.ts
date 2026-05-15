@@ -61,13 +61,13 @@ export function createSystemRouter(): Router {
         const matches = stdout.match(/refs\/tags\/v?(\d+\.\d+\.\d+)/g) || [];
         console.log('[getLatestVersionFromGit] matches:', matches);
         const versions = matches.map((m: string) => m.replace('refs/tags/v', '').replace('refs/tags/', ''));
-        const latest = versions.sort((a: string, b: string) => {
-          const [am, ap, av] = a.split('.').map(Number);
-          const [bm, bp, bv] = b.split('.').map(Number);
-          if (am !== bm) return bm - am;
-          if (ap !== bp) return ap - bp;
-          return bv - av;
-        }).pop();
+        console.log('[getLatestVersionFromGit] versions array:', versions, 'length:', versions.length);
+        const sorted = [...versions].sort((a, b) => {
+          console.log('[sort] comparing:', a, 'vs', b, '=>', b.localeCompare(a));
+          return b.localeCompare(a);
+        });
+        console.log('[getLatestVersionFromGit] sorted:', sorted);
+        const latest = sorted[0];
         console.log('[getLatestVersionFromGit] latest version:', latest);
         resolve({ version: latest || getCurrentVersion(), date: '' });
       });
