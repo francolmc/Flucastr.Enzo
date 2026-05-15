@@ -137,7 +137,7 @@ export function createSystemRouter(): Router {
         commitsBehind,
         lastCommitDate,
         branch: 'main',
-        isUpToDate: commitsBehind === 0,
+        isUpToDate: current === latest.version,
       };
 
       res.json(versionInfo);
