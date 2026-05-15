@@ -1,32 +1,32 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 ENZO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_FILE="/tmp/enzo-update.log"
+PROGRESS_FILE="/tmp/enzo-update-progress"
+SENTINEL="/tmp/enzo-update-requested"
+
 cd "$ENZO_DIR"
 
-echo "[update] Starting Enzo update..."
-echo "[update] Working directory: $ENZO_DIR"
+log() {
+  echo "[update] $1" | tee -a "$LOG_FILE"
+  echo "$1" > "$PROGRESS_FILE"
+}
 
-echo "[update] Fetching latest changes and tags..."
-git fetch origin main
-git fetch --tags
+log "Iniciando actualización desde $ENZO_DIR"
 
-echo "[update] Checking out latest main..."
-git checkout main
-git pull origin main
+log "STEP:1:4:Verificando cambios en GitHub..."
+git fetch origin main 2>&1 | tee -a "$LOG_FILE"
 
-echo "[update] Installing dependencies..."
-pnpm install
+log "STEP:2:4:Descargando cambios..."
+git pull origin main 2>&1 | tee -a "$LOG_FILE"
 
-echo "[update] Building packages..."
-pnpm build
+log "STEP:3:4:Instalando dependencias..."
+pnpm install --frozen-lockfile 2>&1 | tee -a "$LOG_FILE"
 
-echo "[update] Verifying version..."
-cat package.json | grep '"version"'
+log "STEP:4:4:Compilando..."
+pnpm -F @enzo/core build 2>&1 | tee -a "$LOG_FILE"
 
-echo "[update] Restarting Enzo..."
-./enzo stop 2>/dev/null || true
-sleep 2
-./enzo start
+log "DONE:Actualización completada"
 
-echo "[update] Done!"
+rm -f "$SENTINEL"

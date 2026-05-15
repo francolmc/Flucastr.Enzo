@@ -100,18 +100,13 @@ function SystemTab() {
                 )}
               </div>
 
-              {versionInfo.isUpToDate ? (
-                <div className="version-status success">✓ Enzo está actualizado</div>
-              ) : (
+              {versionInfo && versionInfo.commitsBehind > 0 && (
                 <div className="version-update-available">
                   <div className="version-status warning">
-                    ✓ Nueva versión disponible: v{versionInfo.available}
+                    {versionInfo.commitsBehind} commit{versionInfo.commitsBehind !== 1 ? 's' : ''} disponible{versionInfo.commitsBehind !== 1 ? 's' : ''}
                   </div>
-                  <p className="version-commit-count">
-                    {versionInfo.commitsBehind} commit{versionInfo.commitsBehind !== 1 ? 's' : ''} nuevo{versionInfo.commitsBehind !== 1 ? 's' : ''}
-                  </p>
                   <a
-                    href="https://github.com/francolmc/Flucastr.Enzo/releases"
+                    href="https://github.com/francolmc/Flucastr.Enzo/commits/main"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="version-link"
@@ -119,6 +114,10 @@ function SystemTab() {
                     Ver cambios en GitHub →
                   </a>
                 </div>
+              )}
+
+              {versionInfo && versionInfo.commitsBehind === 0 && (
+                <div className="version-status success">✓ Enzo está actualizado</div>
               )}
             </>
           ) : (

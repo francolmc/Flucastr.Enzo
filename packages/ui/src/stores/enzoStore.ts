@@ -135,7 +135,7 @@ interface EnzoStore {
     step: number;
     total: number;
     message: string;
-    status: 'running' | 'done' | 'error';
+    status: 'running' | 'done' | 'error' | 'restarting';
   } | null;
 
   // Actions
@@ -738,34 +738,34 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
   },
 
   subscribeToUpdateProgress: (onProgress: (progress: any) => void) => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const ws = new WebSocket(`${protocol}//${host}/ws/update`);
+    const eventSource = new EventSource('/api/system/update/progress');
 
-    ws.onmessage = (event) => {
+    eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'update-progress') {
-          const { step, total, message, status } = data;
-          set({ updateProgress: { step, total, message, status } });
-          onProgress(data);
-          if (status === 'done' || status === 'error') {
-            set({ updateInProgress: false });
+
+        if (data.status === 'idle') return;
+
+        if (data.status === 'running') {
+          set({ updateProgress: { step: data.step, total: data.total, message: data.message, status: 'running' } });
+        } else if (data.status === 'done' || data.status === 'restarting') {
+          set({ updateProgress: { step: data.total || 4, total: data.total || 4, message: data.message, status: 'done' } });
+          if (data.status === 'done') {
+            setTimeout(() => window.location.reload(), 2000);
           }
+        } else if (data.status === 'error') {
+          set({ updateProgress: { step: 0, total: 4, message: data.message, status: 'error' } });
+          set({ updateInProgress: false });
         }
+
+        onProgress(data);
       } catch {}
     };
 
-    ws.onerror = () => {
+    eventSource.onerror = () => {
       set({ updateInProgress: false });
     };
 
-    ws.onclose = () => {
-      set({ updateInProgress: false });
-    };
-
-    return () => {
-      ws.close();
-    };
+    return () => eventSource.close();
   },
 }));
