@@ -184,7 +184,11 @@ export function createSystemRouter(): Router {
       broadcastProgress(clients, { step: 3, total: 4, message: 'Compilando...', status: 'done' });
       broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'running' });
 
-      await runCommand('pnpm', ['build']);
+      await runCommand('pnpm', ['-F', '@enzo/sdk', 'build']);
+      await runCommand('pnpm', ['-F', '@enzo/core', 'build']);
+      await runCommand('pnpm', ['-F', '@enzo/bootstrap', 'build']);
+      await runCommand('pnpm', ['-F', '@enzo/api', 'build']);
+      await runCommand('pnpm', ['-F', '@enzo/ui', 'build']);
 
       broadcastProgress(clients, { step: 4, total: 4, message: 'Reiniciando servidor...', status: 'running' });
 
@@ -210,10 +214,10 @@ export function createSystemRouter(): Router {
   return router;
 }
 
-function runCommand(cmd: string, args: string[]): Promise<void> {
+function runCommand(cmd: string, args: string[], cwd?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
-      cwd: process.cwd(),
+      cwd: cwd || process.cwd(),
       stdio: 'pipe',
       shell: true,
       env: { ...process.env, FORCE_COLOR: '0' },
