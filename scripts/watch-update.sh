@@ -32,6 +32,8 @@ while true; do
       nohup pnpm dev > /tmp/enzo-dev.log 2>&1 &
       echo $! > "$PID_FILE"
 
+      sleep 5
+
       echo "DONE:Enzo actualizado y reiniciado" > "$PROGRESS_FILE"
     else
       echo "ERROR:La actualización falló. Ver /tmp/enzo-update.log" > "$PROGRESS_FILE"

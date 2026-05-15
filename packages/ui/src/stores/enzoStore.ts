@@ -756,6 +756,7 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
             setTimeout(() => window.location.reload(), 2000);
           } else if (data.status === 'restarting') {
             set({ updateProgress: { step: data.total || 4, total: data.total || 4, message: data.message, status: 'restarting' } });
+            setTimeout(() => window.location.reload(), 5000);
           }
         } else if (data.status === 'error') {
           set({ updateProgress: { step: 0, total: 4, message: data.message, status: 'error' } });
