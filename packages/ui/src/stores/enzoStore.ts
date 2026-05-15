@@ -713,24 +713,26 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
     return messageStatuses.get(messageId);
   },
 
-  checkForUpdates: async () => {
-    try {
-      const versionInfo = await apiClient.getVersion();
-      set({ versionInfo });
-    } catch (error) {
-      console.error('Error checking for updates:', error);
+  checkForUpdates: async (retries = 3, delayMs = 1000) => {
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const versionInfo = await apiClient.getVersion();
+        set({ versionInfo });
+        return;
+      } catch (error) {
+        if (i === retries) {
+          console.error('Error checking for updates:', error);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, delayMs * Math.pow(2, i)));
+      }
     }
   },
 
   triggerUpdate: async () => {
     set({ updateInProgress: true, updateProgress: { step: 0, total: 4, message: 'Iniciando...', status: 'running' } });
     try {
-      const result = await apiClient.updateEnzo();
-      if (result.needsReload) {
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
-      }
+      await apiClient.updateEnzo();
     } catch (error) {
       console.error('Error triggering update:', error);
       set({ updateInProgress: false, updateProgress: null });
@@ -749,9 +751,11 @@ export const useEnzoStore = create<EnzoStore>((set, get) => ({
         if (data.status === 'running') {
           set({ updateProgress: { step: data.step, total: data.total, message: data.message, status: 'running' } });
         } else if (data.status === 'done' || data.status === 'restarting') {
-          set({ updateProgress: { step: data.total || 4, total: data.total || 4, message: data.message, status: 'done' } });
           if (data.status === 'done') {
+            set({ updateInProgress: false, updateProgress: null });
             setTimeout(() => window.location.reload(), 2000);
+          } else if (data.status === 'restarting') {
+            set({ updateProgress: { step: data.total || 4, total: data.total || 4, message: data.message, status: 'restarting' } });
           }
         } else if (data.status === 'error') {
           set({ updateProgress: { step: 0, total: 4, message: data.message, status: 'error' } });
