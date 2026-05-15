@@ -6,6 +6,9 @@ cd "$ENZO_DIR"
 
 echo "[update] Starting Enzo update..."
 
+echo "[update] Fetching latest changes and tags..."
+git fetch --all --tags
+
 echo "[update] Pulling latest changes..."
 git pull --ff-only origin main
 
