@@ -62,10 +62,7 @@ function SystemTab() {
 
   const handleUpdateClick = () => setShowConfirm(true);
   const handleCheckUpdates = async () => {
-    console.log('[Settings] before checkForUpdates');
     await checkForUpdates();
-    console.log('[Settings] after checkForUpdates, versionInfo:', versionInfo);
-    console.log('[Settings] isUpToDate:', versionInfo?.isUpToDate, 'commitsBehind:', versionInfo?.commitsBehind);
   };
   const handleConfirmUpdate = async () => {
     setShowConfirm(false);

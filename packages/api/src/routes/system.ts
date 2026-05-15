@@ -34,7 +34,6 @@ export function createSystemRouter(): Router {
       for (const p of pathsToTry) {
         if (fs.existsSync(p)) {
           const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
-          console.log('[getCurrentVersion] found version:', pkg.version, 'at', p);
           return pkg.version || '0.1.0';
         }
       }
