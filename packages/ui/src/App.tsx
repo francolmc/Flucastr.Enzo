@@ -127,7 +127,7 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <h1>ENZO</h1>
-          <p>Asistente personal v1.0</p>
+          <p>Asistente personal v0.1</p>
         </div>
 
         <nav className="sidebar-nav">
