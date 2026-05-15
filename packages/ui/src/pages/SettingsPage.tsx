@@ -121,7 +121,7 @@ function SystemTab() {
               )}
             </>
           ) : (
-            <div className="version-loading">Verificando...</div>
+            <div className="version-loading">Verificando actualizaciones...</div>
           )}
 
           {updateInProgress && updateProgress && (
