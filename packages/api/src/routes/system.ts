@@ -26,15 +26,14 @@ export function createSystemRouter(): Router {
   const router = Router();
   let wss: WebSocketServer | null = null;
 
+  import fs from 'fs';
+
   function getCurrentVersion(): string {
     try {
       const rootPath = '/Users/franco/Codes/flucastr/Flucastr.Enzo/package.json';
       const apiPath = process.cwd() + '/package.json';
-      console.log('[getCurrentVersion] rootPath:', rootPath, 'apiPath:', apiPath);
-      const fs = require('fs');
       const pathsToTry = [rootPath, apiPath, '/package.json'];
       for (const p of pathsToTry) {
-        console.log('[getCurrentVersion] trying:', p, 'exists:', fs.existsSync(p));
         if (fs.existsSync(p)) {
           const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
           console.log('[getCurrentVersion] found version:', pkg.version, 'at', p);
