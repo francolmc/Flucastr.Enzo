@@ -26,8 +26,6 @@ export function createSystemRouter(): Router {
   const router = Router();
   let wss: WebSocketServer | null = null;
 
-  import fs from 'fs';
-
   function getCurrentVersion(): string {
     try {
       const rootPath = '/Users/franco/Codes/flucastr/Flucastr.Enzo/package.json';
