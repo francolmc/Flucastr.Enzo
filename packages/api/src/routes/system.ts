@@ -104,16 +104,17 @@ export function createSystemRouter(): Router {
   });
 
   router.post('/api/system/update', async (req: Request, res: Response) => {
-    const scriptPath = path.join(process.cwd(), 'scripts', 'update.sh');
+    const rootDir = path.resolve(process.cwd(), '..');
+    const scriptPath = path.join(rootDir, 'scripts', 'update.sh');
 
     if (!fs.existsSync(scriptPath)) {
-      res.status(500).json({ error: 'UpdateScript', message: 'update.sh script not found' });
+      res.status(500).json({ error: 'UpdateScript', message: 'update.sh script not found at ' + scriptPath });
       return;
     }
 
     try {
       const child = spawn('sh', [scriptPath], {
-        cwd: process.cwd(),
+        cwd: rootDir,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
       });
