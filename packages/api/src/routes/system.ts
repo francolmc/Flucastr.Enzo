@@ -28,13 +28,22 @@ export function createSystemRouter(): Router {
 
   function getCurrentVersion(): string {
     try {
-      const pkgPath = process.cwd() + '/package.json';
+      const rootPath = '/Users/franco/Codes/flucastr/Flucastr.Enzo/package.json';
+      const apiPath = process.cwd() + '/package.json';
+      console.log('[getCurrentVersion] rootPath:', rootPath, 'apiPath:', apiPath);
       const fs = require('fs');
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        return pkg.version || '0.1.0';
+      const pathsToTry = [rootPath, apiPath, '/package.json'];
+      for (const p of pathsToTry) {
+        console.log('[getCurrentVersion] trying:', p, 'exists:', fs.existsSync(p));
+        if (fs.existsSync(p)) {
+          const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+          console.log('[getCurrentVersion] found version:', pkg.version, 'at', p);
+          return pkg.version || '0.1.0';
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.error('[getCurrentVersion] error:', e);
+    }
     return '0.1.0';
   }
 
