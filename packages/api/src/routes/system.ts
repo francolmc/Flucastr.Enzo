@@ -44,17 +44,32 @@ export function createSystemRouter(): Router {
   }
 
   async function getLatestVersionFromGit(): Promise<{ version: string; date: string }> {
+    console.log('[getLatestVersionFromGit] spawning git ls-remote --tags origin');
     return new Promise((resolve) => {
-      const child = spawn('git', ['ls-remote', '--tags', 'origin', 'main'], {
+      const child = spawn('git', ['ls-remote', '--tags', 'origin'], {
         cwd: process.cwd(),
         shell: true,
       });
       let stdout = '';
       child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-      child.on('error', () => resolve({ version: getCurrentVersion(), date: '' }));
+      child.on('error', (e) => {
+        console.log('[getLatestVersionFromGit] error:', e);
+        resolve({ version: getCurrentVersion(), date: '' });
+      });
       child.on('close', () => {
-        const match = stdout.match(/refs\/tags\/v?(\d+\.\d+\.\d+)/);
-        resolve({ version: match ? match[1] : getCurrentVersion(), date: '' });
+        console.log('[getLatestVersionFromGit] raw output:', stdout.substring(0, 500));
+        const matches = stdout.match(/refs\/tags\/v?(\d+\.\d+\.\d+)/g) || [];
+        console.log('[getLatestVersionFromGit] matches:', matches);
+        const versions = matches.map((m: string) => m.replace('refs/tags/v', '').replace('refs/tags/', ''));
+        const latest = versions.sort((a: string, b: string) => {
+          const [am, ap, av] = a.split('.').map(Number);
+          const [bm, bp, bv] = b.split('.').map(Number);
+          if (am !== bm) return bm - am;
+          if (ap !== bp) return ap - bp;
+          return bv - av;
+        }).pop();
+        console.log('[getLatestVersionFromGit] latest version:', latest);
+        resolve({ version: latest || getCurrentVersion(), date: '' });
       });
     });
   }
