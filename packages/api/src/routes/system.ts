@@ -179,7 +179,7 @@ export function createSystemRouter(): Router {
       broadcastProgress(clients, { step: 2, total: 4, message: 'Instalando dependencias (pnpm install)...', status: 'done' });
       broadcastProgress(clients, { step: 3, total: 4, message: 'Instalando dependencias (pnpm install)...', status: 'running' });
 
-      await runCommand('pnpm', ['install', '--frozen-lockfile']);
+      await runCommand('pnpm', ['install']);
 
       broadcastProgress(clients, { step: 3, total: 4, message: 'Compilando...', status: 'done' });
       broadcastProgress(clients, { step: 4, total: 4, message: 'Compilando...', status: 'running' });
