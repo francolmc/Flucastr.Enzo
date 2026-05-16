@@ -41,6 +41,14 @@ function validateAndNormalizeFact(fact: { key: string; value: string }): { key: 
     }
   }
   
+  // Validate employer is not a Chilean city
+  if (key === 'employer') {
+    const ciudadesChile = ['santiago', 'copiapó', 'valparaíso', 'concepción', 'antofagasta', 'temuco', 'iquique', 'rancagua', 'talca', 'arica'];
+    if (ciudadesChile.includes(fact.value.toLowerCase().trim())) {
+      return { key: 'city', value: fact.value };
+    }
+  }
+
   return { key, value: fact.value };
 }
 

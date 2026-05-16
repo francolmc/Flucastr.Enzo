@@ -303,25 +303,11 @@ export class MemoryService {
       [newId, userId, canonicalKey, value, source, confidence, now, now]
     );
 
-    const existing = await this.getAsync(`SELECT id FROM memories WHERE userId = ? AND key = ?`, [userId, canonicalKey]);
-
-    if (existing) {
-      console.log(`[Memory] Mirror actualizando memories id → ${newId}`);
-      await this.runAsync(`UPDATE memories SET id = ?, value = ?, updatedAt = ? WHERE userId = ? AND key = ?`, [
-        newId,
-        value,
-        now,
-        userId,
-        canonicalKey,
-      ]);
-    } else {
-      console.log(`[Memory] Mirror insert memories id=${newId}`);
-      await this.runAsync(
-        `INSERT INTO memories (id, userId, key, value, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [newId, userId, canonicalKey, value, now, now]
-      );
-    }
+    await this.runAsync(
+      `INSERT OR REPLACE INTO memories (id, userId, key, value, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [newId, userId, canonicalKey, value, now, now]
+    );
   }
 
   async recall(userId: string, key?: string): Promise<Memory[]> {
