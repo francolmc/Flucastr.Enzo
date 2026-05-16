@@ -54,6 +54,11 @@ const FAST_PATH_MAX_TOKENS_DEFAULT = 768;
 const FAST_PATH_MAX_TOKENS_PERSIST = 2048;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_DEFAULT = 220;
 const MODERATE_STRICT_RETRY_MAX_TOKENS_PERSIST = 2048;
+
+function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
 export type SimpleModeratePathContext = {
   input: AmplifierInput;
   classifiedLevel: ComplexityLevel;
@@ -252,9 +257,8 @@ async function attemptPersistWriteRecovery(params: {
   relevantSkillsSection: string;
   requiredTemplateSection: string;
 }): Promise<string> {
-  // Check if MCP filesystem tools are available
   const mcpTools = params.mcpRegistry?.getAllTools() ?? [];
-  const writeTools = mcpTools.filter(t => 
+  const writeTools = mcpTools.filter(t =>
     t.name.includes('write') || t.name.includes('create') || t.name.includes('file')
   );
 
@@ -265,7 +269,6 @@ async function attemptPersistWriteRecovery(params: {
       : 'No hay herramientas de sistema de archivos disponibles. Para escribir archivos, conectá un servidor MCP de filesystem. Sin herramientas MCP, solo puedo conversar o usar memoria (remember/recall).';
   }
 
-  // MCP tools available - model should use them directly, but we end up here if it didn't
   const lang = (params.input.userLanguage ?? 'es').toLowerCase();
   return lang.startsWith('en')
     ? 'Use the available MCP filesystem tools to complete this task.'
@@ -349,19 +352,33 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const hasWebSearch = webSearchTool != null;
   const webSearchToolName = webSearchTool?.name;
 
+  const isSimple = !isModerate;
   const memorySection = buildMemoryPromptSection(input);
-  const systemPrompt = [
-    `[REASONING MODE] You are thinking, not responding to the user.
+
+  const systemPrompt = (() => {
+    if (isSimple) {
+      return [
+        `You are ${input.assistantProfile?.name || 'Enzo'}, ${input.assistantProfile?.persona || 'intelligent personal assistant'}.
+Your tone is: ${input.assistantProfile?.tone || 'direct, concise, and friendly'}.
+Respond naturally in plain text. No JSON, no tool calls — just a friendly, helpful answer.`,
+        memorySection,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+    }
+    return [
+      `[REASONING MODE] You are thinking, not responding to the user.
 Your output is internal reasoning — emit ONLY JSON tool calls.
 Never write conversational text or explanations.`,
-    buildAssistantIdentityPrompt(input),
-    memorySection,
-    toolsPrompt,
-    relevantSkillsSection,
-    buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco' }),
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+      buildAssistantIdentityPrompt(input),
+      memorySection,
+      toolsPrompt,
+      relevantSkillsSection,
+      buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco' }),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  })();
 
   const messages: Message[] = [...resolveAmplifierDialogueMessages(input), { role: 'user', content: input.message }];
 
@@ -374,9 +391,10 @@ Never write conversational text or explanations.`,
     firstResponse = await withTimeout(
       baseProvider.complete({
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.3,
+        temperature: isSimple ? 0.7 : 0.3,
         maxTokens: persistToPathRequested ? FAST_PATH_MAX_TOKENS_PERSIST : FAST_PATH_MAX_TOKENS_DEFAULT,
         ...(useNativeFastPathTools ? { tools: mergedToolDefs } : {}),
+        ...(isSimple ? { think: false } : {}),
       }),
       180_000,
       'SIMPLE first call'
@@ -392,8 +410,13 @@ Never write conversational text or explanations.`,
     usageAccumulator.outputTokens += firstResponse.usage?.outputTokens ?? 0;
   }
 
+  firstResponse = {
+    ...firstResponse,
+    content: stripThinking(firstResponse.content ?? ''),
+  };
+
   rawContent = applyCompletionToolCallsToText(
-    firstResponse.content ?? '',
+    stripThinking(firstResponse.content ?? ''),
     firstResponse.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
   );
   log.info('[AmplifierLoop] SIMPLE path - primera respuesta:', rawContent.substring(0, 150));
@@ -403,11 +426,6 @@ Never write conversational text or explanations.`,
   let normalizedContent = rawContent;
   let plainTextFromModerateRetry: string | null = null;
 
-  // Some models (e.g. Gemini) return a {"thought":"..."} object that starts with '{' but is NOT a tool call.
-  // Treat that the same as "no JSON" so the strict-retry logic fires correctly.
-  // Also accept alternative valid formats that normalizeFastPathToolCall handles:
-  //   - {"action":"<tool_name>",...}  (action-as-tool-name, used by some local models)
-  //   - {"name":"<tool_name>","arguments":{...}}  (Ollama native function call format returned as text)
   const knownToolNamesLower = new Set(mergedToolDefs.map((t) => t.name.toLowerCase()));
   const rawLooksLikeToolCall = (() => {
     if (!normalizedContent.trim().startsWith('{')) return false;
@@ -458,7 +476,7 @@ Pick the correct tool and respond with JSON only.`;
         usageAccumulator.outputTokens += retry.usage?.outputTokens ?? 0;
       }
       const retried = applyCompletionToolCallsToText(
-        retry.content ?? '',
+        stripThinking(retry.content ?? ''),
         retry.toolCalls as Array<{ name: string; arguments: Record<string, unknown> | string }> | undefined
       ).trim();
       const extractedObj = retried.startsWith('{') ? retried : extractFirstJsonObject(retried);
@@ -685,8 +703,6 @@ Pick the correct tool and respond with JSON only.`;
       } else if (toolName && toolName !== 'none') {
         log.warn(`[AmplifierLoop] SIMPLE path - tool "${toolName}" no encontrada`);
 
-        // Step 1: Fuzzy match — catch typos/variants like "read_emails" → "read_email"
-        // without an extra LLM call.
         const tnLower = toolName.toLowerCase();
         const fuzzyMatch = mergedToolDefs.find((t) => {
           const n = t.name.toLowerCase();
@@ -699,32 +715,25 @@ Pick the correct tool and respond with JSON only.`;
         }
 
         const allowlistRetryEnv = process.env.ENZO_FASTPATH_ALLOWLIST_RETRY;
-        /** Default ON for MODERATE (one repair completion). Set ENZO_FASTPATH_ALLOWLIST_RETRY=false to disable; true forces retry on SIMPLE too. */
         const shouldRetryUnknownTool =
           allowlistRetryEnv === 'true' ||
           (allowlistRetryEnv !== 'false' && isModerate);
         if (shouldRetryUnknownTool && !consumedAllowlistParseRetry) {
           consumedAllowlistParseRetry = true;
           try {
-            // Build the repair prompt WITHOUT angle-bracket placeholders — small models
-            // (qwen2.5:7b) fill "<name>" with the literal word "tool" from surrounding context.
-            // Instead, use a concrete example with an actual valid tool name.
-            // Find the appropriate MCP tool based on user request
             const mcpToolsList = mergedToolDefs.filter(t => t.name.startsWith('mcp_'));
-            
-            // For filesystem requests, find the specific MCP tool needed
+
             const messageLower = input.message.toLowerCase();
-            const isListDir = messageLower.includes('lista') || messageLower.includes('mostrar') || 
+            const isListDir = messageLower.includes('lista') || messageLower.includes('mostrar') ||
                               messageLower.includes('contenido') || messageLower.includes('ls') ||
                               messageLower.includes('carpeta') || messageLower.includes('folder');
             const isReadFile = messageLower.includes('leer') || messageLower.includes('read');
-            const isWriteFile = messageLower.includes('escribir') || messageLower.includes('crear') || 
+            const isWriteFile = messageLower.includes('escribir') || messageLower.includes('crear') ||
                                 messageLower.includes('guardar') || messageLower.includes('save');
-            
-            // Find the specific tool
+
             let exampleTool = 'remember';
             let exampleInput = '{}';
-            
+
             if (isListDir) {
               const listDirTool = mcpToolsList.find(t => t.name.includes('list_directory'));
               if (listDirTool) {
@@ -744,10 +753,9 @@ Pick the correct tool and respond with JSON only.`;
                 exampleInput = '{"path":"/Users/franco/test.txt","content":"Hello World"}';
               }
             } else if (mcpToolsList.length > 0) {
-              // Use first MCP tool as fallback
               exampleTool = mcpToolsList[0].name;
             }
-            
+
             const exampleJson = `{"action":"tool","tool":"${exampleTool}","input":${exampleInput}}`;
 
             const repairSystemContent = mcpToolsList.length > 0
@@ -789,7 +797,7 @@ ${exampleJson}`;
               usageAccumulator.outputTokens += allowlistRepair.usage?.outputTokens ?? 0;
             }
             let mergedTxt = applyCompletionToolCallsToText(
-              allowlistRepair.content ?? '',
+              stripThinking(allowlistRepair.content ?? ''),
               allowlistRepair.toolCalls as Array<{
                 name: string;
                 arguments: Record<string, unknown> | string;
@@ -826,14 +834,9 @@ ${exampleJson}`;
     }
   }
 
-  // Only attempt recovery if: 
-  // 1. There was a request to persist/write AND
-  // 2. No tool was successfully executed AND  
-  // 3. There are MCP tools available
-  // (moved outside the block where rawToolOutput is defined, checking in a different way)
   const mcpToolsAvailable = (mcpRegistry?.getAllTools() ?? []).length > 0;
   const anyToolUsed = toolsUsed.size > 0;
-  
+
   if (persistToPathRequested && !anyToolUsed && mcpToolsAvailable) {
     finalContent = await attemptPersistWriteRecovery({
       input,
@@ -857,10 +860,10 @@ ${exampleJson}`;
     finalContent = 'No pude procesar tu solicitud. ¿Puedes intentarlo de nuevo?';
   }
 
-  // Nunca devolver JSON crudo al usuario.
   const trimmedFinalContent = finalContent.trim();
   if (trimmedFinalContent.startsWith('{') || trimmedFinalContent.startsWith('[')) {
-    finalContent = 'Entendido, procesando tu solicitud...';
+    log.error('[AmplifierLoop] SIMPLE path - raw JSON in final content, returning raw for debug:', trimmedFinalContent.substring(0, 200));
+    finalContent = trimmedFinalContent;
   }
 
   log.info('[AmplifierLoop] SIMPLE path - respuesta final:', finalContent.substring(0, 100));

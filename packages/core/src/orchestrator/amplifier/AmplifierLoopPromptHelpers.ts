@@ -388,5 +388,6 @@ ${params.webSearchToolName
   ? `- For ANY factual question → MUST use "${params.webSearchToolName}" (never answer from memory)\n`
   : params.hasWebSearch
     ? `- For ANY factual question → MUST use the web search tool\n`
-    : ''}${params.homeDir ? `- User home directory is exactly "${params.homeDir}" — copy verbatim, never change case\n` : ''}${iterationLine}`;
+    : ''}${params.homeDir ? `- User home directory is exactly "${params.homeDir}" — copy verbatim, never change case\n` : ''}${iterationLine}
+- CRITICAL: If the user's message refers to the CURRENT state of files, folders, processes, or any system resource — ALWAYS execute the tool again. TOOL_RESULT blocks from previous turns describe what was true THEN, not NOW. Never answer a system-state question from context.`;
 }

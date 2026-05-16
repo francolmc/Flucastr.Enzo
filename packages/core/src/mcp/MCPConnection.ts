@@ -125,6 +125,8 @@ export class MCPConnection {
         console.log(
           `[MCPConnection] Connected to "${this.config.name}". Found ${this.tools.length} tools`
         );
+
+        const searchTool = this.tools.find(t => t.name === 'search_files');
       } else {
         console.log(`[MCPConnection] Connected to "${this.config.name}" but could not list tools`);
       }

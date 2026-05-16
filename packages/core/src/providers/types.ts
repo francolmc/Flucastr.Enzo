@@ -19,6 +19,8 @@ export interface CompletionRequest {
   temperature?: number;
   maxTokens?: number;
   tools?: Tool[];
+  /** Ollama-specific: set think=false to disable thinking mode */
+  think?: boolean;
 }
 
 export interface CompletionResponse {

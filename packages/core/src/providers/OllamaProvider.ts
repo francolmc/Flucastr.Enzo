@@ -1,6 +1,14 @@
 import { CompletionRequest, CompletionResponse, LLMProvider, ToolCall } from './types.js';
 import { fetchWithRetry } from './retry.js';
 
+function extractUserContent(raw: string): string {
+  const thinkEnd = raw.lastIndexOf('</think>');
+  if (thinkEnd !== -1) {
+    return raw.slice(thinkEnd + '</think>'.length).trim();
+  }
+  return raw.trim();
+}
+
 export class OllamaProvider implements LLMProvider {
   name = 'ollama';
   model: string;
@@ -13,12 +21,16 @@ export class OllamaProvider implements LLMProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         model: this.model,
         messages: request.messages,
         stream: false,
         ...(request.tools && { tools: request.tools }),
       };
+
+      if (request.think === false) {
+        body.think = false;
+      }
 
       const response = await fetchWithRetry(`${this.baseUrl}/api/chat`, {
         method: 'POST',
@@ -46,8 +58,11 @@ export class OllamaProvider implements LLMProvider {
         }
       }
 
+      const rawContent = data.message?.content ?? '';
+      const content = extractUserContent(rawContent);
+
       return {
-        content: data.message?.content || '',
+        content,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         usage: {
           inputTokens: data.prompt_eval_count || 0,
@@ -75,19 +90,11 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
-  /**
-   * Dynamically set the model for this provider
-   * Allows switching models without restarting
-   */
   setModel(newModel: string): void {
     console.log(`[OllamaProvider] Switching model from "${this.model}" to "${newModel}"`);
     this.model = newModel;
   }
 
-  /**
-   * Dynamically set the base URL for this provider
-   * Allows switching Ollama host without restarting
-   */
   setBaseUrl(newBaseUrl: string): void {
     if (!newBaseUrl || !newBaseUrl.trim()) {
       return;

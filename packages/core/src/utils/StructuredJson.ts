@@ -73,6 +73,23 @@ export function repairJsonString(json: string): string {
   return lastBrace >= 0 ? repairedKeys.slice(0, lastBrace + 1) : repairedKeys;
 }
 
+export function parseJsonObject<T = any>(
+  json: string,
+  options?: { tryRepair?: boolean }
+): ParsedJsonResult<T> | null {
+  try {
+    return { value: JSON.parse(json) as T, raw: json, repaired: false };
+  } catch {
+    if (!options?.tryRepair) return null;
+    const repaired = repairJsonString(json);
+    try {
+      return { value: JSON.parse(repaired) as T, raw: repaired, repaired: true };
+    } catch {
+      return null;
+    }
+  }
+}
+
 export function parseFirstJsonObject<T = any>(
   text: string,
   options?: { tryRepair?: boolean }

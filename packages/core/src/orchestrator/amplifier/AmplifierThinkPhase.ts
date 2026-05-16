@@ -21,6 +21,10 @@ import {
 import type { AmplifierLoopLog } from './AmplifierLoopLog.js';
 import { resolveAmplifierDialogueMessages } from './ContinuityMessages.js';
 
+function stripThink(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
 export type ThinkPhaseDeps = {
   baseProvider: LLMProvider;
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
@@ -70,7 +74,7 @@ export async function runThinkPhase(deps: ThinkPhaseDeps, p: ThinkPhaseParams): 
       : [];
 
   const multiStepSkills = skillsResolvedFull.filter(isMultiStepRelevantSkill);
-  const skillsToInjectForThink = capRelevantSkillsForPrompt(skillsResolvedFull);
+  const skillsToInjectForPrompt = capRelevantSkillsForPrompt(skillsResolvedFull);
   const algorithmPlan = buildMultiStepAlgorithmPlan(multiStepSkills);
 
   const isAlgorithmMode = multiStepSkills.length > 0;
@@ -108,7 +112,7 @@ Emit ONLY JSON. Never write conversational text.`,
     buildAssistantIdentityPrompt(input),
     memorySection,
     toolsPrompt,
-    skillsToInjectForThink.length > 0 ? buildRelevantSkillsSection(skillsToInjectForThink) : '',
+    skillsToInjectForPrompt.length > 0 ? buildRelevantSkillsSection(skillsToInjectForPrompt) : '',
     buildThinkContractPrompt({
       context,
       iteration,
@@ -136,14 +140,14 @@ Emit ONLY JSON. Never write conversational text.`,
     });
   }
 
-  if (!skipSkills && skillsToInjectForThink.length > 0) {
-    if (DEBUG) log.info(`[AmplifierLoop] Relevant skills found:`, skillsToInjectForThink.length);
-    skillsToInjectForThink.forEach((s) => {
+  if (!skipSkills && skillsToInjectForPrompt.length > 0) {
+    if (DEBUG) log.info(`[AmplifierLoop] Relevant skills found:`, skillsToInjectForPrompt.length);
+    skillsToInjectForPrompt.forEach((s) => {
       if (DEBUG)
         log.info(`[AmplifierLoop] Relevant skill: ${s.name} (score: ${(s.relevanceScore * 100).toFixed(0)}%)`);
     });
 
-    for (const skill of skillsToInjectForThink) {
+    for (const skill of skillsToInjectForPrompt) {
       const content =
         isAlgorithmMode && multiStepSkills.some((ms) => ms.id === skill.id)
           ? `Skill "${skill.name}" activo en modo algoritmo. Sigue estrictamente el bloque "SKILL ALGORITHM IN PROGRESS".`
@@ -160,7 +164,7 @@ Emit ONLY JSON. Never write conversational text.`,
   if (!isAlgorithmMode && previousSteps.length > 0) {
     const previousResults = previousObservations.map((s) => ({
       role: 'assistant' as const,
-      content: `Resultado de acción anterior: ${s.output}`,
+      content: `Resultado de accion anterior: ${s.output}`,
     }));
 
     if (previousResults.length > 0) {
@@ -199,7 +203,7 @@ Emit ONLY JSON. Never write conversational text.`,
     usageAccumulator.outputTokens += response.usage?.outputTokens ?? 0;
   }
 
-  let thinkOutput = response.content ?? '';
+  let thinkOutput = stripThink(response.content ?? '');
   if (response.toolCalls?.length) {
     const tc = response.toolCalls[0]!;
     let args: Record<string, unknown> =

@@ -15,7 +15,7 @@ import {
   type DelegationHint,
   ComplexityLevel,
 } from './types.js';
-import { extractJsonObjects, parseFirstJsonObject } from '../utils/StructuredJson.js';
+import { extractJsonObjects, parseFirstJsonObject, parseJsonObject } from '../utils/StructuredJson.js';
 import { decisionLogger, type DecisionPhase } from '../logging/DecisionLogger.js';
 
 function logClassifierRouting(branch: string, level: ComplexityLevel): void {
@@ -322,18 +322,17 @@ ONLY JSON. NOTHING ELSE.`;
 
     const allJsonMatches = extractJsonObjects(response.content);
     if (allJsonMatches.length > 1) {
-      console.warn(`[Classifier] Model emitted ${allJsonMatches.length} JSON objects. Taking the first one.`);
+      console.warn(`[Classifier] Model emitted ${allJsonMatches.length} JSON objects. Taking the last one.`);
     }
 
-    const parsed = parseFirstJsonObject<{
+    const lastJson = allJsonMatches.length > 0 ? allJsonMatches[allJsonMatches.length - 1] : null;
+    const parsed = lastJson ? parseJsonObject<{
       level: ComplexityLevel;
       reason: string;
       delegationHint?: { agentId?: string; reason?: string };
       suggestedTool?: string;
       suppressSimpleModerateFastPath?: boolean;
-    }>(response.content, {
-      tryRepair: true,
-    });
+    }>(lastJson) : null;
     if (parsed) {
       return parsed.value;
     }
