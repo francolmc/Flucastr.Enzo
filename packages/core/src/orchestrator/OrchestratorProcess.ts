@@ -17,6 +17,7 @@ import {
   resolvePreferredWallClockTimeZoneId,
 } from './runtimeHostContext.js';
 import type { MemoryExtractor } from '../memory/MemoryExtractor.js';
+import { instantiateProviderForModel } from './instantiateProviderForModel.js';
 
 /** Bound callbacks from Orchestrator — keeps process pipeline out of the class body. */
 export type OrchestratorProcessBindings = {
@@ -85,7 +86,8 @@ export async function executeOrchestratorProcess(
   const configAssistantProfile = b.getConfigService()?.getAssistantProfile();
   const configUserProfile = b.getConfigService()?.getUserProfile();
   const selectedAgent = input.agentId ? await b.resolveSelectedAgent(input.agentId) : undefined;
-  const { provider: runtimeProvider, warning: providerWarning } = await b.resolveRuntimeProvider(selectedAgent);
+  const { provider: baseRuntimeProvider, warning: providerWarning } = await b.resolveRuntimeProvider(selectedAgent);
+  let runtimeProvider = baseRuntimeProvider;
   const assistantProfile = b.resolveAssistantProfile(configAssistantProfile, selectedAgent);
   const userProfile = configUserProfile ?? {};
 
@@ -153,6 +155,22 @@ export async function executeOrchestratorProcess(
         delegationHint: classification.delegationHint?.agentId ?? null,
       })
     );
+  }
+
+  runtimeProvider = runtimeProvider;
+  const complexModel = b.getConfigService()?.getComplexModel();
+
+  if (classification.level === 'COMPLEX' && complexModel) {
+    const complexProviderName = b.getConfigService()?.getComplexProvider() ?? 'ollama';
+    const complexProviderResolved = await instantiateProviderForModel(
+      complexProviderName,
+      complexModel,
+      b.getConfigService()
+    );
+    if (complexProviderResolved) {
+      runtimeProvider = complexProviderResolved;
+      console.log(`[Orchestrator] Routing COMPLEX to model: ${complexModel}`);
+    }
   }
 
   const tools: Tool[] = b.getToolRegistry().getToolDefinitions();

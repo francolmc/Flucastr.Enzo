@@ -13,6 +13,8 @@ export interface ProviderConfig {
 export interface ModelsConfig {
   primaryModel: string;
   primaryProvider?: string;
+  complexModel?: string;
+  complexProvider?: string;
   fallbackModels: string[];
   fallbackProvider?: string;
   fallbackModel?: string;
@@ -166,6 +168,8 @@ function normalizeFallbackAllWhenNone(value: unknown, defaultValue: boolean): bo
 function getDefaultConfig(): ModelsConfig {
   return {
     primaryModel: process.env.OLLAMA_PRIMARY_MODEL || 'qwen2.5:7b',
+    complexModel: undefined,
+    complexProvider: undefined,
     fallbackModels: [],
     providers: {
       ollama: {
@@ -328,6 +332,8 @@ export class ConfigService {
     return {
       primaryModel: loaded?.primaryModel || defaults.primaryModel,
       primaryProvider: typeof loaded?.primaryProvider === 'string' ? loaded.primaryProvider : undefined,
+      complexModel: loaded?.complexModel || defaults.complexModel,
+      complexProvider: typeof loaded?.complexProvider === 'string' ? loaded.complexProvider : undefined,
       fallbackModels: Array.isArray(loaded?.fallbackModels)
         ? [...loaded.fallbackModels]
         : defaults.fallbackModels,
@@ -549,6 +555,22 @@ export class ConfigService {
     this.config.fallbackModels = [...models];
     this.saveConfig();
     console.log('[ConfigService] Fallback models set to:', models);
+  }
+
+  getComplexModel(): string | undefined {
+    this.syncConfigFromDisk();
+    return this.config.complexModel;
+  }
+
+  getComplexProvider(): string | undefined {
+    this.syncConfigFromDisk();
+    const explicit = this.config.complexProvider?.trim();
+    if (explicit) return explicit;
+    const model = this.config.complexModel || '';
+    if (model.toLowerCase().includes('claude')) return 'anthropic';
+    if (model.toLowerCase().includes('gemini')) return 'gemini';
+    if (model.toLowerCase().startsWith('gpt') || model.toLowerCase().includes('openai')) return 'openai';
+    return undefined;
   }
 
   // Provider management
