@@ -211,7 +211,7 @@ function getDefaultConfig(): ModelsConfig {
       telegramAgentAutoroute: (process.env.TELEGRAM_AGENT_AUTOROUTE || '').toLowerCase() === 'true',
       enzoMemoryConfidenceThreshold: defaultMemoryConfidenceThresholdFromEnv(),
       enzoVerifyBeforeSynthesis: booleanFromEnvKey('ENZO_VERIFY_BEFORE_SYNTHESIS', false),
-      enzoSkillsFallbackAllWhenNoneEnabled: booleanFromEnvDefaultFalse('ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED'),
+      enzoSkillsFallbackAllWhenNoneEnabled: process.env.ENZO_SKILLS_FALLBACK_ALL_WHEN_NONE_ENABLED !== 'true',
       enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
       enzoMcpIncludeFullSchema: booleanFromEnvDefaultTrue('ENZO_MCP_INCLUDE_FULL_SCHEMA'),
       enzoMcpShowReasoning: booleanFromEnvKey('ENZO_MCP_SHOW_REASONING', false),
