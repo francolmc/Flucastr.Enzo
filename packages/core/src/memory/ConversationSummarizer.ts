@@ -35,9 +35,22 @@ export class ConversationSummarizer {
     const dialogue = dropped.map((r) => `${r.role}: ${r.content}`).join('\n');
     const prior = previousSummary?.trim() ? `Prior summary:\n${previousSummary.trim()}\n\n` : '';
 
-    const systemPrompt = `You compress dialogue into a SHORT bullet summary (Spanish if the dialogue is Spanish).
-Include: topics discussed, decisions, paths/commands mentioned, open questions.
-Do NOT invent facts. Max ~350 words. Use bullets starting with "- ".`;
+    const systemPrompt = `You compress conversation history into a structured JSON snapshot.
+Respond ONLY with valid JSON, no extra text:
+
+{
+  "user_goal": "main objective the user is pursuing in this session (1 sentence)",
+  "completed": ["action 1 done", "action 2 done"],
+  "established_facts": ["concrete fact 1", "concrete fact 2"],
+  "pending": "what remains unresolved or next step",
+  "last_tool_results": {"tool_name": "result summary in 1 line"}
+}
+
+RULES:
+- Be factual — only include what was explicitly said or done
+- Mark anything uncertain as UNVERIFIED
+- Do not invent actions or results
+- If nothing to summarize, return {"user_goal":"","completed":[],"established_facts":[],"pending":"","last_tool_results":{}}`;
 
     const userPrompt = `${prior}Older turns to merge:\n${dialogue}`;
 
@@ -50,16 +63,28 @@ Do NOT invent facts. Max ~350 words. Use bullets starting with "- ".`;
       maxTokens: 512,
     });
 
-    const summary = (response.content ?? '').trim();
-    if (!summary) {
+    let summaryText = (response.content ?? '').trim();
+    if (!summaryText) {
       console.warn('[ConversationSummarizer] Empty summary from model; skipping persist');
       return;
+    }
+
+    try {
+      JSON.parse(summaryText);
+    } catch {
+      summaryText = JSON.stringify({
+        user_goal: '',
+        completed: [],
+        established_facts: [],
+        pending: summaryText.substring(0, 200),
+        last_tool_results: {},
+      });
     }
 
     const last = dropped[dropped.length - 1]!;
     await this.memoryService.upsertConversationSummary({
       conversationId,
-      summary,
+      summary: summaryText,
       upToMessageId: last.id,
       upToCreatedAt: last.createdAt,
       topicHint: undefined,

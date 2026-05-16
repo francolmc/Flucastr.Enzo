@@ -280,6 +280,11 @@ You are permitted to make file changes, run shell commands, and utilize your ars
         `- To search files: {"tool": "${searchTool}", "input": {"path": "/absolute/path", "pattern": "*.extension"}} — BOTH path AND pattern are required`
       );
     }
+    if (writeTool) {
+      examples.push(
+        `- To write a file: {"tool": "${writeTool}", "input": {"path": "/absolute/path/file.ext", "content": "exact content to write"}} — BOTH path AND content are required. For content: use the EXACT text the user specified, never invent or summarize.`
+      );
+    }
     if (listTool && !writeTool) {
       examples.push(`- List directory: Step 1 "${listTool}" with path. Total: 1 step.`);
     }

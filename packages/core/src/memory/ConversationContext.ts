@@ -43,11 +43,25 @@ export function buildConversationContext(input: BuildConversationContextInput): 
   if (input.profileMemoryBlock?.trim()) {
     blocks.push(input.profileMemoryBlock.trim());
   }
-  if (input.rollingSummary?.trim()) {
-    blocks.push(
-      `RESUMEN DE LO YA CONVERSADO (anterior a los turnos visibles):\n${input.rollingSummary.trim()}`
-    );
+if (input.rollingSummary?.trim()) {
+  let summaryBlock = input.rollingSummary.trim();
+  try {
+    const parsed = JSON.parse(summaryBlock);
+    const lines = [];
+    if (parsed.user_goal) lines.push(`Goal: ${parsed.user_goal}`);
+    if (parsed.completed?.length) lines.push(`Done: ${parsed.completed.join(', ')}`);
+    if (parsed.established_facts?.length) lines.push(`Facts: ${parsed.established_facts.join(', ')}`);
+    if (parsed.pending) lines.push(`Pending: ${parsed.pending}`);
+    if (parsed.last_tool_results && Object.keys(parsed.last_tool_results).length) {
+      const results = Object.entries(parsed.last_tool_results).map(([k, v]) => `${k}: ${v}`).join(', ');
+      lines.push(`Last results: ${results}`);
+    }
+    summaryBlock = lines.join('\n');
+  } catch {
+    // texto libre legacy — usar tal cual
   }
+  blocks.push(`CONVERSATION SUMMARY (before visible turns):\n${summaryBlock}`);
+}
   if (input.flowBlock?.trim()) {
     blocks.push(input.flowBlock.trim());
   }
