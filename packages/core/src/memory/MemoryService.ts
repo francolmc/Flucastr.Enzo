@@ -428,7 +428,9 @@ export class MemoryService {
       return '';
     }
     const picked = selectLessonsForUserMessage(lessons, currentUserMessage);
-    const lines = picked.map(
+    // Deduplicar por situation (mismo mensaje no debe repetirse)
+    const uniquePicked = [...new Map(picked.map(l => [l.situation.trim().toLowerCase(), l])).values()];
+    const lines = uniquePicked.map(
       (l) =>
         `- [${l.source}] ${l.situation.trim()} — avoid: ${l.avoid.trim()}; prefer: ${l.prefer.trim()}`
     );

@@ -334,6 +334,16 @@ ONLY JSON. NOTHING ELSE.`;
       suppressSimpleModerateFastPath?: boolean;
     }>(lastJson) : null;
     if (parsed) {
+      // Normalizar formatos alternativos que el modelo puede emitir
+      if (!parsed.value?.level) {
+        const raw = (parsed.value as any)?.response ?? '';
+        const match = raw.match(/\b(SIMPLE|MODERATE|COMPLEX)\b/);
+        if (match) {
+          if (!parsed.value) parsed.value = {} as any;
+          (parsed.value as any).level = match[1];
+          (parsed.value as any).reason = raw.substring(0, 100);
+        }
+      }
       return parsed.value;
     }
 

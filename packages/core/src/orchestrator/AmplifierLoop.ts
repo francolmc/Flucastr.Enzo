@@ -68,6 +68,17 @@ function summarizeStepResult(tool: string, output: string): string {
   return `${head}\n... [${lines.length - 5} lines omitted] ...\n${tail}`;
 }
 
+function truncateAccumulatedContext(accumulated: string, maxChars: number = 2000): string {
+  if (accumulated.length <= maxChars) return accumulated;
+  const lines = accumulated.split('\n');
+  let trimmed = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const candidate = lines.slice(i).join('\n');
+    if (candidate.length <= maxChars) { trimmed = candidate; break; }
+  }
+  return `[...context trimmed...]\n${trimmed}`;
+}
+
 function extractFirstPathFromContext(context: string): string {
   const lines = context.split('\n');
   for (const line of lines) {
@@ -565,6 +576,7 @@ if (
     /** Non-empty decomposition from this request (survives for verify after COMPLEX fallback to ReAct when steps=[]). */
     let complexPlanForVerify: Subtask[] | undefined;
     let accumulatedContext = '';
+    const stepResults = new Map<number, string>();
 
     if (input.classifiedLevel === ComplexityLevel.COMPLEX) {
       this.log.info('[AmplifierLoop] COMPLEX task — decomposing into subtasks');
@@ -673,6 +685,8 @@ if (
                 toolsUsed.add(subtask.tool);
                 const summary = summarizeStepResult(subtask.tool, result.output);
                 accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${summary}`;
+                accumulatedContext = truncateAccumulatedContext(accumulatedContext);
+                stepResults.set(subtask.id, result.output);
 
                 steps.push({
                   iteration,
@@ -704,6 +718,8 @@ if (
             toolsUsed.add(subtask.tool);
             const summary = summarizeStepResult(subtask.tool, result.output);
             accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${summary}`;
+            accumulatedContext = truncateAccumulatedContext(accumulatedContext);
+            stepResults.set(subtask.id, result.output);
 
             steps.push({
               iteration,
@@ -722,6 +738,8 @@ if (
             this.log.error(`[AmplifierLoop] Direct execution failed for ${subtask.tool}:`, err);
             const errorSummary = summarizeStepResult(subtask.tool, `ERROR - ${err}`);
             accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${errorSummary}`;
+            accumulatedContext = truncateAccumulatedContext(accumulatedContext);
+            stepResults.set(subtask.id, `ERROR - ${err}`);
             
             steps.push({
               iteration,
@@ -742,11 +760,12 @@ if (
         // REACT LOOP: Para subtareas sin dependencia o sin tool definida
         // Construir el mensaje para esta subtarea específica
         let subtaskMessage: string;
-        if (subtask.dependsOn !== null && accumulatedContext) {
+        if (subtask.dependsOn !== null) {
+          const lastStepResult = stepResults.get(subtask.dependsOn) ?? '';
           subtaskMessage = `[INTERNAL STEP ${subtask.id}] ${subtask.description}
 
-PREVIOUS RESULTS (summarized — use tools to get full data if needed):
-${accumulatedContext}
+PREVIOUS STEP RESULT (step ${subtask.dependsOn}):
+${lastStepResult}
 
 <system-reminder>
 Your operational mode has changed from plan to build.
@@ -937,6 +956,8 @@ Emit JSON tool call only. This is internal execution, not a user response.`;
         // Acumular resultado de esta subtarea para la siguiente
         if (subtaskResult) {
           accumulatedContext += `\n\nStep ${subtask.id} (${subtask.tool}): ${subtaskResult}`;
+          accumulatedContext = truncateAccumulatedContext(accumulatedContext);
+          stepResults.set(subtask.id, subtaskResult);
           this.log.info(`[AmplifierLoop] Subtask ${subtask.id} completed. Context size: ${accumulatedContext.length} chars`);
         }
 
@@ -947,6 +968,7 @@ Emit JSON tool call only. This is internal execution, not a user response.`;
               `[AmplifierLoop] SubtaskGuard: planned tool '${subtask.tool}' (subtask ${subtask.id}) has no matching successful invoke in act traces`
             );
             accumulatedContext += `\n\n(SubtaskGuard) Subtask ${subtask.id}: planned tool '${subtask.tool}' was not invoked successfully in orchestrator traces. Treat this planned step as not completed; inform the user honestly and do not claim it was executed.`;
+            accumulatedContext = truncateAccumulatedContext(accumulatedContext);
           }
         }
       }
