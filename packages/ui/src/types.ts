@@ -49,6 +49,8 @@ export interface SystemConfigView {
   enzoNativeToolCalling: boolean;
   enzoMcpIncludeFullSchema: boolean;
   enzoMcpShowReasoning: boolean;
+  thinkingMode: boolean;
+  contextBudget: number;
   defaultUserLanguage: string;
   tz: string;
   telegramAllowedUsers: string;
@@ -78,6 +80,8 @@ export interface SystemConfigUpdatePayload {
   enzoNativeToolCalling?: boolean;
   enzoMcpIncludeFullSchema?: boolean;
   enzoMcpShowReasoning?: boolean;
+  thinkingMode?: boolean;
+  contextBudget?: number;
   defaultUserLanguage?: string;
   tz?: string;
   telegramAllowedUsers?: string;

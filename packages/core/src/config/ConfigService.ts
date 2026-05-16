@@ -70,6 +70,8 @@ export interface StoredSystemConfig {
   enzoMcpIncludeFullSchema: boolean;
   /** Show MCP selection reasoning in responses. Synced to `ENZO_MCP_SHOW_REASONING`. */
   enzoMcpShowReasoning: boolean;
+  thinkingMode: boolean;
+  contextBudget: number;
   telegramBotTokenEncrypted?: string;
   tavilyApiKeyEncrypted?: string;
 }
@@ -90,6 +92,8 @@ export interface SystemConfigView {
   enzoMcpShowReasoning: boolean;
   defaultUserLanguage: string;
   tz: string;
+  thinkingMode: boolean;
+  contextBudget: number;
   telegramAllowedUsers: string;
   telegramAgentOwnerUserId: string;
   telegramAgentAutoroute: boolean;
@@ -122,6 +126,8 @@ export interface SystemConfigUpdate {
   enzoNativeToolCalling?: boolean;
   enzoMcpIncludeFullSchema?: boolean;
   enzoMcpShowReasoning?: boolean;
+  thinkingMode?: boolean;
+  contextBudget?: number;
 }
 
 const KNOWN_PROVIDERS = ['ollama', 'anthropic', 'openai', 'gemini'] as const;
@@ -205,6 +211,8 @@ function getDefaultConfig(): ModelsConfig {
       enzoNativeToolCalling: booleanFromEnvKey('ENZO_NATIVE_TOOL_CALLING', false),
       enzoMcpIncludeFullSchema: booleanFromEnvDefaultTrue('ENZO_MCP_INCLUDE_FULL_SCHEMA'),
       enzoMcpShowReasoning: booleanFromEnvKey('ENZO_MCP_SHOW_REASONING', false),
+      thinkingMode: false,
+      contextBudget: 4096,
     },
     assistantProfile: {
       name: 'Enzo',
@@ -288,6 +296,13 @@ export class ConfigService {
       system.enzoMcpShowReasoning,
       defaults.system.enzoMcpShowReasoning
     );
+    system.thinkingMode = normalizeStoredBoolean(
+      system.thinkingMode,
+      defaults.system.thinkingMode
+    );
+    system.contextBudget = Number.isFinite(system.contextBudget)
+      ? system.contextBudget
+      : defaults.system.contextBudget;
 
     if (loaded?.providers) {
       for (const [key, provider] of Object.entries(loaded.providers)) {
@@ -468,6 +483,12 @@ export class ConfigService {
     process.env.ENZO_NATIVE_TOOL_CALLING = system.enzoNativeToolCalling ? 'true' : 'false';
     process.env.ENZO_MCP_INCLUDE_FULL_SCHEMA = system.enzoMcpIncludeFullSchema ? 'true' : 'false';
     process.env.ENZO_MCP_SHOW_REASONING = system.enzoMcpShowReasoning ? 'true' : 'false';
+    if (system.thinkingMode !== undefined) {
+      process.env.ENZO_THINKING_MODE = String(system.thinkingMode);
+    }
+    if (system.contextBudget !== undefined) {
+      process.env.ENZO_CONTEXT_BUDGET = String(system.contextBudget);
+    }
 
     const telegramToken = this.getSystemSecret('telegramBotTokenEncrypted');
     if (telegramToken) {
@@ -665,6 +686,8 @@ export class ConfigService {
       enzoNativeToolCalling: !!system.enzoNativeToolCalling,
       enzoMcpIncludeFullSchema: !!system.enzoMcpIncludeFullSchema,
       enzoMcpShowReasoning: !!system.enzoMcpShowReasoning,
+      thinkingMode: !!system.thinkingMode,
+      contextBudget: system.contextBudget ?? 4096,
       defaultUserLanguage: system.defaultUserLanguage,
       tz: system.tz,
       telegramAllowedUsers: system.telegramAllowedUsers,
@@ -734,6 +757,8 @@ export class ConfigService {
       ...(update.enzoMcpShowReasoning !== undefined
         ? { enzoMcpShowReasoning: update.enzoMcpShowReasoning }
         : {}),
+      ...(update.thinkingMode !== undefined ? { thinkingMode: update.thinkingMode } : {}),
+      ...(update.contextBudget !== undefined ? { contextBudget: update.contextBudget } : {}),
     };
 
     if (typeof update.telegramBotToken === 'string' && update.telegramBotToken.trim().length > 0) {

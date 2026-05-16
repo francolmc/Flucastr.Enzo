@@ -80,6 +80,8 @@ function ConfigPage() {
     enzoMcpShowReasoning: false,
     defaultUserLanguage: 'es',
     tz: 'America/Santiago',
+    thinkingMode: false,
+    contextBudget: 4096,
     telegramAllowedUsers: '',
     telegramAgentOwnerUserId: '',
     telegramAgentAutoroute: false,
@@ -116,6 +118,8 @@ function ConfigPage() {
       enzoNativeToolCalling: !!systemConfig.enzoNativeToolCalling,
       enzoMcpIncludeFullSchema: systemConfig.enzoMcpIncludeFullSchema !== false,
       enzoMcpShowReasoning: !!systemConfig.enzoMcpShowReasoning,
+      thinkingMode: !!systemConfig.thinkingMode,
+      contextBudget: systemConfig.contextBudget ?? 4096,
       defaultUserLanguage: systemConfig.defaultUserLanguage || 'es',
       tz: systemConfig.tz || 'America/Santiago',
       telegramAllowedUsers: systemConfig.telegramAllowedUsers || '',
@@ -246,6 +250,8 @@ function ConfigPage() {
         enzoMcpIncludeFullSchema: systemForm.enzoMcpIncludeFullSchema,
         enzoMcpShowReasoning: systemForm.enzoMcpShowReasoning,
         defaultUserLanguage: systemForm.defaultUserLanguage,
+        thinkingMode: systemForm.thinkingMode,
+        contextBudget: Number(systemForm.contextBudget),
         tz: systemForm.tz,
         telegramAllowedUsers: systemForm.telegramAllowedUsers,
         telegramAgentOwnerUserId: systemForm.telegramAgentOwnerUserId,
@@ -588,6 +594,31 @@ function ConfigPage() {
               />
               MCP Show Reasoning
             </label>
+            <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={systemForm.thinkingMode}
+                onChange={(e) => setSystemForm({ ...systemForm, thinkingMode: e.target.checked })}
+              />
+              Thinking Mode
+            </label>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="sysContextBudget">Context Budget (tokens)</label>
+            <input
+              id="sysContextBudget"
+              type="number"
+              min="1"
+              max="999999"
+              value={systemForm.contextBudget}
+              onChange={(e) =>
+                setSystemForm({ ...systemForm, contextBudget: Number(e.target.value) })
+              }
+            />
+            <p className="config-card-description">
+              Límite de contexto para el modelo. Valor típico: 4096-128000. Affecta ENZO_CONTEXT_BUDGET.
+            </p>
           </div>
 
           <div className="form-actions">
