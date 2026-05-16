@@ -10,6 +10,7 @@ export function initializeCore(config: EnzoConfig): void {
   console.log(`Enzo Core initialized with model: ${config.primaryModel}`);
 }
 
+export * from './adapters/index.js';
 export * from './orchestrator/index.js';
 export type { VisionService, VisionResult } from './agents/VisionAgent.js';
 export * from './echo/index.js';
