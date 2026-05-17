@@ -20,8 +20,6 @@ export function loadConfig(): ConfigService {
   return {
     ollamaBaseUrl: raw.system?.ollamaBaseUrl ?? 'http://localhost:11434',
     primaryModel: raw.primaryModel ?? 'qwen3:4b-instruct',
-    dbPath: raw.system?.dbPath
-      ? path.resolve(raw.system.dbPath)
-      : path.join(os.homedir(), 'enzo.db'),
+    dbPath: raw.system?.dbPath ?? path.join(os.homedir(), 'enzo.db'),
   };
 }
