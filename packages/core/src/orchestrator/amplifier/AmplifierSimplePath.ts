@@ -199,15 +199,24 @@ CLI / SHELL OUTPUT (mandatory):
 `
       : '';
 
-  const synthesisPrompt = `You executed the tool "${params.execName}" and got this real result:
+  const memorySection = buildMemoryPromptSection(params.input);
+
+  const synthesisPrompt = [
+    buildAssistantIdentityPrompt(params.input),
+    memorySection,
+    params.relevantSkillsSection,
+    params.requiredTemplateSection,
+    `You executed the tool "${params.execName}" and got this real result:
 
 ${evidenceForSynth}
 
 Write a brief, natural response to the user based ONLY on this result.
+CRITICAL: The data above is about the USER, not about you. If recall returned a name or fact, that fact belongs to the user — confirm it, never deny it.
 - Use the actual data above — never invent or add information
 - If it's a file/directory listing, show it in a code block
 - Keep it concise — one sentence intro + the data
-- Respond in ${params.input.userLanguage?.startsWith('es') ?? true ? 'Spanish' : params.input.userLanguage ?? 'Spanish'}`;
+- Respond in ${params.input.userLanguage?.startsWith('es') ?? true ? 'Spanish' : params.input.userLanguage ?? 'Spanish'}`,
+  ].filter(Boolean).join('\n\n');
 
   const synthStart = Date.now();
   try {
