@@ -1,3 +1,4 @@
+import os from 'os';
 import type { Message, LLMProvider } from '../../providers/types.js';
 import {
   ComplexityLevel,
@@ -362,6 +363,7 @@ export async function runSimpleModerateFastPath(ctx: SimpleModeratePathContext):
   const webSearchToolName = webSearchTool?.name;
 
   const isSimple = !isModerate;
+  const homeDir = input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir();
   const memorySection = buildMemoryPromptSection(input);
 
   const systemPrompt = (() => {
@@ -383,7 +385,7 @@ Never write conversational text or explanations.`,
       memorySection,
       toolsPrompt,
       relevantSkillsSection,
-      buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco' }),
+      buildThinkContractPrompt({ context: '', hasWebSearch, webSearchToolName, homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir() }),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -747,19 +749,19 @@ Pick the correct tool and respond with JSON only.`;
               const listDirTool = mcpToolsList.find(t => t.name.includes('list_directory'));
               if (listDirTool) {
                 exampleTool = listDirTool.name;
-                exampleInput = '{"path":"/Users/franco"}';
+                exampleInput = `{"path":"${homeDir}"}`;
               }
             } else if (isReadFile) {
               const readTool = mcpToolsList.find(t => t.name.includes('read_file'));
               if (readTool) {
                 exampleTool = readTool.name;
-                exampleInput = '{"path":"/Users/franco/example.txt"}';
+                exampleInput = `{"path":"${homeDir}/example.txt"}`;
               }
             } else if (isWriteFile) {
               const writeTool = mcpToolsList.find(t => t.name.includes('write_file'));
               if (writeTool) {
                 exampleTool = writeTool.name;
-                exampleInput = '{"path":"/Users/franco/test.txt","content":"Hello World"}';
+                exampleInput = `{"path":"${homeDir}/test.txt","content":"Hello World"}`;
               }
             } else if (mcpToolsList.length > 0) {
               exampleTool = mcpToolsList[0].name;
@@ -770,7 +772,7 @@ Pick the correct tool and respond with JSON only.`;
             const repairSystemContent = mcpToolsList.length > 0
               ? `Tool "${toolName}" does not exist. You MUST use an MCP tool from the list below.
 
-IMPORTANT: For directory listing use EXACTLY: mcp_*_list_directory with {"path":"/Users/franco"}
+IMPORTANT: For directory listing use EXACTLY: mcp_*_list_directory with {"path":"${homeDir}"}
 For file reading use: mcp_*_read_file with {"path":"..."}
 For file writing use: mcp_*_write_file with {"path":"...","content":"..."}
 

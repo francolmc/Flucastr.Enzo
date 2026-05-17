@@ -200,6 +200,11 @@ Optional keys (omit when irrelevant):
 - "prefersHostTools": true — answer must come from THIS machine's **registered MCP tools**: file operations, shell commands, or other tools available via MCP servers. Omit for pure public lookups or casual conversation.
 - "suppressSimpleModerateFastPath": true — ONLY when LEVEL is COMPLEX, or when there are explicitly TWO OR MORE chained tool steps where step N requires output from step N-1. NEVER set this for single filesystem operations, single web searches, or single memory saves — even if prefersHostTools is true.
 
+FUNDAMENTAL RULE — apply before all others:
+If the user wants to DO something (create, save, add, update, organize, send, move, delete, remember) → NEVER SIMPLE, use MODERATE or COMPLEX.
+SIMPLE is ONLY for: questions, conversation, explanations, math, and anything that requires NO action in the world.
+When in doubt: if the user expects a change to happen → MODERATE minimum.
+
 LEVELS — apply in order, first match wins:
 
 SIMPLE — direct conversation, no tools needed:

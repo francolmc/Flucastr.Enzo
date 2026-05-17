@@ -1,3 +1,4 @@
+import os from 'os';
 import { LLMProvider, Message } from '../providers/types.js';
 import { parseFirstJsonObject } from '../utils/StructuredJson.js';
 
@@ -23,7 +24,7 @@ export class Decomposer {
 
   async decompose(message: string, availableTools: string[], history?: Message[], preferredMCPs?: string[]): Promise<DecompositionResult> {
     const toolsList = availableTools.join(', ');
-    const homeDir = process.env.HOME ?? '/Users/franco';
+    const homeDir = process.env.HOME ?? os.homedir();
     
     let preferredMcpSection = '';
     if (preferredMCPs && preferredMCPs.length > 0) {
@@ -34,7 +35,7 @@ MANDATORY MCP TOOLS FOR THIS TASK (use these EXACT names — not generic alterna
 ${preferredMCPs.map(mcp => `- "${mcp}"`).join('\n')}
 
 CRITICAL: For this specific task, you MUST use the MCP tool names listed above.
-Do NOT use execute_command, web_search, write_file, or read_file when an MCP tool above can do the same job.
+Do NOT invent tool names. Use ONLY the exact tool names listed in Available tools above.
 The "tool" field in each step MUST be copied CHARACTER BY CHARACTER from the list above.`;
     }
 
@@ -49,6 +50,20 @@ The "tool" field in each step MUST be copied CHARACTER BY CHARACTER from the lis
     }
 
     const examplesBlock = this.buildExamplesForPrompt(preferredMCPs ?? []);
+
+    const searchTool = (preferredMCPs ?? []).find(m =>
+      (m.includes('web') && m.includes('search')) || m.includes('web-search') || m.includes('search_files')
+    );
+    const searchToolExample = searchTool
+      ? `- ${searchTool} requires: {"path": "${homeDir}/path", "pattern": "*.extension"}
+  Example: {"path": "${homeDir}/Downloads", "pattern": "*.py"}
+  BOTH path AND pattern are required — never omit either one.
+  IMPORTANT: Always use absolute paths starting with the actual home directory. The home directory is: ${homeDir}
+  Never use /home/user or any generic path — always use ${homeDir}.`
+      : `- For file search: use the search tool from Available tools with {"path": "${homeDir}/path", "pattern": "*.extension"}
+  BOTH path AND pattern are required.
+  IMPORTANT: Always use absolute paths starting with the actual home directory. The home directory is: ${homeDir}
+  Never use /home/user or any generic path — always use ${homeDir}.`;
 
     const systemPrompt = `You are a task decomposer. Your job is to break a task into the smallest possible sequential steps, where each step is ONE single action.
 
@@ -76,11 +91,7 @@ Respond ONLY with JSON, no extra text:
 }
 
 TOOL INPUT FORMATS (use these exact formats):
-- mcp_848f563d_search_files requires: {"path": "/absolute/path", "pattern": "*.extension"}
-  Example: {"path": "${homeDir}/Downloads", "pattern": "*.py"}
-  BOTH path AND pattern are required — never omit either one.
-  IMPORTANT: Always use absolute paths starting with the actual home directory. The home directory is: ${homeDir}
-  Never use /home/user or any generic path — always use ${homeDir}.
+${searchToolExample}
 
 RULES:
 - FIRST RULE: Use search_files directly to find files by extension — NEVER list first then filter.

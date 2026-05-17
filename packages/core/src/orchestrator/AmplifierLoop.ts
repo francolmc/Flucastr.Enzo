@@ -1,3 +1,4 @@
+import os from 'os';
 import { Message, LLMProvider } from '../providers/types.js';
 import { AmplifierInput, AmplifierResult, Step, AvailableCapabilities, ComplexityLevel, InjectedSkillUsage } from './types.js';
 import { CapabilityResolver } from './CapabilityResolver.js';
@@ -297,7 +298,7 @@ export class AmplifierLoop {
       (toolName.includes('list_directory') || toolName.includes('directory_tree')) &&
       errorDetail.includes('$.path is required')
     ) {
-      const homeDir = process.env.HOME ?? '/Users/franco';
+      const homeDir = process.env.HOME ?? os.homedir();
       return { toolName, toolInput: { path: homeDir } };
     }
 

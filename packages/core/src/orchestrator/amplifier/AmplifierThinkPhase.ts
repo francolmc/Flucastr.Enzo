@@ -1,3 +1,4 @@
+import os from 'os';
 import type { Message, LLMProvider } from '../../providers/types.js';
 import type { AmplifierInput, Step } from '../types.js';
 import type { SkillRegistry } from '../../skills/SkillRegistry.js';
@@ -122,7 +123,7 @@ Emit ONLY JSON. Never write conversational text.`,
       totalSteps: totalStepsAllSkills,
       hasWebSearch,
       webSearchToolName,
-      homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? '/Users/franco',
+      homeDir: input.runtimeHints?.homeDir ?? process.env.HOME ?? os.homedir(),
     }),
   ]
     .filter(Boolean)
