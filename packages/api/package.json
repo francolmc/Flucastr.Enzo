@@ -11,7 +11,6 @@
     "test": "pnpm run build && node dist/lib/__tests__/extractProjectsFromMemoryText.test.js"
   },
   "dependencies": {
-    "@enzo/bootstrap": "workspace:*",
     "@enzo/core": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
