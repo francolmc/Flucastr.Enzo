@@ -1,134 +1,214 @@
 import { ModelClient, Message } from '../model/client.js';
 import { Memory, Tool } from '../memory/memory.js';
 
-export type PlannerAction =
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
-  | { type: 'response'; content: string }
-  | { type: 'done'; content: string };
+export interface PlannerResult {
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  response?: string;
+  plan?: string[];
+}
 
 export interface Planner {
-  decide(
+  resolve(
     userMessage: string,
     userId: string,
-    history: Message[],
-    previousResult?: string
-  ): Promise<PlannerAction>;
+  ): Promise<string>;
 }
 
 export function createPlanner(model: ModelClient, memory: Memory): Planner {
   return {
-    async decide(userMessage, userId, history, previousResult) {
+    async resolve(userMessage, userId) {
       const facts = memory.getFacts(userId);
       const tools = memory.getTools();
 
-      const systemPrompt = buildSystemPrompt(facts, tools, previousResult);
+      const understanding = await understand(model, userMessage, facts);
 
-      const messages: Message[] = [
-        { role: 'system', content: systemPrompt },
-        ...history,
-        { role: 'user', content: userMessage },
-      ];
+      const rito = null;
 
-      const raw = await model.complete(messages, { temperature: 0.2 });
-      return parseAction(raw);
+      const plan = rito ?? await planSteps(model, understanding, tools);
+
+      const results: string[] = [];
+      for (const step of plan) {
+        const result = await executeStep(model, step, tools, results);
+        results.push(result);
+      }
+
+      return await validateAndRespond(model, userMessage, understanding, results, facts);
     },
   };
 }
 
-function buildSystemPrompt(
-  facts: Array<{ key: string; value: string }>,
-  tools: Tool[],
-  previousResult?: string
-): string {
-  const parts: string[] = [];
+async function understand(
+  model: ModelClient,
+  userMessage: string,
+  facts: Array<{ key: string; value: string }>
+): Promise<string> {
+  const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
 
-  parts.push(`You are Enzo, an intelligent personal assistant.
-Your job is to help the user by taking real actions — not just talking about them.`);
+  const raw = await model.complete([
+    {
+      role: 'system',
+      content: `You are analyzing a user request. Describe in ONE clear sentence what the user wants to achieve.
 
-  if (facts.length > 0) {
-    parts.push(`WHAT YOU KNOW ABOUT THE USER:
-${facts.map(f => `- ${f.key}: ${f.value}`).join('\n')}`);
-  }
+USER CONTEXT:
+${factList}
 
-  if (tools.length > 0) {
-    parts.push(`TOOLS AVAILABLE:
-${tools.map(t => `- ${t.name}: ${t.description}
-  Input schema: ${JSON.stringify(t.inputSchema)}`).join('\n')}`);
-  }
+Be specific about files, paths, and content when mentioned.
+Respond with ONLY one sentence.`
+    },
+    { role: 'user', content: userMessage }
+  ], { temperature: 0 });
 
-  if (previousResult) {
-    parts.push(`ACTIONS TAKEN SO FAR:
-${previousResult}
-
-Based on these results, decide the NEXT action. Do not repeat actions already taken.
-If you have enough information to complete the task, use write_file or respond directly.`);
-  }
-
-  parts.push(`DECISION RULES:
-- If you need to take an action (create, read, write, search, organize) → use a tool
-- If the previous action gave you what you need → respond to the user
-- If you have all the information needed → respond directly
-- NEVER say you cannot do something if a tool can do it
-- NEVER invent file contents or search results
-
-RESPOND WITH EXACTLY ONE of these JSON formats:
-
-Use a tool:
-{"action":"tool","name":"tool_name","input":{...}}
-
-Respond to user:
-{"action":"response","content":"your response here"}
-
-Task complete:
-{"action":"done","content":"final response to user"}`);
-
-  return parts.join('\n\n');
+  const understanding = raw.trim();
+  return understanding;
 }
 
-function parseAction(raw: string): PlannerAction {
-  const cleaned = raw.replace(/```json|```/g, '').trim();
+async function planSteps(
+  model: ModelClient,
+  understanding: string,
+  tools: Tool[]
+): Promise<string[]> {
+  const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
 
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) {
-    return { type: 'response', content: cleaned };
-  }
+  const raw = await model.complete([
+    {
+      role: 'system',
+      content: `You are a task planner. Break down the objective into ALL necessary steps to complete it.
 
-  let jsonStr = match[0];
+AVAILABLE TOOLS:
+${toolList}
 
-  let open = 0;
-  let closeAt = -1;
-  for (let i = 0; i < jsonStr.length; i++) {
-    if (jsonStr[i] === '{') open++;
-    if (jsonStr[i] === '}') {
-      open--;
-      if (open === 0) { closeAt = i; break; }
-    }
-  }
-  if (closeAt !== -1) {
-    jsonStr = jsonStr.slice(0, closeAt + 1);
-  }
+Rules:
+- Each step must use exactly ONE tool
+- Steps must be in execution order
+- Include ALL steps needed — do not skip any
+- To modify a file: you need BOTH read_file (to get current content) AND write_file (to save updated content)
+- Be specific about file paths and content
+
+Respond with a numbered list using actual numbers. Each line: "1. tool_name: what to do"
+Example:
+1. read_file: read /path/to/file
+2. write_file: write updated content to /path/to/file
+Nothing else.`
+    },
+    { role: 'user', content: `Objective: ${understanding}` }
+  ], { temperature: 0 });
+
+  const steps = raw.split('\n')
+    .filter(line => /^[\dN]+\./.test(line.trim()))
+    .map(line => line.trim());
+
+  return steps;
+}
+
+async function executeStep(
+  model: ModelClient,
+  step: string,
+  tools: Tool[],
+  previousResults: string[]
+): Promise<string> {
+  const context = previousResults.length > 0
+    ? `\nPREVIOUS RESULTS:\n${previousResults.join('\n')}`
+    : '';
+
+  const raw = await model.complete([
+    {
+      role: 'system',
+      content: `Extract the tool parameters for this step.
+
+STEP: ${step}
+TOOLS: ${JSON.stringify(tools.map(t => ({ name: t.name, schema: t.inputSchema })))}
+${context}
+
+If this step needs content from a previous result, use that content.
+Respond with ONLY a JSON object: {"tool": "tool_name", "input": {...}}
+Nothing else.`
+    },
+    { role: 'user', content: step }
+  ], { temperature: 0 });
+
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return `Step failed: could not parse parameters`;
 
   try {
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(match[0]);
+    const toolName = parsed.tool;
+    const toolInput = parsed.input ?? {};
 
-    if (parsed.action === 'tool' && parsed.name) {
-      return {
-        type: 'tool',
-        name: parsed.name,
-        input: parsed.input ?? {},
-      };
-    }
-
-    if (parsed.action === 'response' && parsed.content) {
-      return { type: 'response', content: parsed.content };
-    }
-
-    if (parsed.action === 'done' && parsed.content) {
-      return { type: 'done', content: parsed.content };
-    }
-
-    return { type: 'response', content: raw.trim() };
-  } catch {
-    return { type: 'response', content: raw.trim() };
+    const result = await callTool(toolName, toolInput);
+    return `${toolName}: ${result.slice(0, 300)}`;
+  } catch (e) {
+    return `Step failed: ${e}`;
   }
+}
+
+async function validateAndRespond(
+  model: ModelClient,
+  userMessage: string,
+  understanding: string,
+  results: string[],
+  facts: Array<{ key: string; value: string }>
+): Promise<string> {
+  const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
+  const resultList = results.join('\n');
+
+  return await model.complete([
+    {
+      role: 'system',
+      content: `You are Enzo, a personal assistant. Respond in Spanish.
+
+USER CONTEXT:
+${factList}
+
+WHAT WAS DONE:
+${resultList}
+
+Verify the objective was achieved and confirm to the user in natural language.
+Be brief and direct. No markdown formatting.`
+    },
+    { role: 'user', content: userMessage }
+  ], { temperature: 0.3 });
+}
+
+async function callTool(name: string, input: Record<string, unknown>): Promise<string> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+
+  const transport = new StdioClientTransport({
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem', process.env.HOME ?? '/'],
+  });
+
+  const client = new Client({ name: 'enzo', version: '2.0.0' });
+  await client.connect(transport);
+
+  try {
+    const result = await client.callTool({ name, arguments: input });
+    const content = result.content as Array<{ type: string; text: string }>;
+    return content.map(c => c.text).join('\n');
+  } finally {
+    await client.close();
+  }
+}
+
+export async function generateResponse(
+  model: ModelClient,
+  userMessage: string,
+  facts: Array<{ key: string; value: string }>,
+  context?: string
+): Promise<string> {
+  const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
+  const ctx = context ? `\nContext:\n${context}\n` : '';
+
+  return await model.complete([
+    {
+      role: 'system',
+      content: `You are Enzo, a personal assistant. Respond naturally in Spanish.
+
+USER CONTEXT:
+${factList}
+${ctx}`
+    },
+    { role: 'user', content: userMessage }
+  ], { temperature: 0.3 });
 }
