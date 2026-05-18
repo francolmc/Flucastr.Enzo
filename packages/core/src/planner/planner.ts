@@ -1,5 +1,6 @@
 import { ModelClient, Message } from '../model/client.js';
 import { Memory, Tool } from '../memory/memory.js';
+import { McpRegistry } from '../mcp/registry.js';
 
 export interface PlannerResult {
   toolName?: string;
@@ -15,13 +16,13 @@ export interface Planner {
   ): Promise<string>;
 }
 
-export function createPlanner(model: ModelClient, memory: Memory): Planner {
+export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: McpRegistry): Planner {
   return {
     async resolve(userMessage, userId) {
       const facts = memory.getFacts(userId);
       const tools = memory.getTools();
 
-      const understanding = await understand(model, userMessage, facts);
+      const understanding = await understand(model, userMessage, facts, tools);
 
       const rito = null;
 
@@ -29,8 +30,11 @@ export function createPlanner(model: ModelClient, memory: Memory): Planner {
 
       const results: string[] = [];
       for (const step of plan) {
-        const result = await executeStep(model, step, tools, results);
+        const result = await executeStep(model, step, tools, results, mcpRegistry);
         results.push(result);
+
+        const done = await isObjectiveComplete(model, understanding, results);
+        if (done) break;
       }
 
       return await validateAndRespond(model, userMessage, understanding, results, facts);
@@ -41,9 +45,11 @@ export function createPlanner(model: ModelClient, memory: Memory): Planner {
 async function understand(
   model: ModelClient,
   userMessage: string,
-  facts: Array<{ key: string; value: string }>
+  facts: Array<{ key: string; value: string }>,
+  tools: Tool[]
 ): Promise<string> {
   const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
+  const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
 
   const raw = await model.complete([
     {
@@ -53,14 +59,17 @@ async function understand(
 USER CONTEXT:
 ${factList}
 
-Be specific about files, paths, and content when mentioned.
+AVAILABLE TOOLS:
+${toolList}
+
+Be specific. If the user wants web information, note that search tools are available.
+If the user context contains a specific file path relevant to the request, include that exact path in your description.
 Respond with ONLY one sentence.`
     },
     { role: 'user', content: userMessage }
   ], { temperature: 0 });
 
-  const understanding = raw.trim();
-  return understanding;
+  return raw.trim();
 }
 
 async function planSteps(
@@ -105,7 +114,8 @@ async function executeStep(
   model: ModelClient,
   step: string,
   tools: Tool[],
-  previousResults: string[]
+  previousResults: string[],
+  mcpRegistry: McpRegistry
 ): Promise<string> {
   const context = previousResults.length > 0
     ? `\nPREVIOUS RESULTS:\n${previousResults.join('\n')}`
@@ -135,7 +145,7 @@ Nothing else.`
     const toolName = parsed.tool;
     const toolInput = parsed.input ?? {};
 
-    const result = await callTool(toolName, toolInput);
+    const result = await mcpRegistry.callTool(toolName, toolInput);
     return `${toolName}: ${result.slice(0, 300)}`;
   } catch (e) {
     return `Step failed: ${e}`;
@@ -163,6 +173,8 @@ ${factList}
 WHAT WAS DONE:
 ${resultList}
 
+Use ONLY information from the RESULTS section. Never invent or add information not present in the results.
+List ALL items from the results. Do not summarize or omit any item.
 Verify the objective was achieved and confirm to the user in natural language.
 Be brief and direct. No markdown formatting.`
     },
@@ -170,25 +182,33 @@ Be brief and direct. No markdown formatting.`
   ], { temperature: 0.3 });
 }
 
-async function callTool(name: string, input: Record<string, unknown>): Promise<string> {
-  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+async function isObjectiveComplete(
+  model: ModelClient,
+  understanding: string,
+  results: string[]
+): Promise<boolean> {
+  const raw = await model.complete([
+    {
+      role: 'system',
+      content: `You evaluate if a task objective has been FULLY achieved with CONCRETE results.
 
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem', process.env.HOME ?? '/'],
-  });
+OBJECTIVE: ${understanding}
 
-  const client = new Client({ name: 'enzo', version: '2.0.0' });
-  await client.connect(transport);
+RESULTS SO FAR:
+${results.join('\n')}
 
-  try {
-    const result = await client.callTool({ name, arguments: input });
-    const content = result.content as Array<{ type: string; text: string }>;
-    return content.map(c => c.text).join('\n');
-  } finally {
-    await client.close();
-  }
+Rules:
+- If the objective requires reading a file, the file content must be in the results
+- If the objective requires web search, search results must be in the results  
+- Listing directories or checking permissions is NOT achieving the objective
+- Only answer YES if the actual requested data is present in the results
+
+Respond with ONLY "YES" or "NO".`
+    },
+    { role: 'user', content: 'Is the objective fully complete with concrete results?' }
+  ], { temperature: 0 });
+
+  return raw.trim().toUpperCase().startsWith('YES');
 }
 
 export async function generateResponse(

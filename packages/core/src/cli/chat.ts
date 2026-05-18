@@ -4,7 +4,7 @@ import { createModelClient } from '../model/client.js';
 import { createMemory } from '../memory/memory.js';
 import { createPlanner } from '../planner/planner.js';
 import { loadConfig } from '../config.js';
-import { setupTools } from '../tools/setup.js';
+import { createMcpRegistry } from '../mcp/registry.js';
 
 const USER_ID = 'franco';
 
@@ -12,9 +12,8 @@ async function main() {
   const config = loadConfig();
   const memory = createMemory(config);
   const model = createModelClient(config);
-  const planner = createPlanner(model, memory);
-
-  await setupTools(memory);
+  const mcpRegistry = await createMcpRegistry(config.mcpServers, memory);
+  const planner = createPlanner(model, memory, mcpRegistry);
 
   memory.saveFact(USER_ID, 'name', 'Franco');
   memory.saveFact(USER_ID, 'home', os.homedir());
