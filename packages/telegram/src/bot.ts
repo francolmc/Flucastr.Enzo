@@ -121,10 +121,11 @@ export function createBot(token: string) {
     }, 5000);
 
     try {
-      const context = conversationMemory.getRelevant(userMessage);
+      const contextForUnderstand = conversationMemory.getRelevantForUnderstand(userMessage);
+      const contextForPlan = conversationMemory.getRelevant(userMessage);
 
       const response = await Promise.race([
-        planner.resolve(userMessage, USER_ID, context),
+        planner.resolve(userMessage, USER_ID, contextForPlan, false, contextForUnderstand),
         new Promise<string>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), 120000)
         )
@@ -168,10 +169,11 @@ export function createBot(token: string) {
         return;
       }
 
-      const context = conversationMemory.getRelevant(userMessage);
+      const contextForUnderstand = conversationMemory.getRelevantForUnderstand(userMessage);
+      const contextForPlan = conversationMemory.getRelevant(userMessage);
 
       const response = await Promise.race([
-        planner.resolve(userMessage, USER_ID, context, true),
+        planner.resolve(userMessage, USER_ID, contextForPlan, true, contextForUnderstand),
         new Promise<string>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), 120000)
         )

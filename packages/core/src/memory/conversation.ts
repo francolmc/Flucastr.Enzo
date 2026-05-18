@@ -8,6 +8,7 @@ export interface Turn {
 export interface ConversationMemory {
   save(userMessage: string, enzoResponse: string): void;
   getRelevant(currentMessage: string, maxTurns?: number): string;
+  getRelevantForUnderstand(currentMessage: string): string;
 }
 
 export function createConversationMemory(): ConversationMemory {
@@ -58,6 +59,16 @@ export function createConversationMemory(): ConversationMemory {
       return selected
         .map(t => `User: ${t.userMessage}\nEnzo: ${t.enzoResponse}`)
         .join('\n\n');
+    },
+
+    getRelevantForUnderstand(currentMessage) {
+      if (turns.length === 0) return '';
+
+      const recent = turns.slice(-2);
+
+      return recent
+        .map(t => `User: ${t.userMessage}`)
+        .join('\n');
     },
   };
 }

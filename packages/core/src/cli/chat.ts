@@ -34,8 +34,9 @@ async function main() {
     rl.question('> ', async (userMessage) => {
       if (!userMessage.trim()) { ask(); return; }
 
-      const context = conversationMemory.getRelevant(userMessage);
-      const response = await planner.resolve(userMessage, USER_ID, context);
+      const contextForUnderstand = conversationMemory.getRelevantForUnderstand(userMessage);
+      const contextForPlan = conversationMemory.getRelevant(userMessage);
+      const response = await planner.resolve(userMessage, USER_ID, contextForPlan, false, contextForUnderstand);
       conversationMemory.save(userMessage, response);
       console.log(`\nEnzo: ${response}\n`);
       ask();
