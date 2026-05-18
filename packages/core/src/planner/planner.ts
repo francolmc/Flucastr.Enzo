@@ -14,12 +14,13 @@ export interface Planner {
     userMessage: string,
     userId: string,
     conversationContext?: string,
+    isVoice?: boolean,
   ): Promise<string>;
 }
 
 export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: McpRegistry): Planner {
   return {
-    async resolve(userMessage, userId, conversationContext?) {
+    async resolve(userMessage, userId, conversationContext?, isVoice?) {
       const facts = memory.getFacts(userId);
       const tools = memory.getTools();
 
@@ -33,12 +34,11 @@ export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: M
       for (const step of plan) {
         const result = await executeStep(model, step, tools, results, mcpRegistry);
         results.push(result);
-
-        const done = await isObjectiveComplete(model, understanding, results);
-        if (done) break;
       }
 
-      return await validateAndRespond(model, userMessage, understanding, results, facts);
+      console.log('[results before respond]:', results);
+
+      return await validateAndRespond(model, userMessage, understanding, results, facts, isVoice);
     },
   };
 }
@@ -116,6 +116,8 @@ Nothing else.`
     .filter(line => /^[\dN]+\./.test(line.trim()))
     .map(line => line.trim());
 
+  console.log('[plan]:', steps);
+
   return steps;
 }
 
@@ -166,15 +168,25 @@ async function validateAndRespond(
   userMessage: string,
   understanding: string,
   results: string[],
-  facts: Array<{ key: string; value: string }>
+  facts: Array<{ key: string; value: string }>,
+  isVoice?: boolean
 ): Promise<string> {
   const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
   const resultList = results.join('\n');
+
+  const voiceInstruction = isVoice
+    ? `\nIMPORTANT: This response will be READ ALOUD.
+       - Never mention file paths or URLs
+       - Never say "open the file" or "check the document"
+       - Always state the actual content directly
+       - Keep it conversational and natural for speech`
+    : '';
 
   return await model.complete([
     {
       role: 'system',
       content: `You are Enzo, a personal assistant. Respond in Spanish.
+${voiceInstruction}
 
 USER CONTEXT:
 ${factList}
@@ -189,35 +201,6 @@ Be brief and direct. No markdown formatting.`
     },
     { role: 'user', content: userMessage }
   ], { temperature: 0.3 });
-}
-
-async function isObjectiveComplete(
-  model: ModelClient,
-  understanding: string,
-  results: string[]
-): Promise<boolean> {
-  const raw = await model.complete([
-    {
-      role: 'system',
-      content: `You evaluate if a task objective has been FULLY achieved with CONCRETE results.
-
-OBJECTIVE: ${understanding}
-
-RESULTS SO FAR:
-${results.join('\n')}
-
-Rules:
-- If the objective requires reading a file, the file content must be in the results
-- If the objective requires web search, search results must be in the results  
-- Listing directories or checking permissions is NOT achieving the objective
-- Only answer YES if the actual requested data is present in the results
-
-Respond with ONLY "YES" or "NO".`
-    },
-    { role: 'user', content: 'Is the objective fully complete with concrete results?' }
-  ], { temperature: 0 });
-
-  return raw.trim().toUpperCase().startsWith('YES');
 }
 
 export async function generateResponse(

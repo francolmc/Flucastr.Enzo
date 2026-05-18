@@ -59,6 +59,37 @@ async function downloadTelegramFile(ctx: any, fileId: string): Promise<string> {
   return tmpPath;
 }
 
+async function textToSpeech(text: string): Promise<string | null> {
+  const audioPath = path.join(os.tmpdir(), `enzo_response_${Date.now()}.mp3`);
+  const escapedText = text.replace(/"/g, "'").replace(/\n/g, ' ');
+
+  const ttsCommands = [
+    'edge-tts',
+    '/usr/local/bin/edge-tts',
+    '/opt/homebrew/bin/edge-tts',
+    'python -m edge_tts',
+    'python3 -m edge_tts',
+  ];
+
+  const voices = ['es-CL-CatalinaNeural', 'es-ES-AlvaroNeural', 'es-MX-DaliaNeural'];
+
+  for (const cmd of ttsCommands) {
+    for (const voice of voices) {
+      try {
+        await execAsync(
+          `${cmd} --voice "${voice}" --text "${escapedText}" --write-media "${audioPath}"`,
+          { timeout: 30000 }
+        );
+        if (fs.existsSync(audioPath)) {
+          return audioPath;
+        }
+      } catch {}
+    }
+  }
+
+  return null;
+}
+
 const config = loadConfig();
 const memory = createMemory(config);
 const model = createModelClient(config);
@@ -69,8 +100,10 @@ const conversationMemory = createConversationMemory();
 const USER_ID = config.telegramOwnerId ?? 'franco';
 
 memory.saveFact(USER_ID, 'name', 'Franco');
-memory.saveFact(USER_ID, 'home', os.homedir());
-memory.saveFact(USER_ID, 'tasks_file', `${os.homedir()}/tareas.md`);
+  memory.saveFact(USER_ID, 'home', os.homedir());
+  memory.saveFact(USER_ID, 'tasks_file', `${os.homedir()}/tareas.md`);
+  memory.saveFact(USER_ID, 'assistant_description', 
+  'Enzo is a personal AI assistant built to help Franco with daily tasks, web search, file management, and automation. Enzo runs on small local models using the Amplify architecture.');
 
 export function createBot(token: string) {
   const bot = new Telegraf(token);
@@ -83,14 +116,32 @@ export function createBot(token: string) {
     const userMessage = ctx.message.text;
     await ctx.sendChatAction('typing');
 
+    const typingInterval = setInterval(() => {
+      ctx.sendChatAction('typing').catch(() => {});
+    }, 5000);
+
     try {
       const context = conversationMemory.getRelevant(userMessage);
-      const response = await planner.resolve(userMessage, USER_ID, context);
+
+      const response = await Promise.race([
+        planner.resolve(userMessage, USER_ID, context),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 120000)
+        )
+      ]);
+
+      clearInterval(typingInterval);
       conversationMemory.save(userMessage, response);
       await ctx.reply(response.slice(0, 4000));
-    } catch (error) {
-      await ctx.reply('Ocurrió un error. Intenta de nuevo.');
-      console.error('[telegram error]:', error);
+
+    } catch (error: any) {
+      clearInterval(typingInterval);
+      if (error.message === 'timeout') {
+        await ctx.reply('La tarea tomó demasiado tiempo. Intenta con algo más específico.');
+      } else {
+        await ctx.reply('Ocurrió un error. Intenta de nuevo.');
+        console.error('[telegram error]:', error);
+      }
     }
   });
 
@@ -100,6 +151,10 @@ export function createBot(token: string) {
 
     await ctx.sendChatAction('typing');
 
+    const typingInterval = setInterval(() => {
+      ctx.sendChatAction('typing').catch(() => {});
+    }, 5000);
+
     try {
       const audioPath = await downloadTelegramFile(ctx, ctx.message.voice.file_id);
 
@@ -108,20 +163,45 @@ export function createBot(token: string) {
       fs.unlinkSync(audioPath);
 
       if (!userMessage) {
+        clearInterval(typingInterval);
         await ctx.reply('No pude entender el audio. Intenta de nuevo.');
         return;
       }
 
       const context = conversationMemory.getRelevant(userMessage);
-      const response = await planner.resolve(userMessage, USER_ID, context);
+
+      const response = await Promise.race([
+        planner.resolve(userMessage, USER_ID, context, true),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 120000)
+        )
+      ]);
+
+      clearInterval(typingInterval);
       conversationMemory.save(userMessage, response);
+      await ctx.sendChatAction('record_voice');
+      const responseAudio = await textToSpeech(response);
 
-      await ctx.reply(`🎤 "${userMessage}"\n\n${response}`);
+      if (responseAudio) {
+        await ctx.replyWithVoice({ source: responseAudio });
+        fs.unlinkSync(responseAudio);
+      } else {
+        await ctx.reply(`🎤 "${userMessage}"\n\n${response}`);
+      }
 
-    } catch (error) {
-      console.error('[voice error]:', error);
-      await ctx.reply('Error procesando el audio.');
+    } catch (error: any) {
+      clearInterval(typingInterval);
+      if (error.message === 'timeout') {
+        await ctx.reply('La tarea tomó demasiado tiempo. Intenta con algo más específico.');
+      } else {
+        console.error('[voice error]:', error);
+        await ctx.reply('Error procesando el audio.');
+      }
     }
+  });
+
+  bot.catch((err: any) => {
+    console.error('[bot error]:', err.message);
   });
 
   return bot;

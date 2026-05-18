@@ -142,7 +142,12 @@ pip3 install openai-whisper
 brew install whisper.cpp
 ```
 
- whisper detecta automáticamente qué opción está instalada.
+**3. edge-tts** (síntesis de voz, respuestas en audio):
+```bash
+pip3 install edge-tts
+```
+
+El bot detecta automáticamente qué herramientas están instaladas.
 
 ## Quickstart
 

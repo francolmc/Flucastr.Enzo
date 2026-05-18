@@ -20,6 +20,8 @@ async function main() {
   memory.saveFact(USER_ID, 'name', 'Franco');
   memory.saveFact(USER_ID, 'home', os.homedir());
   memory.saveFact(USER_ID, 'tasks_file', `${os.homedir()}/tareas.md`);
+  memory.saveFact(USER_ID, 'assistant_description', 
+  'Enzo is a personal AI assistant built to help Franco with daily tasks, web search, file management, and automation. Enzo runs on small local models using the Amplify architecture.');
 
   const rl = readline.createInterface({
     input: process.stdin,
