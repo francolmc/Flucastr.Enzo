@@ -13,20 +13,21 @@ export interface Planner {
   resolve(
     userMessage: string,
     userId: string,
+    conversationContext?: string,
   ): Promise<string>;
 }
 
 export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: McpRegistry): Planner {
   return {
-    async resolve(userMessage, userId) {
+    async resolve(userMessage, userId, conversationContext?) {
       const facts = memory.getFacts(userId);
       const tools = memory.getTools();
 
-      const understanding = await understand(model, userMessage, facts, tools);
+      const understanding = await understand(model, userMessage, facts, tools, conversationContext);
 
       const rito = null;
 
-      const plan = rito ?? await planSteps(model, understanding, tools);
+      const plan = rito ?? await planSteps(model, understanding, tools, conversationContext);
 
       const results: string[] = [];
       for (const step of plan) {
@@ -46,16 +47,20 @@ async function understand(
   model: ModelClient,
   userMessage: string,
   facts: Array<{ key: string; value: string }>,
-  tools: Tool[]
+  tools: Tool[],
+  conversationContext?: string
 ): Promise<string> {
   const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
   const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
+  const ctx = conversationContext
+    ? `\nRECENT CONVERSATION:\n${conversationContext}\n`
+    : '';
 
   const raw = await model.complete([
     {
       role: 'system',
       content: `You are analyzing a user request. Describe in ONE clear sentence what the user wants to achieve.
-
+${ctx}
 USER CONTEXT:
 ${factList}
 
@@ -75,15 +80,19 @@ Respond with ONLY one sentence.`
 async function planSteps(
   model: ModelClient,
   understanding: string,
-  tools: Tool[]
+  tools: Tool[],
+  conversationContext?: string
 ): Promise<string[]> {
   const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
+  const ctx = conversationContext
+    ? `\nRECENT CONVERSATION:\n${conversationContext}\n`
+    : '';
 
   const raw = await model.complete([
     {
       role: 'system',
       content: `You are a task planner. Break down the objective into ALL necessary steps to complete it.
-
+${ctx}
 AVAILABLE TOOLS:
 ${toolList}
 
