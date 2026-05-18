@@ -43,20 +43,12 @@ Manos devuelve el resultado al Planner
 
 Manos no hardcodea ningún MCP ni ninguna herramienta. Todo es dinámico:
 
-- Las tools se registran en Raíz con su descripción y schema
-- Los MCPs se registran en Raíz con su comando de inicio y las tools que exponen
-- Manos descubre en tiempo de ejecución qué servidor tiene cada tool
+- Los MCPs se configuran en `~/.enzo/config.json`
+- El registry descubre las tools de cada MCP al inicio via `listTools()`
+- Las tools descubiertas se guardan en Raíz con su descripción y schema
+- El Planner lee las tools desde Raíz para decidir qué usar
 
-Esto significa que agregar un MCP nuevo es solo registrarlo — sin tocar código.
-Raíz (SQLite):
-tools:
-write_file → mcp: filesystem
-search     → mcp: duckduckgo
-calendar   → mcp: google-calendar
-mcps:
-filesystem  → { command: "npx", args: [...] }
-duckduckgo  → { command: "uvx", args: [...] }
-google-calendar → { command: "npx", args: [...] }
+Esto significa que agregar un MCP nuevo es solo agregarlo al config.json — sin tocar código.
 
 ## Conexión a MCPs
 
@@ -81,16 +73,12 @@ Manos nunca reintenta automáticamente. El Planner decide si reintentar.
 ## Estado actual
 
 - ✅ Implementado en `packages/core/src/executor/executor.ts`
-- ✅ Conecta a MCP filesystem via stdio
+- ✅ Registry de MCPs en `packages/core/src/mcp/registry.ts`
+- ✅ Descubrimiento automático de tools desde config.json
 - ✅ Devuelve resultados y errores al Planner
-- 🔄 MCPs dinámicos pendientes — hoy el MCP filesystem está hardcodeado
 - 🔄 Conexiones persistentes pendientes — hoy crea una conexión nueva por cada llamada
 - 🔄 DuckDuckGo MCP pendiente — búsqueda web no disponible aún
 
-## Problema conocido
-
-El MCP filesystem está hardcodeado en el executor. Esto viola el principio de Amplify — las herramientas deben ser dinámicas. El fix es leer la configuración de MCPs desde Raíz en lugar de hardcodear el servidor.
-
-## Nombre
+## El nombre
 
 Manos — porque hace. No piensa, no decide, no evalúa. Toma lo que el Planner le da y lo convierte en acción real en el mundo.

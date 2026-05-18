@@ -45,6 +45,14 @@ Nada más.
 
 Enzo es el único sistema diseñado desde el principio para modelos pequeños. No como limitación — como diferencial.
 
+## Por qué lenguaje natural (NLT)
+
+La investigación de Natural Language Tools (NLT) demuestra que los modelos open-weight degradan hasta 27 puntos cuando se les pide interpretar JSON estructurado en texto. El parsing de JSON requiere capacidad computacional que los modelos pequeños no tienen de sobra.
+
+En cambio, cuando se les pide razonar en lenguaje natural y responder en texto plano, mantienen su capacidad de razonamiento completo. El Planner de Enzo usa este principio: el modelo razona y responde en lenguaje natural, sin contratos JSON.
+
+Esto no es un workaround — es la base teórica de Enzo. Cada prompt del Planner está diseñado para que el modelo razone en lenguaje natural y entregue resultados en texto, no en estructuras JSON.
+
 ## Lo que Amplify NO es
 
 - No es el loop de código (eso es el Planner)

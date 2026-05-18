@@ -119,7 +119,7 @@ Raíz no tiene embeddings, no tiene búsqueda semántica, no tiene vectores. Sol
 
 - ✅ Implementado en `packages/core/src/memory/memory.ts`
 - ✅ Tablas `facts` y `tools` funcionando
-- 🔄 Tabla `mcps` pendiente — MCPs hardcodeados en Manos
+- ✅ Tabla `mcps` implementada — MCPs leídos desde config.json
 - 🔄 Tabla `skills` pendiente — Ritos no implementados aún
 - 🔄 Extracción automática de facts pendiente — hoy se guardan manualmente
 

@@ -10,9 +10,28 @@ Planner es el sistema de decisión de Enzo. Su única responsabilidad es respond
 
 Esta restricción es intencional. Es la aplicación directa de Amplify al sistema de decisión.
 
+## Las 5 fases (Polya)
+
+El Planner implementa el método de George Pólya para resolución de problemas:
+
+**Fase 1 — Entender**
+El modelo describe en una oración qué quiere lograr el usuario, con las tools disponibles como contexto.
+
+**Fase 2 — Planificar**
+El modelo genera los pasos necesarios para completar el objetivo. Cada paso usa exactamente una tool.
+
+**Fase 3 — Ejecutar**
+El modelo extrae los parámetros del paso actual y llama a la tool correspondiente via MCP.
+
+**Fase 4 — Evaluar**
+Después de cada paso, el modelo verifica si el objetivo ya está cumplido. Si sí, termina el loop.
+
+**Fase 5 — Responder**
+El modelo genera una respuesta en lenguaje natural confirmando al usuario qué se hizo.
+
 ## Qué recibe
 
-En cada iteración, el Planner recibe exactamente cuatro cosas:
+En cada fase, el Planner recibe exactamente cuatro cosas:
 
 1. **El mensaje del usuario** — qué quiere hacer
 2. **Lo que sabe del usuario** — hechos de Raíz (nombre, preferencias, proyectos)
@@ -21,77 +40,35 @@ En cada iteración, el Planner recibe exactamente cuatro cosas:
 
 Nada más. Sin historial completo de conversación. Sin contexto acumulado de múltiples pasos.
 
-## Qué decide
+## Por qué lenguaje natural en lugar de JSON
 
-El Planner responde con exactamente una de tres acciones:
+Los modelos pequeños open-weight degradan hasta 27 puntos cuando se les pide interpretar JSON estructurado en texto (investigación NLT). En cambio, cuando se les pide razonar en lenguaje natural y outputear en texto plano, mantienen su capacidad de razonamiento.
 
-```json
-// Usar una herramienta
-{"action":"tool","name":"write_file","input":{"path":"...","content":"..."}}
-
-// Responder al usuario
-{"action":"response","content":"tu respuesta aquí"}
-
-// Tarea completada
-{"action":"done","content":"confirmación en lenguaje natural"}
-```
-
-Una sola acción. Nunca dos.
-
-## El loop
-Planner decide → tool
-↓
-Manos ejecuta → resultado
-↓
-Planner decide → tool o done
-↓
-... hasta done o MAX_ITERATIONS
+El Planner usa este principio: el modelo razona en lenguaje natural, no en JSON. Esto no es un hack — es el fundamento teórico del diseño.
 
 ## Lo que el Planner NO hace
 
 - No clasifica la complejidad de la tarea (SIMPLE/MODERATE/COMPLEX)
-- No descompone la tarea en pasos antes de empezar
+- No descompone la tarea en pasos antes de empezar — lo hace fase por fase
 - No tiene reglas específicas para tipos de archivos o herramientas
 - No hardcodea nombres de herramientas
-- No decide cuándo terminar basándose en reglas — el modelo decide
-
-## Por qué no hay Classifier ni Decomposer
-
-En versiones anteriores de Enzo existían un Classifier (que decidía SIMPLE/MODERATE/COMPLEX) y un Decomposer (que dividía tareas en subtareas). Ambos fueron eliminados en Amplify v2.
-
-**El problema del Classifier:** clasificar requiere entender la intención completa del usuario — exactamente lo que un modelo pequeño hace mal con contexto complejo.
-
-**El problema del Decomposer:** descomponer una tarea antes de ejecutarla requiere ver el problema completo — lo opuesto al principio de Amplify.
-
-**La solución:** dejar que el modelo decida paso a paso. No necesita ver el problema completo si solo tiene que decidir el siguiente paso.
+- No decide cuándo terminar basándose en reglas — el modelo decide en fase 4
 
 ## Temperatura
 
-El Planner usa temperatura 0.2 — baja pero no cero. Suficiente determinismo para seguir el formato JSON, suficiente flexibilidad para razonar sobre situaciones nuevas.
+El Planner usa temperatura 0 para las fases de análisis y planificación — determinismo para seguir el formato de salida. Temperatura 0.3 para la fase de respuesta — flexibilidad para expresarse naturalmente.
 
 ## Modelo mínimo validado
 
 - `qwen3:4b-instruct` — funciona para la mayoría de los casos
-- `qwen2.5:7b` — mejor seguimiento de instrucciones JSON
+- `qwen2.5:7b` — mejor seguimiento de instrucciones en español
 - `qwen3:8b` — recomendado para tareas complejas con múltiples pasos
 
 ## Estado actual
 
 - ✅ Implementado en `packages/core/src/planner/planner.ts`
+- ✅ 5 fases de Polya implementadas
+- ✅ Evaluación interativa en fase 4 (isObjectiveComplete)
 - ✅ Validado con qwen3:4b-instruct en CLI
-- 🔄 Loop infinito pendiente de resolver — el modelo no siempre emite `done` tras completar
-- 🔄 Telegram pendiente — JSON crudo llegando al usuario en algunos casos
-
-## Problema conocido y enfoque
-
-El modelo a veces no emite `done` después de completar una tarea — repite la misma acción hasta MAX_ITERATIONS. La causa: el resultado del paso anterior en el contexto incluye el JSON de la acción, y el modelo lo interpreta como instrucción pendiente.
-
-**Enfoque correcto:** el resultado que recibe el Planner debe ser solo el output de la herramienta — nunca el JSON de la acción que lo generó.
-
-## Decisiones de diseño
-
-**¿Por qué JSON en lugar de lenguaje natural?**
-Los modelos pequeños son más consistentes con formatos estructurados que con interpretación de lenguaje natural para decidir acciones. El JSON es el contrato mínimo que necesita el Planner para funcionar.
-
-**¿Por qué no usar function calling nativo?**
-Algunos modelos locales no soportan function calling nativo. El JSON en texto es universal — funciona con cualquier modelo que pueda seguir instrucciones.
+- ✅ Usa NLT — sin JSON estructurado en prompts
+- 🔄 Telegram pendiente — respuestas crudas llegando en algunos casos
