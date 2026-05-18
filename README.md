@@ -124,6 +124,26 @@ flowchart TD
 
 Requiere Node.js 22.5.0 o superior (usa `node:sqlite` nativo). Recomendado `pnpm` 9+.
 
+### Requisitos para transcripción de audio (Telegram)
+
+Para que el bot procese mensajes de voz, necesitás instalar:
+
+**1. FFmpeg** (convertidor de audio):
+```bash
+brew install ffmpeg
+```
+
+**2. Whisper** (transcripción). Opciones:
+```bash
+# Opción A: openai-whisper (Python, más preciso)
+pip3 install openai-whisper
+
+# Opción B: whisper.cpp (binario compilado, más rápido)
+brew install whisper.cpp
+```
+
+ whisper detecta automáticamente qué opción está instalada.
+
 ## Quickstart
 
 ```bash
