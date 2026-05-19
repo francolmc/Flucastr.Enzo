@@ -6,8 +6,21 @@ import { createPlanner } from '../planner/planner.js';
 import { loadConfig } from '../config.js';
 import { createMcpRegistry } from '../mcp/registry.js';
 import { createConversationMemory } from '../memory/conversation.js';
+import type { ExecutionContext } from '../planner/types.js';
 
 const USER_ID = 'franco';
+
+function buildExecutionContext(
+  understandContext: string | undefined,
+  conversationContext: string | undefined,
+  previousResults: string[]
+): ExecutionContext {
+  return {
+    understandContext: understandContext ?? '',
+    conversationContext: conversationContext ?? '',
+    previousResults,
+  };
+}
 
 async function main() {
   const config = loadConfig();
@@ -20,7 +33,7 @@ async function main() {
   memory.saveFact(USER_ID, 'name', 'Franco');
   memory.saveFact(USER_ID, 'home', os.homedir());
   memory.saveFact(USER_ID, 'tasks_file', `${os.homedir()}/tareas.md`);
-  memory.saveFact(USER_ID, 'assistant_description', 
+  memory.saveFact(USER_ID, 'assistant_description',
   'Enzo is a personal AI assistant built to help Franco with daily tasks, web search, file management, and automation. Enzo runs on small local models using the Amplify architecture.');
 
   const rl = readline.createInterface({
@@ -34,11 +47,19 @@ async function main() {
     rl.question('> ', async (userMessage) => {
       if (!userMessage.trim()) { ask(); return; }
 
-      const contextForUnderstand = conversationMemory.getRelevantForUnderstand(userMessage);
-      const contextForPlan = conversationMemory.getRelevant(userMessage);
-      const response = await planner.resolve(userMessage, USER_ID, contextForPlan, false, contextForUnderstand);
-      conversationMemory.save(userMessage, response);
-      console.log(`\nEnzo: ${response}\n`);
+      const understandContext = conversationMemory.getRelevantForUnderstand(userMessage);
+      const conversationContext = conversationMemory.getRelevant(userMessage);
+      const previousResults = conversationMemory.getLastTurnResults();
+
+      const executionContext = buildExecutionContext(
+        understandContext,
+        conversationContext,
+        previousResults
+      );
+
+      const result = await planner.resolve(userMessage, USER_ID, executionContext, false);
+      conversationMemory.save(userMessage, result.content);
+      console.log(`\nEnzo: ${result.content}\n`);
       ask();
     });
   };

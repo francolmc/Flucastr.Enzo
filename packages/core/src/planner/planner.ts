@@ -1,47 +1,110 @@
-import { ModelClient, Message } from '../model/client.js';
+import { ModelClient } from '../model/client.js';
 import { Memory, Tool } from '../memory/memory.js';
 import { McpRegistry } from '../mcp/registry.js';
+import type {
+  ExecutionContext,
+  PlannerOptions,
+  PlannerResponse,
+  Step,
+  Fact,
+} from './types.js';
+import { DEFAULT_PLANNER_OPTIONS } from './types.js';
+import { createToolRetriever } from './tool-retriever.js';
+import {
+  log,
+  buildUnderstandPrompt,
+  buildPlanPrompt,
+  buildExecutePrompt,
+  buildRespondPrompt,
+} from './prompts.js';
 
-export interface PlannerResult {
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-  response?: string;
-  plan?: string[];
-}
+export { buildUnderstandPrompt, buildPlanPrompt, buildExecutePrompt, buildRespondPrompt };
 
 export interface Planner {
   resolve(
     userMessage: string,
     userId: string,
-    conversationContext?: string,
+    executionContext: ExecutionContext,
     isVoice?: boolean,
-    understandContext?: string,
-  ): Promise<string>;
+  ): Promise<PlannerResponse>;
 }
 
-export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: McpRegistry): Planner {
+export function createPlanner(
+  model: ModelClient,
+  memory: Memory,
+  mcpRegistry: McpRegistry,
+  options: PlannerOptions = DEFAULT_PLANNER_OPTIONS
+): Planner {
+  const allTools = memory.getTools();
+  const retriever = createToolRetriever(model, allTools);
+
+  log('Tools', `Available ${allTools.length} tools:`);
+  allTools.forEach(t => log('Tools', `  - ${t.name}: ${t.description}`));
+
   return {
-    async resolve(userMessage, userId, conversationContext?, isVoice?, understandContext?) {
+    async resolve(userMessage, userId, executionContext, isVoice?) {
       const facts = memory.getFacts(userId);
-      const tools = memory.getTools();
 
-      const understanding = await understand(model, userMessage, facts, tools, understandContext);
+      const { understandContext, conversationContext, previousResults } = executionContext;
 
-      const rito = null;
+      log('Planner', `Starting resolve for user ${userId}`);
 
-      const plan = rito ?? await planSteps(model, understanding, tools, conversationContext);
+      log('Planner', 'Phase 0: Tool Retrieval');
+      const understanding = await understand(model, userMessage, facts, allTools, understandContext);
+      log('Understand', understanding);
 
-      const results: string[] = [];
-      if (plan.length > 0) {
-        for (const step of plan) {
-          const result = await executeStep(model, step, tools, results, mcpRegistry);
-          results.push(result);
-        }
+      const relevantTools = await retriever.retrieve(understanding, 5);
+      log('Tools', `Retrieved ${relevantTools.length} tools:`, relevantTools.map(t => t.name));
+
+      log('Planner', 'Phase 2: Plan');
+      const plan = await planSteps(model, understanding, relevantTools, conversationContext, previousResults);
+      log('Plan', `${plan.length} steps planned:`, plan.map(s => s.text));
+
+      if (plan.length === 0) {
+        log('Planner', 'No steps needed, generating direct response');
+        const response = await generateResponse(model, userMessage, facts, understandContext);
+        return {
+          content: response,
+          stepsExecuted: 0,
+          stepsPlanned: 0,
+          truncated: false,
+        };
       }
 
-      console.log('[results before respond]:', results);
+      const results: string[] = [];
+      let stepsExecuted = 0;
+      let totalSteps = 0;
+      let truncated = false;
 
-      return await validateAndRespond(model, userMessage, understanding, results, facts, isVoice);
+      log('Planner', 'Phase 3: Execute');
+      for (const step of plan) {
+        if (totalSteps >= options.maxTotalSteps) {
+          log('Planner', `Max steps (${options.maxTotalSteps}) reached, truncating`);
+          truncated = true;
+          break;
+        }
+
+        totalSteps++;
+        log('Execute', `Step ${totalSteps}/${options.maxTotalSteps}: ${step.text}`);
+
+        const result = await executeStep(model, step.text, relevantTools, results, mcpRegistry, executionContext);
+        results.push(result);
+        stepsExecuted++;
+        log('Execute', `Result (${result.length} chars):`, result.substring(0, 150));
+      }
+
+      log('Planner', 'Phase 4: Respond');
+      const response = await validateAndRespond(model, userMessage, understanding, results, facts, isVoice);
+      log('Respond', response.substring(0, 200) + (response.length > 200 ? '...' : ''));
+
+      log('Planner', `Completed: ${stepsExecuted} steps executed, truncated: ${truncated}`);
+
+      return {
+        content: response,
+        stepsExecuted,
+        stepsPlanned: plan.length,
+        truncated,
+      };
     },
   };
 }
@@ -49,36 +112,18 @@ export function createPlanner(model: ModelClient, memory: Memory, mcpRegistry: M
 async function understand(
   model: ModelClient,
   userMessage: string,
-  facts: Array<{ key: string; value: string }>,
+  facts: Fact[],
   tools: Tool[],
   understandContext?: string
 ): Promise<string> {
-  const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
-  const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
+  const prompt = buildUnderstandPrompt(userMessage, facts, tools, understandContext);
 
   const raw = await model.complete([
-    {
-      role: 'system',
-      content: `You are analyzing a user request. Describe in ONE clear sentence what the user wants to achieve.
-
-USER CONTEXT:
-${factList}
-
-AVAILABLE TOOLS:
-${toolList}
-
-${understandContext ? `CONVERSATION HISTORY (use ONLY to resolve ambiguous references like "the second one", "that", "it", "the first"):
-${understandContext}` : ''}
-
-Be specific about what needs to be done.
-If the user context contains a file path relevant to the request, include that exact path in your description.
-Respond with ONLY one sentence.`
-    },
+    { role: 'system', content: prompt },
     { role: 'user', content: userMessage }
   ], { temperature: 0 });
 
-  console.log('[understanding]:', raw.trim());
-
+  log('Understand raw', raw);
   return raw.trim();
 }
 
@@ -86,43 +131,34 @@ async function planSteps(
   model: ModelClient,
   understanding: string,
   tools: Tool[],
-  conversationContext?: string
-): Promise<string[]> {
-  const toolList = tools.map(t => `${t.name}: ${t.description}`).join('\n');
-  const ctx = conversationContext
-    ? `\nRECENT CONVERSATION:\n${conversationContext}\n`
-    : '';
-
-  console.log('[ctx en planSteps]:', conversationContext?.slice(0, 200));
+  conversationContext?: string,
+  previousResults: string[] = []
+): Promise<Step[]> {
+  const prompt = buildPlanPrompt(understanding, tools, conversationContext, previousResults);
 
   const raw = await model.complete([
-    {
-      role: 'system',
-      content: `You are a task planner. Break down the objective into the minimum necessary steps.
-
-AVAILABLE TOOLS:
-${toolList}
-${ctx}
-Rules:
-- Each step uses exactly ONE tool
-- Steps must be in execution order
-- Use only tools from the list above
-- If the objective requires modifying existing content, first read the current content, then write the updated version
-- If no tools are needed to achieve the objective, respond with: "NO_TOOLS"
-- Otherwise provide the numbered list of steps.`
-    },
-    { role: 'user', content: `Objective: ${understanding}` }
+    { role: 'system', content: prompt },
+    { role: 'user', content: understanding }
   ], { temperature: 0 });
 
-  if (raw.trim().startsWith('NO_TOOLS')) {
+  const trimmed = raw.trim();
+
+  if (trimmed === 'NO_STEPS' || trimmed === 'NO_TOOLS') {
     return [];
   }
 
-  const steps = raw.split('\n')
-    .filter(line => /^[\dN]+\./.test(line.trim()))
-    .map(line => line.trim());
+  const steps: Step[] = [];
+  const lines = trimmed.split('\n');
 
-  console.log('[plan]:', steps);
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (/^[\d]+\./.test(trimmedLine)) {
+      const stepText = trimmedLine.replace(/^[\d]+\.\s*/, '').trim();
+      steps.push({ text: stepText });
+    }
+  }
+
+  log('Plan raw', raw);
 
   return steps;
 }
@@ -132,46 +168,46 @@ async function executeStep(
   step: string,
   tools: Tool[],
   previousResults: string[],
-  mcpRegistry: McpRegistry
+  mcpRegistry: McpRegistry,
+  executionContext: ExecutionContext
 ): Promise<string> {
-  const context = previousResults.length > 0
-    ? `\nPREVIOUS RESULTS:\n${previousResults.join('\n')}`
-    : '';
+  const { understandContext } = executionContext;
+  const context = understandContext?.length > 0
+    ? `USER REFERENCED PREVIOUS RESULTS:\n${understandContext}`
+    : undefined;
+
+  const prompt = buildExecutePrompt(step, tools, previousResults, context);
 
   const raw = await model.complete([
-    {
-      role: 'system',
-      content: `Extract the tool parameters for this step.
-
-      STEP: ${step}
-      TOOLS: ${JSON.stringify(tools.map(t => ({ name: t.name, schema: t.inputSchema })))}
-      ${context}
-
-      If this step needs content from a previous result, use that content.
-      Respond with ONLY a JSON object: {"tool": "tool_name", "input": {...}}
-      Nothing else.`
-    },
+    { role: 'system', content: prompt },
     { role: 'user', content: step }
   ], { temperature: 0 });
 
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return `Step failed: could not parse parameters`;
+  if (!match) {
+    return `Step failed: could not parse parameters from: ${raw.substring(0, 100)}`;
+  }
 
   try {
     const parsed = JSON.parse(match[0]);
     const toolName = parsed.tool;
     const toolInput = parsed.input ?? {};
 
+    if (!toolName) {
+      return `Step failed: no tool name in response`;
+    }
+
+    log('Execute', `Calling tool: ${toolName} with input:`, toolInput);
     const result = await mcpRegistry.callTool(toolName, toolInput);
     const formatted = result
       .split('\n')
       .filter(line => line.trim())
       .map((line, i) => `${i + 1}. ${line.trim()}`)
       .join('\n');
-    console.log('[result raw]:', JSON.stringify(result));
-    return `${toolName}:\n${formatted}`;
+
+    return `${toolName} result:\nContent:\n${formatted}`;
   } catch (e) {
-    return `Step failed: ${e}`;
+    return `Step failed: ${e instanceof Error ? e.message : String(e)}`;
   }
 }
 
@@ -180,41 +216,13 @@ async function validateAndRespond(
   userMessage: string,
   understanding: string,
   results: string[],
-  facts: Array<{ key: string; value: string }>,
+  facts: Fact[],
   isVoice?: boolean
 ): Promise<string> {
-  const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');
-  const resultList = results.map(r => r.replace(/\\n/g, '\n')).join('\n');
-
-  const voiceInstruction = isVoice
-    ? `\nIMPORTANT: This response will be READ ALOUD.
-       - Never mention file paths or URLs
-       - Never say "open the file" or "check the document"
-       - Always state the actual content directly
-       - Keep it conversational and natural for speech`
-    : '';
+  const prompt = buildRespondPrompt(userMessage, understanding, results, facts, isVoice);
 
   return await model.complete([
-    {
-      role: 'system',
-      content: `You are Enzo, a personal assistant. Respond in Spanish.
-      ${voiceInstruction}
-
-      USER CONTEXT:
-      ${factList}
-
-      OBJECTIVE:
-      ${understanding}
-
-      WHAT WAS DONE:
-      ${resultList}
-
-      IMPORTANT: All items in the results are current data. Do not assume any item is completed unless explicitly stated in the results.
-      Use ONLY information from the RESULTS section. Never invent or add information not present in the results.
-      Present all the information from the results completely. Do not omit any item.
-      Confirm to the user what was achieved in natural language.
-      Be brief and direct.`
-    },
+    { role: 'system', content: prompt },
     { role: 'user', content: userMessage }
   ], { temperature: 0.3 });
 }
@@ -222,7 +230,7 @@ async function validateAndRespond(
 export async function generateResponse(
   model: ModelClient,
   userMessage: string,
-  facts: Array<{ key: string; value: string }>,
+  facts: Fact[],
   context?: string
 ): Promise<string> {
   const factList = facts.map(f => `${f.key}: ${f.value}`).join('\n');

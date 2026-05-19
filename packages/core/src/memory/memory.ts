@@ -19,6 +19,14 @@ export interface Memory {
   saveTool(tool: Tool): void;
 }
 
+export interface ConversationMemory {
+  save(userMessage: string, enzoResponse: string): void;
+  getRelevant(currentMessage: string, maxTurns?: number): string;
+  getRelevantForUnderstand(currentMessage: string): string;
+  getLastTurnResults(): string[];
+  getAllTurnResults(): string[];
+}
+
 export function createMemory(config: ConfigService): Memory {
   const db = new DatabaseSync(config.dbPath);
 

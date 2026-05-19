@@ -9,6 +9,8 @@ export interface ConversationMemory {
   save(userMessage: string, enzoResponse: string): void;
   getRelevant(currentMessage: string, maxTurns?: number): string;
   getRelevantForUnderstand(currentMessage: string): string;
+  getLastTurnResults(): string[];
+  getAllTurnResults(): string[];
 }
 
 export function createConversationMemory(): ConversationMemory {
@@ -69,6 +71,16 @@ export function createConversationMemory(): ConversationMemory {
       return recent
         .map(t => `User: ${t.userMessage}`)
         .join('\n');
+    },
+
+    getLastTurnResults() {
+      if (turns.length === 0) return [];
+      const lastTurn = turns[turns.length - 1];
+      return [lastTurn.enzoResponse];
+    },
+
+    getAllTurnResults() {
+      return turns.map(t => t.enzoResponse);
     },
   };
 }
